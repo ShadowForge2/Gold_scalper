@@ -245,7 +245,7 @@ class Bot:
 
         entry_score = self._current_signal.get("score") if self._current_signal else None
         should_exit, exit_score, reason = self.signal_engine.evaluate_exit(
-            m1_data, entry_price, direction, entry_score, exit_mode=4
+            m1_data, entry_price, direction, entry_score, exit_mode=1
         )
 
         if should_exit:
