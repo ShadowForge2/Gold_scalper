@@ -1,0 +1,56 @@
+from typing import Optional, Dict, List, Any
+from app.logger import BotLogger
+import config as cfg
+
+
+class TradeExecutor:
+    def __init__(self, client: Any, logger: BotLogger):
+        self.mt5 = client
+        self.logger = logger
+
+    def open_market(self, symbol: str, direction: str,
+                    volume: float, magic: int = cfg.MAGIC_NUMBER,
+                    comment: str = cfg.COMMENT,
+                    slippage: int = cfg.MAX_SLIPPAGE_PIPS) -> Optional[Any]:
+
+        ticket = self.mt5.open_position(
+            symbol=symbol, direction=direction, volume=volume,
+            magic=magic, comment=comment, slippage=slippage
+        )
+        if ticket is not None:
+            self.logger.trade(
+                f"Opened {direction} {volume:.2f} {symbol} "
+                f"@ ticket {ticket}"
+            )
+            return ticket
+        else:
+            self.logger.error(f"Order failed for {symbol} {direction}")
+            return None
+
+    def close_position(self, ticket: int) -> bool:
+        success = self.mt5.close_position(ticket)
+        if not success:
+            self.logger.warning(f"Position {ticket} not found or close failed")
+            return False
+        self.logger.trade(f"Closed position {ticket}")
+        return True
+
+    def close_all_bot_positions(self) -> int:
+        positions = self.mt5.get_positions(magic=cfg.MAGIC_NUMBER)
+        closed = 0
+        for pos in positions:
+            if self.close_position(pos["ticket"]):
+                closed += 1
+        if closed > 0:
+            self.logger.info(f"Closed {closed} bot position(s)")
+        return closed
+
+    def close_all_positions(self, symbol: Optional[str] = None) -> int:
+        positions = self.mt5.get_positions()
+        if symbol:
+            positions = [p for p in positions if p["symbol"] == symbol]
+        closed = 0
+        for pos in positions:
+            if self.close_position(pos["ticket"]):
+                closed += 1
+        return closed

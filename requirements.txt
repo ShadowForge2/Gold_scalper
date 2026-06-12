@@ -1,0 +1,11 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-dotenv==1.0.0
+pandas==2.1.3
+numpy==1.26.2
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+httpx==0.25.2
+requests>=2.31.0
+
+# MetaTrader5>=0.5.45  # Only needed for MT5 broker (not Capital.com)

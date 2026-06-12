@@ -1,0 +1,24 @@
+# Secrets
+.env
+accounts.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# Data
+*.csv
+*.xlsx
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store

@@ -1,0 +1,55 @@
+services:
+  - type: web
+    name: gold-scalper
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: BROKER
+        value: CAPITAL
+      - key: CAPITAL_API_KEY
+        sync: false
+      - key: CAPITAL_IDENTIFIER
+        sync: false
+      - key: CAPITAL_PASSWORD
+        sync: false
+      - key: CAPITAL_DEMO
+        value: "true"
+      - key: CAPITAL_EPIC
+        value: GOLD
+      - key: SYMBOL
+        value: XAUUSD
+      - key: MAGIC_NUMBER
+        value: "123456"
+      - key: COMMENT
+        value: Gold Scalper
+      - key: LOT_SIZE
+        value: "0.01"
+      - key: MIN_LOT
+        value: "0.01"
+      - key: MAX_LOT
+        value: "1.00"
+      - key: LOT_MULTIPLIER
+        value: "5"
+      - key: MAX_DAILY_LOSS_USD
+        value: "10.00"
+      - key: MAX_EVENT_LOSS_USD
+        value: "5.00"
+      - key: MAX_TRADES_PER_EVENT
+        value: "10"
+      - key: MAX_TRADES_PER_SESSION
+        value: "10"
+      - key: MAX_CONSECUTIVE_LOSSES
+        value: "3"
+      - key: RE_ENTRY_COOLDOWN_SEC
+        value: "60"
+      - key: BIAS_UPDATE_INTERVAL_SEC
+        value: "60"
+      - key: SIGNAL_ENTRY_THRESHOLD
+        value: "0.50"
+      - key: EXIT_THRESHOLD_TIGHT
+        value: "0.50"
+      - key: MAX_SPREAD_PIPS
+        value: "50.0"
+      - key: ALLOWED_SESSIONS
+        value: ASIA,LONDON,NEW_YORK
