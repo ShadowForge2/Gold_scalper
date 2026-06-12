@@ -351,13 +351,31 @@ class CapitalClient:
 
     def get_total_daily_pnl(self, magic: int) -> float:
         now = datetime.now()
-        today_start = datetime(now.year, now.month, now.day)
+        today = now.date()
+
+        # Reset _prev_balance at start of each day
+        if not hasattr(self, '_last_date') or self._last_date != today:
+            info = self.get_account_info()
+            if info:
+                self._prev_balance = info.get("balance", 0)
+            self._last_date = today
+
+        info = self.get_account_info()
+        if info is None or self._prev_balance is None:
+            return 0.0
+
+        current_balance = info.get("balance", 0)
+
+        # Detect deposits/withdrawals: if balance changed beyond what open PnL explains,
+        # adjust _prev_balance so non-trading events don't trigger loss limits
         positions = self.get_positions(magic)
         open_pnl = sum(p["profit"] for p in positions)
-        info = self.get_account_info()
-        if info and self._prev_balance is not None:
-            return info.get("balance", 0) - self._prev_balance
-        return open_pnl
+        expected_balance = self._prev_balance + open_pnl
+        diff = current_balance - expected_balance
+        if abs(diff) >= 5.0:
+            self._prev_balance = current_balance - open_pnl
+
+        return current_balance - self._prev_balance
 
     def order_send(self, request: dict) -> Dict:
         epic = request.get("epic", self._resolve_epic(request.get("symbol", "GOLD")))
