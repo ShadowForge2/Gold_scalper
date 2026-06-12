@@ -30,6 +30,8 @@ services:
       - key: MAX_LOT
         value: "1.00"
       - key: LOT_MULTIPLIER
+        value: "2"
+      - key: SIGNAL_TIMEFRAME
         value: "5"
       - key: MAX_DAILY_LOSS_USD
         value: "10.00"
