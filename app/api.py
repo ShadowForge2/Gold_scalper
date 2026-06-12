@@ -532,6 +532,17 @@ def create_app(bot: Bot) -> FastAPI:
     async def root():
         return HTMLResponse(DASHBOARD_HTML)
 
+    @app.get("/health")
+    async def health():
+        connected = bot.client is not None and bot.client.is_connected()
+        return {
+            "status": "healthy" if connected else "degraded",
+            "state": bot.state,
+            "connected": connected,
+            "broker": cfg.BROKER,
+            "symbol": bot.symbol,
+        }
+
     @app.get("/api/account")
     async def get_account():
         info = bot.client.get_account_info()
