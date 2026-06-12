@@ -1,4 +1,9 @@
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+    _MT5_AVAILABLE = True
+except ImportError:
+    mt5 = None
+    _MT5_AVAILABLE = False
 import pandas as pd
 import numpy as np
 from typing import Optional, List, Dict, Tuple
