@@ -56,6 +56,9 @@ MAX_LOT = _env_float("MAX_LOT", 1.0)
 LOT_STEP = _env_float("LOT_STEP", 0.01)
 LOT_MULTIPLIER = _env_int("LOT_MULTIPLIER", 5)
 
+# Minimum balance to start trading
+MIN_BALANCE = _env_float("MIN_BALANCE", 20.0)
+
 # Risk limits
 MAX_DAILY_LOSS_USD = _env_float("MAX_DAILY_LOSS_USD", 2.00)
 MAX_EVENT_LOSS_USD = _env_float("MAX_EVENT_LOSS_USD", 1.00)

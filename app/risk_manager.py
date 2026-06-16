@@ -36,7 +36,8 @@ class EquityScaler:
         if not self.starting_balance or self.starting_balance <= 0:
             return self.base_lot
         self.update_peak(balance)
-        lot = self.base_lot * (balance / self.starting_balance)
+        reference = 20.0  # fixed reference; all accounts scale identically
+        lot = self.base_lot * (balance / reference)
         max_by_equity = balance / 5000.0
         lot = min(lot, max_by_equity)
         lot = round(lot / cfg.LOT_STEP) * cfg.LOT_STEP

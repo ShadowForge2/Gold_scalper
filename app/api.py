@@ -111,10 +111,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         .status-ENTERING { background: linear-gradient(135deg, var(--blue), #2563eb); color: white; animation: pulse-blue 1.5s infinite; }
         .status-EXITING { background: linear-gradient(135deg, var(--red), #dc2626); color: white; animation: pulse-red 1.5s infinite; }
         .status-BIAS_ANALYSIS { background: #1e40af; color: #bfdbfe; }
+        .status-WAITING_FOR_FUNDS { background: #92400e; color: #fbbf24; border: 1px solid #d97706; animation: pulse-yellow 2s infinite; }
         @keyframes pulse-indigo { 0% { box-shadow: 0 0 10px var(--indigo-glow, rgba(99,102,241,0.3)); } 50% { box-shadow: 0 0 25px rgba(99,102,241,0.5); } 100% { box-shadow: 0 0 10px var(--indigo-glow, rgba(99,102,241,0.3)); } }
         @keyframes pulse-green { 0% { transform: scale(1); box-shadow: 0 0 20px var(--green-glow); } 50% { transform: scale(1.05); box-shadow: 0 0 35px rgba(16,185,129,0.4); } 100% { transform: scale(1); box-shadow: 0 0 20px var(--green-glow); } }
         @keyframes pulse-red { 0% { transform: scale(1); box-shadow: 0 0 20px var(--red-glow); } 50% { transform: scale(1.05); box-shadow: 0 0 35px rgba(244,63,94,0.4); } 100% { transform: scale(1); box-shadow: 0 0 20px var(--red-glow); } }
         @keyframes pulse-blue { 0% { box-shadow: 0 0 10px rgba(59,130,246,0.3); } 50% { box-shadow: 0 0 25px rgba(59,130,246,0.5); } 100% { box-shadow: 0 0 10px rgba(59,130,246,0.3); } }
+        @keyframes pulse-yellow { 0% { box-shadow: 0 0 10px rgba(251,191,36,0.2); } 50% { box-shadow: 0 0 25px rgba(251,191,36,0.4); } 100% { box-shadow: 0 0 10px rgba(251,191,36,0.2); } }
         .controls-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 0.75rem; }
         .btn {
             font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 600; font-size: 0.95rem;
@@ -323,7 +325,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             sb.textContent = st;
             sb.className = 'status-badge status-' + st;
             const desc = document.getElementById('bot-status-desc');
-            const descMap = { IDLE: 'Analyzing market...', AWAITING_SIGNAL: 'Watching for entry signal', IN_TRADE: 'Positions active - monitoring', COOLDOWN: 'Cooldown active - waiting', STOPPED: 'Bot halted', ENTERING: 'Placing trades...', EXITING: 'Closing trades...', BIAS_ANALYSIS: 'Computing bias...' };
+            const descMap = { IDLE: 'Analyzing market...', AWAITING_SIGNAL: 'Watching for entry signal', IN_TRADE: 'Positions active - monitoring', COOLDOWN: 'Cooldown active - waiting', STOPPED: 'Bot halted', ENTERING: 'Placing trades...', EXITING: 'Closing trades...', BIAS_ANALYSIS: 'Computing bias...', WAITING_FOR_FUNDS: 'Awaiting minimum balance...' };
             desc.textContent = descMap[st] || st;
 
             const bias = bot.bias || {};

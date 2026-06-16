@@ -26,6 +26,7 @@ class Bot:
         "EXITING": "EXITING",
         "COOLDOWN": "COOLDOWN",
         "STOPPED": "STOPPED",
+        "WAITING_FOR_FUNDS": "WAITING_FOR_FUNDS",
     }
 
     def __init__(self):
@@ -86,7 +87,16 @@ class Bot:
                     f"Balance: ${info['balance']:.2f} | "
                     f"Leverage: 1:{info['leverage']}"
                 )
-            self.state = self.STATES["IDLE"]
+                if info["balance"] < cfg.MIN_BALANCE:
+                    self.logger.warning(
+                        f"Balance ${info['balance']:.2f} below minimum ${cfg.MIN_BALANCE:.2f}. "
+                        f"Bot waiting for funds..."
+                    )
+                    self.state = self.STATES["WAITING_FOR_FUNDS"]
+                else:
+                    self.state = self.STATES["IDLE"]
+            else:
+                self.state = self.STATES["IDLE"]
             return True
         else:
             err = self.client.last_error()
@@ -141,6 +151,8 @@ class Bot:
             await self._handle_in_trade(pnl_data)
         elif self.state == self.STATES["COOLDOWN"]:
             await self._handle_cooldown()
+        elif self.state == self.STATES["WAITING_FOR_FUNDS"]:
+            await self._handle_waiting_for_funds()
         else:
             await self._handle_search(pnl_data)
 
@@ -262,6 +274,15 @@ class Bot:
             self.logger.info("Cooldown expired, resuming search")
             self.state = self.STATES["IDLE"]
             self._cooldown_until = None
+
+    async def _handle_waiting_for_funds(self):
+        info = self.client.get_account_info()
+        if info and info["balance"] >= cfg.MIN_BALANCE:
+            self.scaler.initialize(info["balance"])
+            self.logger.info(
+                f"Funds detected: ${info['balance']:.2f}. Starting bot."
+            )
+            self.state = self.STATES["IDLE"]
 
     async def _update_bias(self):
         h1_data = self.client.get_rates(
