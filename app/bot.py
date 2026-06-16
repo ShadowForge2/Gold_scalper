@@ -46,6 +46,8 @@ class Bot:
         self._current_signal: Optional[Dict] = None
         self._bias_summary: Dict = {}
         self._last_tick: Optional[Dict] = None
+        self._last_signal_diag_key: Optional[str] = None
+        self._last_signal_diag_time = 0.0
 
         self._accounts_file: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "accounts.json")
 
@@ -170,16 +172,28 @@ class Bot:
             return
 
         if not self.bias_engine.is_tradeable():
+            self._log_signal_diagnostic(
+                "bias_not_tradeable",
+                {
+                    "bias": self._bias_summary.get("bias", "UNKNOWN"),
+                    "strength": self._bias_summary.get("strength", 0),
+                },
+            )
             return
 
         m1_data = self.client.get_rates(
             self.symbol, cfg.SIGNAL_TIMEFRAME, 50
         )
         if m1_data is None or len(m1_data) < 10:
+            self._log_signal_diagnostic(
+                "insufficient_m1_data",
+                {"bars": 0 if m1_data is None else len(m1_data)},
+            )
             return
 
         symbol_info = self.client.get_symbol_info(self.symbol)
         if symbol_info is None:
+            self._log_signal_diagnostic("symbol_info_unavailable", {})
             return
 
         bias_dir = self._bias_summary.get("bias", "NEUTRAL")
@@ -206,6 +220,18 @@ class Bot:
                 f"price={current_price:.2f} "
                 f"h1_high={h1_high:.2f} h1_low={h1_low:.2f}"
             )
+        else:
+            rejection = self.signal_engine.last_rejection or {}
+            self._log_signal_diagnostic(
+                rejection.get("reason", "signal_not_generated"),
+                {
+                    "bias": bias_dir,
+                    "price": current_price,
+                    "h1_high": h1_high,
+                    "h1_low": h1_low,
+                    **rejection,
+                },
+            )
 
         if signal and signal["score"] >= cfg.SIGNAL_ENTRY_THRESHOLD:
             can_enter, reason = self.risk_manager.can_enter_trade(
@@ -214,7 +240,12 @@ class Bot:
             if not can_enter:
                 self.logger.signal(
                     f"Signal {signal['direction']} (score={signal['score']:.2f}) "
-                    f"blocked: {reason}"
+                    f"blocked: {reason} | "
+                    f"bias={bias_dir} price={current_price:.2f} "
+                    f"h1_high={h1_high:.2f} h1_low={h1_low:.2f} "
+                    f"breakout={signal.get('breakout_dist', 0):.2f} "
+                    f"range={signal.get('range_size', 0):.2f} "
+                    f"spread={symbol_info.get('spread', 0)}"
                 )
                 return
 
@@ -224,6 +255,54 @@ class Bot:
                 f"breakout={signal.get('breakout_dist', 0):.2f}pt"
             )
             await self._execute_entry(signal, symbol_info)
+        elif signal:
+            self._log_signal_diagnostic(
+                "score_below_entry_threshold",
+                {
+                    "direction": signal["direction"],
+                    "bias": bias_dir,
+                    "price": current_price,
+                    "h1_high": h1_high,
+                    "h1_low": h1_low,
+                    "breakout_dist": signal.get("breakout_dist", 0),
+                    "range_size": signal.get("range_size", 0),
+                    "score": signal["score"],
+                    "threshold": cfg.SIGNAL_ENTRY_THRESHOLD,
+                },
+            )
+
+    def _log_signal_diagnostic(self, reason: str, context: Dict):
+        now = time.monotonic()
+        key = (
+            f"{reason}|{context.get('bias')}|{context.get('direction')}|"
+            f"{context.get('score')}|{context.get('h1_high')}|{context.get('h1_low')}"
+        )
+        if key == self._last_signal_diag_key and now - self._last_signal_diag_time < 30:
+            return
+
+        self._last_signal_diag_key = key
+        self._last_signal_diag_time = now
+
+        def fmt_num(value, decimals=2):
+            if value is None:
+                return "n/a"
+            try:
+                return f"{float(value):.{decimals}f}"
+            except (TypeError, ValueError):
+                return str(value)
+
+        self.logger.signal(
+            f"No entry: {reason} | "
+            f"bias={context.get('bias', 'UNKNOWN')} "
+            f"direction={context.get('direction', 'n/a')} "
+            f"price={fmt_num(context.get('price'))} "
+            f"h1_high={fmt_num(context.get('h1_high'))} "
+            f"h1_low={fmt_num(context.get('h1_low'))} "
+            f"breakout={fmt_num(context.get('breakout_dist'))} "
+            f"range={fmt_num(context.get('range_size'))} "
+            f"score={fmt_num(context.get('score'), 3)} "
+            f"threshold={fmt_num(context.get('threshold', cfg.SIGNAL_ENTRY_THRESHOLD), 3)}"
+        )
 
     async def _handle_in_trade(self, pnl_data: Dict):
         if pnl_data["open_count"] == 0:

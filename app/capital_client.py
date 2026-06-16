@@ -43,6 +43,7 @@ class CapitalClient:
         self._daily_pnl_date = None
         self._realized_daily_pnl = 0.0
         self._last_position_pnl: Dict[str, float] = {}
+        self._last_order_error = ""
 
     def initialize(self, api_key: Optional[str] = None,
                    identifier: Optional[str] = None,
@@ -112,6 +113,9 @@ class CapitalClient:
     def last_error(self) -> Tuple[int, str]:
         return 0, self._last_error if hasattr(self, '_last_error') else "No error"
 
+    def last_order_error(self) -> str:
+        return self._last_order_error
+
     def select_symbol(self, symbol: str) -> bool:
         info = self.get_symbol_info(symbol)
         if info is None:
@@ -120,6 +124,7 @@ class CapitalClient:
 
     def get_account_info(self) -> Optional[Dict]:
         if not self._ensure_session():
+            self._last_order_error = "session_not_connected"
             return None
         try:
             r = self._session.get(f"{self.base_url}/api/v1/accounts", headers=self._auth_headers())
@@ -423,10 +428,12 @@ class CapitalClient:
             r = self._session.post(f"{self.base_url}/api/v1/positions",
                                    headers=self._auth_headers(), json=body)
             if r.ok:
+                self._last_order_error = ""
                 time.sleep(0.5)
                 return r.json()
-        except Exception:
-            pass
+            self._last_order_error = f"HTTP {r.status_code}: {r.text[:500]}"
+        except Exception as exc:
+            self._last_order_error = f"{type(exc).__name__}: {exc}"
         return None
 
     def open_position(self, symbol: str, direction: str, volume: float,

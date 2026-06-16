@@ -8,19 +8,47 @@ class SignalEngine:
     def __init__(self):
         self.current_signal: Optional[Dict] = None
         self.last_signal_time: Optional[datetime] = None
+        self.last_rejection: Optional[Dict] = None
+
+    def _reject(self, reason: str, **context) -> None:
+        self.last_rejection = {
+            "reason": reason,
+            "timestamp": datetime.now().isoformat(),
+            **context,
+        }
+        return None
 
     def evaluate(self, m1_data: pd.DataFrame, bias: Dict,
                  current_price: float,
                  h1_high: float = None, h1_low: float = None) -> Optional[Dict]:
 
         if m1_data is None or len(m1_data) < 10:
-            return None
+            return self._reject(
+                "insufficient_m1_data",
+                bars=0 if m1_data is None else len(m1_data),
+                bias=bias.get("bias", "UNKNOWN"),
+                price=current_price,
+                h1_high=h1_high,
+                h1_low=h1_low,
+            )
 
         if bias.get("bias") not in ("BULLISH", "BEARISH"):
-            return None
+            return self._reject(
+                "bias_not_tradeable",
+                bias=bias.get("bias", "UNKNOWN"),
+                price=current_price,
+                h1_high=h1_high,
+                h1_low=h1_low,
+            )
 
         if h1_high is None or h1_low is None or h1_high <= h1_low:
-            return None
+            return self._reject(
+                "invalid_h1_range",
+                bias=bias.get("bias", "UNKNOWN"),
+                price=current_price,
+                h1_high=h1_high,
+                h1_low=h1_low,
+            )
 
         bias_dir = bias["bias"]
         direction = "BUY" if bias_dir == "BULLISH" else "SELL"
@@ -28,23 +56,75 @@ class SignalEngine:
         range_size = h1_high - h1_low
 
         if direction == "BUY":
-            if current_price <= h1_high:
-                return None
             breakout_dist = current_price - h1_high
+            score = breakout_dist / range_size if range_size > 0 else 0.0
+            if current_price <= h1_high:
+                return self._reject(
+                    "buy_price_not_above_h1_high",
+                    direction=direction,
+                    bias=bias_dir,
+                    price=current_price,
+                    h1_high=h1_high,
+                    h1_low=h1_low,
+                    breakout_dist=round(breakout_dist, 2),
+                    range_size=round(range_size, 2),
+                    score=round(score, 3),
+                )
             recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(6, len(closes))))
             if not recent_in_range:
-                return None
+                return self._reject(
+                    "buy_no_recent_pullback_inside_h1_range",
+                    direction=direction,
+                    bias=bias_dir,
+                    price=current_price,
+                    h1_high=h1_high,
+                    h1_low=h1_low,
+                    breakout_dist=round(breakout_dist, 2),
+                    range_size=round(range_size, 2),
+                    score=round(score, 3),
+                )
         else:
-            if current_price >= h1_low:
-                return None
             breakout_dist = h1_low - current_price
+            score = breakout_dist / range_size if range_size > 0 else 0.0
+            if current_price >= h1_low:
+                return self._reject(
+                    "sell_price_not_below_h1_low",
+                    direction=direction,
+                    bias=bias_dir,
+                    price=current_price,
+                    h1_high=h1_high,
+                    h1_low=h1_low,
+                    breakout_dist=round(breakout_dist, 2),
+                    range_size=round(range_size, 2),
+                    score=round(score, 3),
+                )
             recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(6, len(closes))))
             if not recent_in_range:
-                return None
+                return self._reject(
+                    "sell_no_recent_pullback_inside_h1_range",
+                    direction=direction,
+                    bias=bias_dir,
+                    price=current_price,
+                    h1_high=h1_high,
+                    h1_low=h1_low,
+                    breakout_dist=round(breakout_dist, 2),
+                    range_size=round(range_size, 2),
+                    score=round(score, 3),
+                )
 
         score = min(breakout_dist / range_size, 1.0)
         if score < 0.02:
-            return None
+            return self._reject(
+                "breakout_score_too_small",
+                direction=direction,
+                bias=bias_dir,
+                price=current_price,
+                h1_high=h1_high,
+                h1_low=h1_low,
+                breakout_dist=round(breakout_dist, 2),
+                range_size=round(range_size, 2),
+                score=round(score, 3),
+            )
 
         signal = {
             "direction": direction,
@@ -58,6 +138,7 @@ class SignalEngine:
         }
 
         self.current_signal = signal
+        self.last_rejection = None
         return signal
 
     def evaluate_exit(self, m1_data: pd.DataFrame,

@@ -24,7 +24,11 @@ class TradeExecutor:
             )
             return ticket
         else:
-            self.logger.error(f"Order failed for {symbol} {direction}")
+            detail = ""
+            if hasattr(self.mt5, "last_order_error"):
+                detail = self.mt5.last_order_error()
+            suffix = f": {detail}" if detail else ""
+            self.logger.error(f"Order failed for {symbol} {direction}{suffix}")
             return None
 
     def close_position(self, ticket: int) -> bool:
