@@ -23,6 +23,7 @@ BACKTEST_START = datetime(2025, 1, 1)
 BACKTEST_END = datetime(2025, 12, 31, 23, 59)
 BIAS_WARMUP_DAYS = 14
 INITIAL_BALANCE = 20.0
+BACKTEST_CASH_FLOWS = []     # e.g. [{"time": "2025-07-01 00:00", "amount": -500.0}]
 CONTRACT_SIZE = 100        # XAUUSD: 1 standard lot = 100 oz
 SPREAD_PER_LOT_USD = 25.0  # ~$25 spread round trip per lot on XAUUSD
 LEVERAGE = 500              # high leverage to reduce margin per lot
@@ -69,6 +70,19 @@ def _tier_params(tier):
         3: {"entry_threshold": 0.00, "exit_threshold": 0.50, "max_trades": 3, "num_trades": 3},
     }
     return tiers.get(tier, tiers[1])
+
+def _normalize_cash_flows(cash_flows):
+    normalized = []
+    for flow in cash_flows or []:
+        if isinstance(flow, dict):
+            when = flow.get("time") or flow.get("date")
+            amount = flow.get("amount", 0.0)
+        else:
+            when, amount = flow
+        when = pd.to_datetime(when).to_pydatetime()
+        normalized.append((when, float(amount)))
+    normalized.sort(key=lambda x: x[0])
+    return normalized
 
 # ── data loading & pre-computation ──
 
@@ -393,6 +407,8 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
         "consecutive_loss_limit": cfg.MAX_CONSECUTIVE_LOSSES,
         "daily_loss_limit": cfg.MAX_DAILY_LOSS_USD,
         "max_trades_per_session": cfg.MAX_TRADES_PER_SESSION,
+        "min_balance": cfg.MIN_BALANCE,
+        "cash_flows": BACKTEST_CASH_FLOWS,
         "exit_mode": 4 if BACKTEST_BROKER in ("YAHOO_H1", "MT5_H1") else 1,  # ATR-based for H1, trail_sl for M5
     }
     if params:
@@ -410,6 +426,8 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
     consec_loss_limit = p["consecutive_loss_limit"]
     daily_loss_limit = p["daily_loss_limit"]
     max_trades_per_session = p["max_trades_per_session"]
+    min_balance = p["min_balance"]
+    cash_flows = _normalize_cash_flows(p["cash_flows"])
     exit_mode = p["exit_mode"]
 
     sig_df = data["sig_df"]
@@ -435,6 +453,9 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
     cooldown = None
     event_pnl = 0.0
     daily_pnl = 0.0
+    cash_idx = 0
+    deposits = 0.0
+    withdrawals = 0.0
 
     for idx in range(N):
         ts = sig_df["time"].iloc[idx]
@@ -451,6 +472,22 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
             daily_trades = 0
             daily_pnl = 0.0
             consec_losses = 0
+
+        while cash_idx < len(cash_flows) and cash_flows[cash_idx][0] <= ts:
+            cash_time, cash_amount = cash_flows[cash_idx]
+            balance += cash_amount
+            if cash_amount >= 0:
+                deposits += cash_amount
+            else:
+                withdrawals += abs(cash_amount)
+            if balance > peak:
+                peak = balance
+            scaler.update_peak(balance)
+            if verbose:
+                action = "DEPOSIT" if cash_amount >= 0 else "WITHDRAWAL"
+                print(f"  {action} {cash_time.strftime('%m/%d %H:%M')} "
+                      f"${abs(cash_amount):.2f} -> bal=${balance:.2f}", flush=True)
+            cash_idx += 1
 
         if idx < 10:
             continue
@@ -518,7 +555,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
         if cur is None:
             if not _session_allowed(ts, sessions):
                 continue
-            if consec_losses >= consec_loss_limit or balance <= 0:
+            if consec_losses >= consec_loss_limit or balance < min_balance:
                 continue
             if daily_pnl <= -daily_loss_limit:
                 continue
@@ -619,7 +656,10 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
         "avg_loss": round(losses["pnl"].mean(), 2) if len(losses) > 0 else 0,
         "max_dd": round(max_dd, 2),
         "ending_balance": round(balance, 2),
-        "return_pct": round((balance / INITIAL_BALANCE - 1) * 100, 2),
+        "deposits": round(deposits, 2),
+        "withdrawals": round(withdrawals, 2),
+        "net_cash_flow": round(deposits - withdrawals, 2),
+        "return_pct": round((total_pnl / INITIAL_BALANCE) * 100, 2),
         "avg_bars_held": round(df["bars_held"].mean(), 1),
         "monthly": monthly_breakdown,
     }

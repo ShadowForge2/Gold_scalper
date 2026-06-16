@@ -307,7 +307,15 @@ class Bot:
         direction = signal["direction"]
         score = signal["score"]
 
-        balance = symbol_info.get("balance", 1000)
+        account = self.client.get_account_info()
+        balance = account.get("balance", 0) if account else symbol_info.get("balance", 0)
+        if balance < cfg.MIN_BALANCE:
+            self.logger.warning(
+                f"Entry blocked: balance ${balance:.2f} below minimum ${cfg.MIN_BALANCE:.2f}"
+            )
+            self.state = self.STATES["WAITING_FOR_FUNDS"]
+            return
+
         self.scaler.update_peak(balance)
 
         lot = min(self.scaler.get_lot(balance) * cfg.LOT_MULTIPLIER, cfg.MAX_LOT)
@@ -317,7 +325,7 @@ class Bot:
             f"Entry: {direction} | score={score:.2f} | "
             f"balance=${balance:.2f} | lot={lot:.2f} | "
             f"max_trades={max_trades} | "
-            f"tier={self.scaler._tier(self.scaler.growth_pct(balance))} "
+            f"tier={self.scaler._tier(balance)} "
             f"({self.scaler.growth_pct(balance):.1f}% growth)"
         )
 

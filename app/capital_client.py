@@ -40,6 +40,9 @@ class CapitalClient:
         self._last_activity = 0.0
         self._symbol_info_cache: Dict[str, Dict] = {}
         self._prev_balance = None
+        self._daily_pnl_date = None
+        self._realized_daily_pnl = 0.0
+        self._last_position_pnl: Dict[str, float] = {}
 
     def initialize(self, api_key: Optional[str] = None,
                    identifier: Optional[str] = None,
@@ -311,10 +314,20 @@ class CapitalClient:
                         "comment": comment,
                         "time": datetime.fromisoformat(p.get("createdDateUTC", "").replace("Z", "+00:00")) if p.get("createdDateUTC") else datetime.now(),
                     })
+                if magic is not None:
+                    self._update_position_pnl_cache(result)
                 return result
         except Exception:
             pass
         return []
+
+    def _update_position_pnl_cache(self, positions: List[Dict]):
+        current = {str(p["ticket"]): float(p.get("profit", 0.0)) for p in positions}
+        for ticket, last_pnl in list(self._last_position_pnl.items()):
+            if ticket not in current:
+                self._realized_daily_pnl += last_pnl
+                del self._last_position_pnl[ticket]
+        self._last_position_pnl.update(current)
 
     def get_history_deals(self, from_dt: datetime, to_dt: datetime,
                           magic: Optional[int] = None) -> List[Dict]:
@@ -353,29 +366,21 @@ class CapitalClient:
         now = datetime.now()
         today = now.date()
 
-        # Reset _prev_balance at start of each day
-        if not hasattr(self, '_last_date') or self._last_date != today:
+        if self._daily_pnl_date != today:
             info = self.get_account_info()
             if info:
                 self._prev_balance = info.get("balance", 0)
-            self._last_date = today
+            self._daily_pnl_date = today
+            self._realized_daily_pnl = 0.0
+            self._last_position_pnl.clear()
 
         info = self.get_account_info()
         if info is None or self._prev_balance is None:
             return 0.0
 
-        current_balance = info.get("balance", 0)
-
-        # Detect deposits/withdrawals: if balance changed beyond what open PnL explains,
-        # adjust _prev_balance so non-trading events don't trigger loss limits
         positions = self.get_positions(magic)
         open_pnl = sum(p["profit"] for p in positions)
-        expected_balance = self._prev_balance + open_pnl
-        diff = current_balance - expected_balance
-        if abs(diff) >= 5.0:
-            self._prev_balance = current_balance - open_pnl
-
-        return current_balance - self._prev_balance
+        return self._realized_daily_pnl + open_pnl
 
     def order_send(self, request: dict) -> Dict:
         epic = request.get("epic", self._resolve_epic(request.get("symbol", "GOLD")))
