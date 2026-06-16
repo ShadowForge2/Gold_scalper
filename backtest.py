@@ -95,11 +95,25 @@ def _load_from_capital():
         print("Capital.com init failed")
         return None
 
-    h1_fr = BACKTEST_START - timedelta(days=BIAS_WARMUP_DAYS)
-    print("Downloading H1 data from Capital.com...", flush=True)
-    h1 = client.get_rates_range(cfg.SYMBOL, TIMEFRAME_H1, h1_fr, BACKTEST_END)
     print("Downloading M5 data from Capital.com...", flush=True)
     sig_df = client.get_rates_range(cfg.SYMBOL, TIMEFRAME_M5, BACKTEST_START, BACKTEST_END)
+
+    h1_fr = BACKTEST_START - timedelta(days=BIAS_WARMUP_DAYS)
+    h1_to = BACKTEST_END
+    if sig_df is not None and len(sig_df) > 0:
+        sig_start = sig_df["time"].iloc[0].to_pydatetime()
+        sig_end = sig_df["time"].iloc[-1].to_pydatetime()
+        if sig_start.date() != BACKTEST_START.date():
+            print(
+                f"Capital.com returned signal data from {sig_start.date()} "
+                f"to {sig_end.date()}; aligning H1 range to returned data.",
+                flush=True,
+            )
+            h1_fr = sig_start - timedelta(days=BIAS_WARMUP_DAYS)
+            h1_to = sig_end
+
+    print("Downloading H1 data from Capital.com...", flush=True)
+    h1 = client.get_rates_range(cfg.SYMBOL, TIMEFRAME_H1, h1_fr, h1_to)
     client.shutdown()
 
     if h1 is None or sig_df is None or len(h1) == 0 or len(sig_df) == 0:
@@ -222,9 +236,9 @@ def _pre_compute(sig_df, h1):
             continue
 
         row = sig_df.iloc[idx]
-        mid = (row["high"] + row["low"]) / 2
+        current_price = row["close"]
         window = sig_df.iloc[max(0, idx - 50):idx]
-        sig = signal_engine.evaluate(window, bsum, mid,
+        sig = signal_engine.evaluate(window, bsum, current_price,
                                      h1_high=float(h1_high_arr[idx]),
                                      h1_low=float(h1_low_arr[idx]))
         if sig:
@@ -359,9 +373,9 @@ def _pre_compute_h1(h1):
             continue
 
         row = h1.iloc[idx]
-        mid = (row["high"] + row["low"]) / 2
+        current_price = row["close"]
         window = h1.iloc[max(0, idx - 50):idx]
-        sig = signal_engine.evaluate(window, bsum, mid,
+        sig = signal_engine.evaluate(window, bsum, current_price,
                                      h1_high=float(h1_high_arr[idx]),
                                      h1_low=float(h1_low_arr[idx]))
         if sig:

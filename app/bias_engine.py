@@ -31,6 +31,23 @@ class BiasEngine:
         if df is None or len(df) < lookback * 3:
             return "NEUTRAL"
 
+        close = df["close"].astype(float)
+        fast = close.ewm(span=20, adjust=False).mean()
+        slow = close.ewm(span=50, adjust=False).mean()
+        fast_slope = fast.iloc[-1] - fast.iloc[-6] if len(fast) >= 6 else 0.0
+        slow_slope = slow.iloc[-1] - slow.iloc[-6] if len(slow) >= 6 else 0.0
+
+        votes = 0.0
+        if fast.iloc[-1] > slow.iloc[-1] and fast_slope > 0:
+            votes += 1.0
+        elif fast.iloc[-1] < slow.iloc[-1] and fast_slope < 0:
+            votes -= 1.0
+
+        if close.iloc[-1] > slow.iloc[-1] and slow_slope >= 0:
+            votes += 0.5
+        elif close.iloc[-1] < slow.iloc[-1] and slow_slope <= 0:
+            votes -= 0.5
+
         highs, lows = [], []
         for i in range(lookback, len(df) - lookback):
             if all(df["high"].iloc[i] >= df["high"].iloc[i - j] for j in range(1, lookback + 1)) and \
@@ -41,22 +58,27 @@ class BiasEngine:
                 lows.append(df["low"].iloc[i])
 
         if len(highs) < 2 or len(lows) < 2:
+            if votes >= 1.0:
+                return "BULLISH"
+            if votes <= -1.0:
+                return "BEARISH"
             return "NEUTRAL"
 
         recent_h = highs[-3:] if len(highs) >= 3 else highs
         recent_l = lows[-3:] if len(lows) >= 3 else lows
 
-        h_up = sum(1 for i in range(1, len(recent_h)) if recent_h[i] >= recent_h[i-1])
-        h_dn = sum(1 for i in range(1, len(recent_h)) if recent_h[i] <= recent_h[i-1])
-        l_up = sum(1 for i in range(1, len(recent_l)) if recent_l[i] >= recent_l[i-1])
-        l_dn = sum(1 for i in range(1, len(recent_l)) if recent_l[i] <= recent_l[i-1])
+        h_up = sum(1 for i in range(1, len(recent_h)) if recent_h[i] > recent_h[i-1])
+        h_dn = sum(1 for i in range(1, len(recent_h)) if recent_h[i] < recent_h[i-1])
+        l_up = sum(1 for i in range(1, len(recent_l)) if recent_l[i] > recent_l[i-1])
+        l_dn = sum(1 for i in range(1, len(recent_l)) if recent_l[i] < recent_l[i-1])
 
-        score = (h_up - h_dn) + (l_up - l_dn)
-        total = max(1, (len(recent_h)-1) + (len(recent_l)-1))
+        swing_score = (h_up - h_dn) + (l_up - l_dn)
+        swing_total = max(1, (len(recent_h)-1) + (len(recent_l)-1))
+        votes += swing_score / swing_total
 
-        if score / total >= 0.3:
+        if votes >= 0.75:
             return "BULLISH"
-        if score / total <= -0.3:
+        if votes <= -0.75:
             return "BEARISH"
         return "NEUTRAL"
 

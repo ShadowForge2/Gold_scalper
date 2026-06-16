@@ -3,6 +3,8 @@ import numpy as np
 from typing import Optional, Dict, Tuple
 from datetime import datetime
 
+import config as cfg
+
 
 class SignalEngine:
     def __init__(self):
@@ -70,8 +72,9 @@ class SignalEngine:
                     range_size=round(range_size, 2),
                     score=round(score, 3),
                 )
-            recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(6, len(closes))))
-            if not recent_in_range:
+            lookback = max(2, cfg.RECENT_PULLBACK_LOOKBACK + 1)
+            recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(lookback, len(closes))))
+            if cfg.REQUIRE_RECENT_PULLBACK and not recent_in_range:
                 return self._reject(
                     "buy_no_recent_pullback_inside_h1_range",
                     direction=direction,
@@ -98,8 +101,9 @@ class SignalEngine:
                     range_size=round(range_size, 2),
                     score=round(score, 3),
                 )
-            recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(6, len(closes))))
-            if not recent_in_range:
+            lookback = max(2, cfg.RECENT_PULLBACK_LOOKBACK + 1)
+            recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(lookback, len(closes))))
+            if cfg.REQUIRE_RECENT_PULLBACK and not recent_in_range:
                 return self._reject(
                     "sell_no_recent_pullback_inside_h1_range",
                     direction=direction,
@@ -113,7 +117,7 @@ class SignalEngine:
                 )
 
         score = min(breakout_dist / range_size, 1.0)
-        if score < 0.02:
+        if score < cfg.MIN_BREAKOUT_SCORE:
             return self._reject(
                 "breakout_score_too_small",
                 direction=direction,
@@ -124,6 +128,7 @@ class SignalEngine:
                 breakout_dist=round(breakout_dist, 2),
                 range_size=round(range_size, 2),
                 score=round(score, 3),
+                threshold=cfg.MIN_BREAKOUT_SCORE,
             )
 
         signal = {
