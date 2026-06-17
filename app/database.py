@@ -1,12 +1,8 @@
-import asyncio
 import os
 from databases import Database
 
-PG_URL = os.getenv("DATABASE_URL", "")
 SQLITE_URL = "sqlite+aiosqlite:///./gold_scalper.db"
-
 database = Database(SQLITE_URL)
-_using_pg = False
 
 CREATE_DEVICES = """
 CREATE TABLE IF NOT EXISTS devices (
@@ -55,20 +51,6 @@ CREATE TABLE IF NOT EXISTS monthly_periods (
 
 
 async def init_db():
-    global database, _using_pg
-    if PG_URL:
-        pg_url = PG_URL
-        if pg_url.startswith("postgresql://") and "+" not in pg_url:
-            pg_url = pg_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-        try:
-            db = Database(pg_url, min_size=1, max_size=1)
-            await asyncio.wait_for(db.connect(), timeout=5.0)
-            await db.execute("SELECT 1")
-            database = db
-            _using_pg = True
-        except Exception:
-            pass
-    if not _using_pg:
-        await database.connect()
+    await database.connect()
     for sql in [CREATE_DEVICES, CREATE_ACCOUNTS, CREATE_SUBSCRIPTIONS, CREATE_PERIODS]:
         await database.execute(sql)
