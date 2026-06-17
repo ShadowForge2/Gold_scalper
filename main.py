@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import uvicorn
 from app.api import create_app
@@ -9,13 +10,37 @@ import config as cfg
 
 bot = Bot()
 bot_pool = BotPool()
-app = create_app(bot, bot_pool=bot_pool)
+
+_db_connected = False
+
+
+async def startup_db():
+    global _db_connected
+    try:
+        await database.connect()
+        await init_db()
+        _db_connected = True
+        bot.logger.info("Database connected")
+    except Exception as e:
+        _db_connected = False
+        bot.logger.warning(f"Database unavailable ({e}). Running without DB.")
+
+
+async def shutdown_db():
+    if _db_connected:
+        await database.disconnect()
+
+
+def is_db_connected() -> bool:
+    return _db_connected
+
+
+app = create_app(bot, bot_pool=bot_pool, db_check=is_db_connected)
 
 
 @app.on_event("startup")
 async def startup():
-    await database.connect()
-    await init_db()
+    await startup_db()
     await bot.initialize()
     asyncio.create_task(bot.run())
 
@@ -24,7 +49,7 @@ async def startup():
 async def shutdown():
     await bot.shutdown()
     bot_pool.stop_all()
-    await database.disconnect()
+    await shutdown_db()
 
 
 if __name__ == "__main__":

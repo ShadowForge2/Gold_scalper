@@ -41,7 +41,7 @@ def sanitize_account(acct: Dict) -> Dict:
     return {k: v if k != "password" else masked for k, v in acct.items()}
 
 
-def create_app(bot: Bot, bot_pool: Optional[BotPool] = None) -> FastAPI:
+def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> FastAPI:
     app = FastAPI(title="Gold Scalper", version="2.0.0")
 
     cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",")
@@ -53,6 +53,9 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    def _db_ok() -> bool:
+        return db_check() if db_check else True
+
     @app.get("/health")
     async def health():
         connected = bot.client is not None and bot.client.is_connected()
@@ -60,6 +63,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None) -> FastAPI:
             "status": "healthy" if connected else "degraded",
             "state": bot.state,
             "connected": connected,
+            "db_connected": _db_ok(),
             "broker": cfg.BROKER,
             "symbol": bot.symbol,
         }
@@ -132,14 +136,21 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None) -> FastAPI:
             return {"message": result["message"], "accounts": bot.list_accounts()}
         return JSONResponse(status_code=404, content=result)
 
+    def _no_db():
+        return JSONResponse(status_code=503, content={"error": "Database not connected"})
+
     # ── Device-based Account Management ──────────────────────────
     @app.get("/api/device/accounts")
     async def device_list_accounts(device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
         dev = await ensure_device(device_id or "unknown")
         return {"accounts": [sanitize_account(a) for a in dev.get("accounts", [])]}
 
     @app.post("/api/device/accounts")
     async def device_add_account(data: AddAccountRequest, device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
         did = device_id or "unknown"
         await restore_device_by_capital_id(data.identifier, did)
         await ensure_device(did)
@@ -149,6 +160,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None) -> FastAPI:
 
     @app.delete("/api/device/accounts/{identifier}")
     async def device_remove_account(identifier: str, device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
         did = device_id or "unknown"
         ok = await remove_account(did, identifier)
         if not ok:
@@ -159,6 +172,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None) -> FastAPI:
     # ── Device Bot Control (keyed by Capital.com identifier) ────
     @app.post("/api/device/bot/start")
     async def device_start_bot(device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
         did = device_id or "unknown"
         if bot_pool is None:
             return JSONResponse(status_code=503, content={"error": "Bot pool not available"})
@@ -217,6 +232,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None) -> FastAPI:
 
     @app.post("/api/device/bot/stop")
     async def device_stop_bot(device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
         did = device_id or "unknown"
         if bot_pool is None:
             return JSONResponse(status_code=503, content={"error": "Bot pool not available"})
@@ -234,6 +251,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None) -> FastAPI:
 
     @app.get("/api/device/bot/state")
     async def device_bot_state(device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
         did = device_id or "unknown"
         if bot_pool is None:
             return JSONResponse(status_code=503, content={"error": "Bot pool not available"})
@@ -252,6 +271,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None) -> FastAPI:
 
     @app.get("/api/device/bot/logs")
     async def device_bot_logs(device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
         did = device_id or "unknown"
         if bot_pool is None:
             return JSONResponse(status_code=503, content={"error": "Bot pool not available"})
@@ -268,6 +289,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None) -> FastAPI:
     # ── Subscription ─────────────────────────────────────────────
     @app.get("/api/device/subscription")
     async def device_subscription(device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
         did = device_id or "unknown"
         dev = await get_device(did)
         if not dev or not dev.get("accounts"):
@@ -283,6 +306,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None) -> FastAPI:
 
     @app.post("/api/device/subscription/check")
     async def device_subscription_check(device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
         did = device_id or "unknown"
         dev = await get_device(did)
         if not dev or not dev.get("accounts"):
@@ -310,6 +335,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None) -> FastAPI:
     # ── Paystack Payment ─────────────────────────────────────────
     @app.post("/api/payment/initialize")
     async def payment_initialize(data: PaystackInitRequest, device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
         did = device_id or "unknown"
         dev = await get_device(did)
         if not dev or not dev.get("accounts"):
