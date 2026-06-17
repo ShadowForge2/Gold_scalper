@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import os
 import uvicorn
 from app.api import create_app
@@ -10,14 +9,12 @@ import config as cfg
 
 bot = Bot()
 bot_pool = BotPool()
-
 _db_connected = False
 
 
 async def startup_db():
     global _db_connected
     try:
-        await database.connect()
         await init_db()
         _db_connected = True
         bot.logger.info("Database connected")
