@@ -59,11 +59,21 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
     @app.get("/health")
     async def health():
         connected = bot.client is not None and bot.client.is_connected()
+        db_connected = _db_ok()
+        db_type = "disconnected"
+        if db_connected:
+            try:
+                from app import database as _db_mod
+                url = str(getattr(_db_mod.database, "url", ""))
+                db_type = "postgresql" if "postgres" in url else "sqlite"
+            except Exception:
+                db_type = "unknown"
         return {
             "status": "healthy" if connected else "degraded",
             "state": bot.state,
             "connected": connected,
-            "db_connected": _db_ok(),
+            "db_connected": db_connected,
+            "db_type": db_type,
             "broker": cfg.BROKER,
             "symbol": bot.symbol,
         }
