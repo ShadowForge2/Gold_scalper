@@ -168,6 +168,16 @@ class Bot:
         pnl_data = self.position_manager.refresh()
         self.risk_manager.daily_pnl = pnl_data["daily_pnl"]
 
+        if pnl_data["open_count"] > 0 and self.state not in (
+            self.STATES["IN_TRADE"],
+            self.STATES["STOPPED"],
+        ):
+            self.logger.info(
+                f"Recovered {pnl_data['open_count']} open position(s) "
+                f"(PnL=${pnl_data['event_pnl']:.2f}). Resuming management."
+            )
+            self.state = self.STATES["IN_TRADE"]
+
         if self.state == self.STATES["STOPPED"]:
             return
 
