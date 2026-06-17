@@ -346,13 +346,15 @@ def _paystack_headers() -> Dict:
     }
 
 
-def initialize_payment(email: str, amount_kobo: int, metadata: Dict = None) -> Optional[Dict]:
+def initialize_payment(email: str, amount_kobo: int, metadata: Dict = None, channels: List[str] = None) -> Optional[Dict]:
     if not PAYSTACK_SECRET:
         return None
     try:
         body = {"email": email, "amount": amount_kobo}
         if metadata:
             body["metadata"] = metadata
+        if channels:
+            body["channels"] = channels
         r = http_requests.post(f"{PAYSTACK_BASE}/transaction/initialize", headers=_paystack_headers(), json=body, timeout=15)
         if r.ok:
             return r.json().get("data")

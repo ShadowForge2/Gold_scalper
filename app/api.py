@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from fastapi import FastAPI, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +27,7 @@ class AddAccountRequest(BaseModel):
 
 class PaystackInitRequest(BaseModel):
     email: str
+    channels: Optional[List[str]] = None
 
 
 def _device_id(x_device_id: Optional[str] = Header(None)) -> str:
@@ -364,7 +365,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             due_kobo = 5000  # Min 50 NGN
         if bot_pool:
             bot_pool.add_log(ident, f"Initializing payment of ${due_kobo/100:.2f}...", "INFO")
-        result = initialize_payment(data.email, due_kobo, metadata={"identifier": ident})
+        result = initialize_payment(data.email, due_kobo, metadata={"identifier": ident}, channels=data.channels)
         if result is None:
             if bot_pool:
                 bot_pool.add_log(ident, "Payment gateway error", "ERROR")
