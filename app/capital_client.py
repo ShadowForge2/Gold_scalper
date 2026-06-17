@@ -3,6 +3,7 @@ import pandas as pd
 import time
 from typing import Optional, List, Dict, Tuple
 from datetime import datetime
+import config as cfg
 
 
 TIMEFRAME_MAP = {
@@ -292,17 +293,18 @@ class CapitalClient:
         if not self._ensure_session():
             return []
         try:
+            target_epic = self._resolve_epic(cfg.CAPITAL_EPIC) if magic is not None else None
             r = self._session.get(f"{self.base_url}/api/v1/positions", headers=self._auth_headers())
             if r.ok:
                 result = []
                 for pos_data in r.json().get("positions", []):
                     p = pos_data.get("position", {})
                     mkt = pos_data.get("market", {})
-                    epic = mkt.get("epic", self._resolve_epic("XAUUSD"))
+                    epic = mkt.get("epic", "")
                     deal_id = p.get("dealId", "")
                     comment = p.get("reference", "")
                     if magic is not None:
-                        if not comment.startswith(str(magic)):
+                        if not comment.startswith(str(magic)) and epic != target_epic:
                             continue
                     result.append({
                         "ticket": deal_id,
