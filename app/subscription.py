@@ -4,7 +4,7 @@ from typing import Optional, Dict, List
 
 import requests as http_requests
 
-from app.database import database
+from app import database as db_mod
 
 PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "")
 
@@ -12,17 +12,17 @@ PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "")
 # ── Device tracking (async DB) ──────────────────────────────────
 
 async def ensure_device(device_id: str) -> Dict:
-    row = await database.fetch_one(
+    row = await db_mod.database.fetch_one(
         "SELECT * FROM devices WHERE device_id = :did", {"did": device_id}
     )
     if row:
-        account_rows = await database.fetch_all(
+        account_rows = await db_mod.database.fetch_all(
             "SELECT * FROM accounts WHERE device_id = :did", {"did": device_id}
         )
         return dict(row) | {"accounts": [dict(a) for a in account_rows]}
 
     now = datetime.utcnow().isoformat()
-    await database.execute(
+    await db_mod.database.execute(
         "INSERT INTO devices (device_id, first_seen) VALUES (:did, :fs)",
         {"did": device_id, "fs": now},
     )
@@ -30,19 +30,19 @@ async def ensure_device(device_id: str) -> Dict:
 
 
 async def get_device(device_id: str) -> Optional[Dict]:
-    row = await database.fetch_one(
+    row = await db_mod.database.fetch_one(
         "SELECT * FROM devices WHERE device_id = :did", {"did": device_id}
     )
     if row is None:
         return None
-    rows = await database.fetch_all(
+    rows = await db_mod.database.fetch_all(
         "SELECT * FROM accounts WHERE device_id = :did", {"did": device_id}
     )
     return dict(row) | {"accounts": [dict(a) for a in rows]}
 
 
 async def get_accounts(device_id: str) -> List[Dict]:
-    rows = await database.fetch_all(
+    rows = await db_mod.database.fetch_all(
         "SELECT * FROM accounts WHERE device_id = :did", {"did": device_id}
     )
     return [dict(r) for r in rows]
@@ -50,7 +50,7 @@ async def get_accounts(device_id: str) -> List[Dict]:
 
 async def add_account(device_id: str, api_key: str, identifier: str, password: str, demo: bool = True) -> bool:
     await ensure_device(device_id)
-    await database.execute(
+    await db_mod.database.execute(
         """INSERT INTO accounts (device_id, api_key, identifier, password, demo)
            VALUES (:did, :ak, :id, :pw, :dm)
            ON CONFLICT (device_id, identifier)
@@ -62,7 +62,7 @@ async def add_account(device_id: str, api_key: str, identifier: str, password: s
 
 
 async def remove_account(device_id: str, identifier: str) -> bool:
-    result = await database.execute(
+    result = await db_mod.database.execute(
         "DELETE FROM accounts WHERE device_id = :did AND identifier = :id",
         {"did": device_id, "id": identifier},
     )
@@ -70,7 +70,7 @@ async def remove_account(device_id: str, identifier: str) -> bool:
 
 
 async def restore_device_by_capital_id(identifier: str, new_device_id: str) -> Optional[Dict]:
-    old_device = await database.fetch_one(
+    old_device = await db_mod.database.fetch_one(
         """SELECT DISTINCT a.device_id FROM accounts a
            WHERE a.identifier = :id AND a.device_id != :ndid""",
         {"id": identifier, "ndid": new_device_id},
@@ -80,22 +80,22 @@ async def restore_device_by_capital_id(identifier: str, new_device_id: str) -> O
 
     old_did = old_device["device_id"]
 
-    existing = await database.fetch_one(
+    existing = await db_mod.database.fetch_one(
         "SELECT 1 FROM devices WHERE device_id = :did", {"did": new_device_id}
     )
 
     if existing is None:
         now = datetime.utcnow().isoformat()
-        await database.execute(
+        await db_mod.database.execute(
             "UPDATE devices SET device_id = :ndid, restored_from = :old WHERE device_id = :odid",
             {"ndid": new_device_id, "old": old_did, "odid": old_did},
         )
-        await database.execute(
+        await db_mod.database.execute(
             "UPDATE accounts SET device_id = :ndid WHERE device_id = :odid",
             {"ndid": new_device_id, "odid": old_did},
         )
     else:
-        await database.execute(
+        await db_mod.database.execute(
             """INSERT INTO accounts (device_id, api_key, identifier, password, demo)
                SELECT :ndid, api_key, identifier, password, demo FROM accounts
                WHERE device_id = :odid AND identifier NOT IN (
@@ -103,8 +103,8 @@ async def restore_device_by_capital_id(identifier: str, new_device_id: str) -> O
                )""",
             {"ndid": new_device_id, "odid": old_did, "ndid2": new_device_id},
         )
-        await database.execute("DELETE FROM devices WHERE device_id = :odid", {"odid": old_did})
-        await database.execute("DELETE FROM accounts WHERE device_id = :odid", {"odid": old_did})
+        await db_mod.database.execute("DELETE FROM devices WHERE device_id = :odid", {"odid": old_did})
+        await db_mod.database.execute("DELETE FROM accounts WHERE device_id = :odid", {"odid": old_did})
 
     return await get_device(new_device_id)
 
@@ -115,13 +115,13 @@ PERIOD_DAYS = 30
 
 
 async def _get_sub_record(identifier: str) -> Optional[Dict]:
-    row = await database.fetch_one(
+    row = await db_mod.database.fetch_one(
         "SELECT * FROM subscriptions WHERE identifier = :id", {"id": identifier}
     )
     if row is None:
         return None
     record = dict(row)
-    period_rows = await database.fetch_all(
+    period_rows = await db_mod.database.fetch_all(
         "SELECT * FROM monthly_periods WHERE identifier = :id ORDER BY period_start",
         {"id": identifier},
     )
@@ -131,7 +131,7 @@ async def _get_sub_record(identifier: str) -> Optional[Dict]:
 
 async def _save_sub_record(record: Dict):
     ident = record["identifier"]
-    await database.execute(
+    await db_mod.database.execute(
         """INSERT INTO subscriptions (identifier, first_connected_at, trial_end, subscribed, subscription_end, paid_amount)
            VALUES (:id, :fca, :te, :sub, :se, :pa)
            ON CONFLICT (identifier)
@@ -146,7 +146,7 @@ async def _save_sub_record(record: Dict):
     )
 
     for p in record.get("monthly_periods", []):
-        await database.execute(
+        await db_mod.database.execute(
             """INSERT INTO monthly_periods (identifier, period_start, period_end, starting_balance,
                ending_balance, cumulative_profit, fee_15pct, fee_paid, paid_at)
                VALUES (:id, :ps, :pe, :sb, :eb, :cp, :fp, :fpd, :pa)

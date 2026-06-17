@@ -4,7 +4,8 @@ import uvicorn
 from app.api import create_app
 from app.bot import Bot
 from app.bot_pool import BotPool
-from app.database import database, init_db
+from app import database as db_mod
+from app.database import init_db
 import config as cfg
 
 bot = Bot()
@@ -25,7 +26,7 @@ async def startup_db():
 
 async def shutdown_db():
     if _db_connected:
-        await database.disconnect()
+        await db_mod.database.disconnect()
 
 
 def is_db_connected() -> bool:

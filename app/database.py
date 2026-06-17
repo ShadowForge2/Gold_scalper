@@ -1,8 +1,14 @@
+import asyncio
 import os
 from databases import Database
 
 SQLITE_URL = "sqlite+aiosqlite:///./gold_scalper.db"
-database = Database(SQLITE_URL)
+
+_env_url = os.getenv("DATABASE_URL", "").strip()
+if _env_url.startswith("postgresql://") and "+" not in _env_url:
+    _env_url = _env_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+database = Database(_env_url if _env_url else SQLITE_URL)
 
 CREATE_DEVICES = """
 CREATE TABLE IF NOT EXISTS devices (
@@ -50,7 +56,33 @@ CREATE TABLE IF NOT EXISTS monthly_periods (
 """
 
 
+async def _try_pg() -> bool:
+    try:
+        async with asyncio.timeout(5):
+            await database.connect()
+            await database.execute("SELECT 1")
+            return True
+    except Exception:
+        return False
+
+
+async def _try_sqlite() -> bool:
+    try:
+        await database.connect()
+        for sql in [CREATE_DEVICES, CREATE_ACCOUNTS, CREATE_SUBSCRIPTIONS, CREATE_PERIODS]:
+            await database.execute(sql)
+        return True
+    except Exception:
+        return False
+
+
 async def init_db():
-    await database.connect()
-    for sql in [CREATE_DEVICES, CREATE_ACCOUNTS, CREATE_SUBSCRIPTIONS, CREATE_PERIODS]:
-        await database.execute(sql)
+    global database, _env_url
+    if _env_url:
+        ok = await _try_pg()
+        if ok:
+            for sql in [CREATE_DEVICES, CREATE_ACCOUNTS, CREATE_SUBSCRIPTIONS, CREATE_PERIODS]:
+                await database.execute(sql)
+            return
+    database = Database(SQLITE_URL)
+    await _try_sqlite()
