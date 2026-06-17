@@ -196,6 +196,16 @@ class Bot:
             self.state = self.STATES["STOPPED"]
             return
 
+        if self.state not in (self.STATES["IN_TRADE"], self.STATES["WAITING_FOR_FUNDS"]):
+            info = self.client.get_account_info()
+            if info and info["balance"] < cfg.MIN_BALANCE:
+                self.logger.warning(
+                    f"Balance ${info['balance']:.2f} below minimum "
+                    f"${cfg.MIN_BALANCE:.2f}. Waiting for funds..."
+                )
+                self.state = self.STATES["WAITING_FOR_FUNDS"]
+                return
+
         if self.state == self.STATES["IN_TRADE"]:
             await self._handle_in_trade(pnl_data)
         elif self.state == self.STATES["COOLDOWN"]:
