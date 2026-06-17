@@ -29,8 +29,8 @@ class Bot:
         "WAITING_FOR_FUNDS": "WAITING_FOR_FUNDS",
     }
 
-    def __init__(self):
-        self.logger = BotLogger()
+    def __init__(self, logger: Optional[BotLogger] = None):
+        self.logger = logger or BotLogger()
         self.client: object = None
         self.bias_engine = BiasEngine()
         self.signal_engine = SignalEngine()
@@ -50,6 +50,9 @@ class Bot:
         self._last_signal_diag_time = 0.0
 
         self._accounts_file: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "accounts.json")
+        self._account_id: Optional[str] = None
+        self._state_file: Optional[str] = None
+        self._last_state_write = 0.0
 
     async def initialize(self) -> bool:
         self.logger.info(f"Initializing {self.symbol} scalping bot...")
@@ -106,6 +109,39 @@ class Bot:
             self.state = self.STATES["STOPPED"]
             return False
 
+    async def initialize_with_credentials(self, api_key: str, identifier: str, password: str, demo: bool = True) -> bool:
+        self.logger.info(f"Initializing user bot for Capital.com (demo={demo})...")
+        self.client = CapitalClient()
+        success = self.client.initialize(
+            api_key=api_key,
+            identifier=identifier,
+            password=password,
+            demo=demo,
+        )
+        self.trade_executor = TradeExecutor(self.client, self.logger)
+        self.position_manager = PositionManager(self.client)
+
+        if success:
+            info = self.client.get_account_info()
+            if info:
+                self.scaler.initialize(info["balance"])
+                self.logger.info(f"Connected: ${info['balance']:.2f} | Leverage: 1:{info['leverage']}")
+                if info["balance"] < cfg.MIN_BALANCE:
+                    self.logger.warning(f"Balance ${info['balance']:.2f} below minimum ${cfg.MIN_BALANCE:.2f}")
+                    self.state = self.STATES["WAITING_FOR_FUNDS"]
+                else:
+                    self.state = self.STATES["IDLE"]
+                self._write_state()
+                return True
+            self.state = self.STATES["IDLE"]
+            self._write_state()
+            return True
+        else:
+            err = self.client.last_error()
+            self.logger.error(f"Connection failed: {err}")
+            self.state = self.STATES["STOPPED"]
+            return False
+
     async def shutdown(self):
         self._running = False
         self.trade_executor.close_all_bot_positions()
@@ -136,8 +172,9 @@ class Bot:
             return
 
         if not self.client.is_connected():
-            self.logger.warning("MT5 disconnected, attempting reconnect...")
+            self.logger.warning("Connection lost, attempting reconnect...")
             await self.initialize()
+            self._write_state()
             return
 
         daily_ok, daily_msg = self.risk_manager.check_daily_loss(
@@ -157,6 +194,8 @@ class Bot:
             await self._handle_waiting_for_funds()
         else:
             await self._handle_search(pnl_data)
+
+        self._write_state()
 
     async def _handle_search(self, pnl_data: Dict):
         now = time.monotonic()
@@ -435,6 +474,27 @@ class Bot:
             )
         else:
             self.state = self.STATES["IDLE"]
+
+    def _write_state(self):
+        if not self._state_file:
+            return
+        now = time.time()
+        if now - self._last_state_write < 1.0:
+            return
+        self._last_state_write = now
+        account = self.client.get_account_info()
+        state = self.get_state_summary()
+        payload = {
+            "account": account or {"error": "No connection"},
+            "bot": state,
+            "logs": self.logger.logs[-50:],
+            "timestamp": datetime.now().isoformat(),
+        }
+        try:
+            with open(self._state_file, "w") as f:
+                json.dump(payload, f, indent=2, default=str)
+        except IOError:
+            pass
 
     def _enter_cooldown(self):
         self.state = self.STATES["COOLDOWN"]

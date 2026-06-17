@@ -112,6 +112,28 @@ class ControlsScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('Parameters', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: -0.2)),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: kGold.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: kGold.withValues(alpha: 0.15)),
+            ),
+            child: const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline_rounded, color: kGold, size: 14),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Keep all settings as default to ensure system efficiency.',
+                    style: TextStyle(color: kGold, fontSize: 11, height: 1.3),
+                  ),
+                ),
+              ],
+            ),
+          ),
           const SizedBox(height: 16),
           _sliderSetting('Lot Multiplier', cfg.lotMultiplier, 1, 10, 1, (v) {
             bp.updateConfig(cfg.copyWith(lotMultiplier: v));

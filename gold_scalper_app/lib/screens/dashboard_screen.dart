@@ -6,6 +6,8 @@ import '../widgets/metric_card.dart';
 import '../widgets/equity_chart.dart';
 import '../widgets/skeletons/dashboard_skeleton.dart';
 import '../widgets/fade_in_scale.dart';
+import '../widgets/terminal_log.dart';
+import 'subscription_screen.dart';
 import '../theme.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -16,49 +18,7 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  String _botName = 'HIDE';
   bool _isYearlyView = true;
-
-  void _editBotName(BuildContext context) {
-    final controller = TextEditingController(text: _botName);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: kDarkCard,
-        title: const Text('Bot Name', style: TextStyle(color: Colors.white)),
-        content: TextField(
-          controller: controller,
-          style: const TextStyle(color: Colors.white),
-          decoration: InputDecoration(
-            hintText: 'Enter bot name',
-            hintStyle: const TextStyle(color: kTextSecondary),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: kDarkBorder),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: kGold),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel', style: TextStyle(color: kTextSecondary)),
-          ),
-          TextButton(
-            onPressed: () {
-              setState(() => _botName = controller.text.trim());
-              Navigator.pop(ctx);
-            },
-            child: const Text('Save', style: TextStyle(color: kGold)),
-          ),
-        ],
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -129,6 +89,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   delay: const Duration(milliseconds: 550),
                   child: _buildQuickStats(bp.performance!),
                 ),
+              const SizedBox(height: 16),
+              FadeInScale(
+                delay: const Duration(milliseconds: 600),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _SectionTitle('Terminal'),
+                    const SizedBox(height: 8),
+                    TerminalLog(logs: bp.logs, height: 200),
+                  ],
+                ),
+              ),
               const SizedBox(height: 24),
             ],
           ),
@@ -187,22 +159,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    GestureDetector(
-                      onTap: () => _editBotName(context),
-                      child: Row(
-                        children: [
-                          Text(
-                            _botName.toUpperCase(),
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                              color: kGold,
-                              letterSpacing: 1.2,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Icon(Icons.edit_rounded, size: 10, color: kGold.withValues(alpha: 0.5)),
-                        ],
+                    const Text(
+                      'HIDE',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: kGold,
+                        letterSpacing: 1.2,
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -220,6 +183,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
               ),
+              GestureDetector(
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscriptionScreen())),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: kGold.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: kGold.withValues(alpha: 0.2)),
+                  ),
+                  child: const Icon(Icons.credit_card_rounded, color: kGold, size: 18),
+                ),
+              ),
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(

@@ -55,3 +55,9 @@ services:
         value: "50.0"
       - key: ALLOWED_SESSIONS
         value: ASIA,LONDON,NEW_YORK
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        value: https://your-frontend-domain.com

@@ -1,6 +1,12 @@
 # Secrets
 .env
 accounts.json
+devices.json
+subscriptions.json
+bot_states/
+
+# Temp files from atomic writes
+*.tmp
 
 # Python
 __pycache__/

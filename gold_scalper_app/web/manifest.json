@@ -1,6 +1,6 @@
 {
-    "name": "gold_scalper_app",
-    "short_name": "gold_scalper_app",
+    "name": "Gold Scalper Pro",
+    "short_name": "Gold Scalper Pro",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

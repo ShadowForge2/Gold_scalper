@@ -1,4 +1,9 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:http/http.dart' as http;
+import '../providers/device_provider.dart';
+import '../providers/bot_provider.dart';
 import '../widgets/status_indicator.dart';
 import '../widgets/fade_in_scale.dart';
 import '../theme.dart';
@@ -11,60 +16,117 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _emailController = TextEditingController(text: '');
-  final _passwordController = TextEditingController(text: '');
+  final _apiKeyCtrl = TextEditingController();
+  final _identifierCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
   bool _isDemo = true;
 
   @override
   void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
+    _apiKeyCtrl.dispose();
+    _identifierCtrl.dispose();
+    _passwordCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _save() async {
+    final apiKey = _apiKeyCtrl.text.trim();
+    final identifier = _identifierCtrl.text.trim();
+    final password = _passwordCtrl.text.trim();
+    if (apiKey.isEmpty || identifier.isEmpty || password.isEmpty) {
+      _snack('All fields are required');
+      return;
+    }
+
+    final bp = context.read<BotProvider>();
+    final ok = await bp.addAccount(apiKey, identifier, password, _isDemo);
+    if (ok && mounted) {
+      _apiKeyCtrl.clear();
+      _identifierCtrl.clear();
+      _passwordCtrl.clear();
+      _snack('Account saved');
+    }
+  }
+
+  void _snack(String msg) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(msg)));
   }
 
   @override
   Widget build(BuildContext context) {
+    final bp = context.watch<BotProvider>();
+    final device = context.watch<DeviceProvider>();
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         FadeInScale(
-          child: _buildSection('Connection', [
-            _inputField('Email', _emailController, keyboardType: TextInputType.emailAddress),
-            const SizedBox(height: 8),
-            _inputField('Password', _passwordController, obscure: true),
-            const SizedBox(height: 12),
-            _saveButton(),
-            const SizedBox(height: 12),
-            _settingTile('Broker', 'Capital.com'),
-            _accountTypeToggle(),
-            _settingTile('API Endpoint', 'https://gold-scalper.onrender.com'),
-            _settingTile('Symbol', 'XAUUSD'),
-            _settingTile('Leverage', '1:100'),
+          child: _buildSection('Device', [
+            _infoTile('Device ID', device.deviceId ?? '--'),
           ]),
         ),
         const SizedBox(height: 16),
         FadeInScale(
           delay: const Duration(milliseconds: 100),
-          child: _buildSection('Notifications', [
-            _switchTile('Push notifications', true),
-            _switchTile('Trade alerts', true),
-            _switchTile('Daily summary', false),
-            _switchTile('Error alerts', true),
+          child: _buildSection('Capital.com Credentials', [
+            _field('API Key', _apiKeyCtrl),
+            const SizedBox(height: 8),
+            _field('Identifier (Email)', _identifierCtrl,
+                keyboardType: TextInputType.emailAddress),
+            const SizedBox(height: 8),
+            _field('Password', _passwordCtrl, obscure: true),
+            const SizedBox(height: 12),
+            _demoToggle(),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _save,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: kGold,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                ),
+                child: const Text('Save Credentials',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ),
           ]),
         ),
         const SizedBox(height: 16),
         FadeInScale(
           delay: const Duration(milliseconds: 200),
-          child: _buildSection('Data', [
-            _settingTile('Storage', 'Local'),
-            _settingTile('Auto-refresh', '5 seconds'),
-            _settingTile('Trade history', '385 trades'),
-            _settingTile('Backtest data', '2025 Full Year'),
+          child: _buildSection('Subscription', [
+            if (bp.trialActive)
+              _infoTile('Trial Active', '${bp.daysRemaining} day(s) left')
+            else if (bp.subscription['subscribed'] == true)
+              _infoTile('Subscribed', 'Active')
+            else
+              _infoTile('Status', 'Not started'),
+            _infoTile('Monthly Profit', '\$${bp.currentMonthProfit.toStringAsFixed(2)}'),
+            _infoTile('15% Fee Due', '\$${bp.currentMonthFee.toStringAsFixed(2)}'),
+            if (bp.unpaidFees > 0)
+              _infoTile('Unpaid Fees (Total)', '\$${bp.unpaidFees.toStringAsFixed(2)}', 
+                  valueColor: Colors.amberAccent),
+            if (bp.dueAmount > 0)
+              _infoTile('Due Amount', '\$${bp.dueAmount.toStringAsFixed(2)}',
+                  valueColor: Colors.redAccent),
           ]),
         ),
         const SizedBox(height: 16),
         FadeInScale(
           delay: const Duration(milliseconds: 300),
+          child: _buildSection('Info', [
+            _infoTile('Broker', 'Capital.com'),
+            _infoTile('Symbol', 'XAUUSD'),
+            _infoTile('App', 'Gold Scalper v2.0'),
+          ]),
+        ),
+        const SizedBox(height: 16),
+        FadeInScale(
+          delay: const Duration(milliseconds: 400),
           child: _buildFooter(),
         ),
       ],
@@ -82,7 +144,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: -0.2)),
+          Text(title,
+              style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  letterSpacing: -0.2)),
           const SizedBox(height: 8),
           ...children,
         ],
@@ -100,54 +167,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       child: const Column(
         children: [
-          StatusIndicator(active: true, label: 'API Connected', size: 14),
+          StatusIndicator(active: true, label: 'Ready', size: 14),
           SizedBox(height: 12),
-          Text('App v1.3.0', style: TextStyle(color: kTextSecondary, fontSize: 13)),
-          Text('Developer: Agni Kai', style: TextStyle(color: kTextSecondary, fontSize: 11)),
-          Text('Fire Star LTD', style: TextStyle(color: kTextSecondary, fontSize: 11)),
+          Text('Gold Scalper v2.0',
+              style: TextStyle(color: kTextSecondary, fontSize: 13)),
+          Text('Multi-User | Capital.com',
+              style: TextStyle(color: kTextSecondary, fontSize: 11)),
+          SizedBox(height: 8),
+          Text('Developer: Agni Kai',
+              style: TextStyle(color: kTextSecondary, fontSize: 11)),
+          Text('Company: Fire Star LTD',
+              style: TextStyle(color: kTextSecondary, fontSize: 11)),
         ],
       ),
     );
   }
 
-  Widget _saveButton() {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton(
-        onPressed: _saveCredentials,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: kGold,
-          foregroundColor: Colors.black,
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-        child: const Text('Save Credentials', style: TextStyle(fontWeight: FontWeight.bold)),
-      ),
-    );
-  }
-
-  void _saveCredentials() {
-    final email = _emailController.text.trim();
-    final password = _passwordController.text.trim();
-    if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Email and password are required')),
-      );
-      return;
-    }
-    final accountType = _isDemo ? 'Demo' : 'Live';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Credentials saved for $accountType')),
-    );
-  }
-
-  Widget _accountTypeToggle() {
+  Widget _demoToggle() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          const Text('Account Type', style: TextStyle(color: kTextSecondary, fontSize: 14)),
+          const Text('Account Type',
+              style: TextStyle(color: kTextSecondary, fontSize: 14)),
           Container(
             decoration: BoxDecoration(
               color: kDarkBg,
@@ -160,10 +203,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 GestureDetector(
                   onTap: () => setState(() => _isDemo = true),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 6),
                     decoration: BoxDecoration(
                       color: _isDemo ? kGold : Colors.transparent,
-                      borderRadius: const BorderRadius.horizontal(left: Radius.circular(7)),
+                      borderRadius: const BorderRadius.horizontal(
+                          left: Radius.circular(7)),
                     ),
                     child: Text(
                       'Demo',
@@ -178,10 +223,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 GestureDetector(
                   onTap: () => setState(() => _isDemo = false),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 6),
                     decoration: BoxDecoration(
                       color: !_isDemo ? kGold : Colors.transparent,
-                      borderRadius: const BorderRadius.horizontal(right: Radius.circular(7)),
+                      borderRadius: const BorderRadius.horizontal(
+                          right: Radius.circular(7)),
                     ),
                     child: Text(
                       'Live',
@@ -201,20 +248,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _inputField(String label, TextEditingController controller, {bool obscure = false, TextInputType? keyboardType}) {
+  Widget _field(String label, TextEditingController ctrl,
+      {bool obscure = false, TextInputType? keyboardType}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: kTextSecondary, fontSize: 13)),
+        Text(label,
+            style: const TextStyle(color: kTextSecondary, fontSize: 13)),
         const SizedBox(height: 4),
         TextField(
-          controller: controller,
+          controller: ctrl,
           obscureText: obscure,
           keyboardType: keyboardType,
           style: const TextStyle(color: Colors.white, fontSize: 14),
           decoration: InputDecoration(
             isDense: true,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             filled: true,
             fillColor: kDarkBg,
             border: OutlineInputBorder(
@@ -235,27 +285,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _settingTile(String label, String value) {
+  Widget _infoTile(String label, String value, {Color? valueColor}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: kTextSecondary, fontSize: 14)),
-          Text(value, style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w500)),
+          Text(label,
+              style:
+                  const TextStyle(color: kTextSecondary, fontSize: 14)),
+          Text(value,
+              style: TextStyle(
+                  color: valueColor ?? Colors.white70,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500)),
         ],
       ),
-    );
-  }
-
-  Widget _switchTile(String label, bool value) {
-    return SwitchListTile(
-      title: Text(label, style: const TextStyle(color: Colors.white70, fontSize: 14)),
-      value: value,
-      onChanged: (_) {},
-      activeTrackColor: kGold,
-      contentPadding: EdgeInsets.zero,
-      dense: true,
     );
   }
 }
