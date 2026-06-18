@@ -178,6 +178,7 @@ class BotProvider extends ChangeNotifier {
       return {
         'authorization_url': 'https://paystack.com/pay/mock-ref-12345',
         'reference': 'mock-ref-12345',
+        'access_code': 'mock-access-code-12345',
       };
     }
     if (path.contains('/payment/verify')) {
@@ -305,6 +306,7 @@ class BotProvider extends ChangeNotifier {
     final newBalance = (_state?.balance ?? 1250) + pnlDelta;
 
     _state = _state?.copyWith(
+      status: idx == 4 ? 'stopped' : 'running',
       state: states[idx],
       bias: biases[idx],
       biasStrength: strengths[idx] * 100,
@@ -356,11 +358,18 @@ class BotProvider extends ChangeNotifier {
     addLog('Starting bot...');
     if (_useMockData) {
       _botRunning = true;
-      _state = _state?.copyWith(state: 'AWAITING_SIGNAL');
-      addLog('Bot started');
+      _state = _state?.copyWith(status: 'running', state: 'AWAITING_SIGNAL');
+      addLog('Bot started successfully', level: 'TRADE');
     } else {
-      await _post('/api/device/bot/start', {});
-      _botRunning = true;
+      try {
+        await _post('/api/device/bot/start', {});
+        _botRunning = true;
+        addLog('Bot started successfully', level: 'TRADE');
+      } catch (e) {
+        addLog('Failed to start bot: $e', level: 'ERROR');
+        notifyListeners();
+        return false;
+      }
     }
     notifyListeners();
     return true;
@@ -370,19 +379,43 @@ class BotProvider extends ChangeNotifier {
     addLog('Stopping bot...', level: 'WARNING');
     if (_useMockData) {
       _botRunning = false;
-      _state = _state?.copyWith(state: 'IDLE');
-      addLog('Bot stopped', level: 'WARNING');
+      _state = _state?.copyWith(status: 'stopped', state: 'IDLE');
+      addLog('Bot stopped successfully', level: 'WARNING');
     } else {
-      await _post('/api/device/bot/stop', {});
-      _botRunning = false;
+      try {
+        await _post('/api/device/bot/stop', {});
+        _botRunning = false;
+        addLog('Bot stopped successfully', level: 'WARNING');
+      } catch (e) {
+        addLog('Failed to stop bot: $e', level: 'ERROR');
+        notifyListeners();
+        return false;
+      }
     }
     notifyListeners();
     return true;
   }
 
-  Future<bool> closeAllPositions() async {
+  Future<Map<String, dynamic>> closeAllPositions() async {
     addLog('Closing all positions...', level: 'WARNING');
-    return false;
+    if (_useMockData) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      _state = _state?.copyWith(state: 'IDLE', openPositions: 0);
+      addLog('All positions closed successfully (0 remaining)', level: 'TRADE');
+      notifyListeners();
+      return {'message': 'All positions closed', 'closed_count': 0};
+    }
+    try {
+      final result = await _post('/api/trades/close_all', {});
+      final count = result['closed_count'] ?? 0;
+      addLog('All positions closed: $count position(s)', level: 'TRADE');
+      _state = _state?.copyWith(state: 'IDLE', openPositions: 0);
+      notifyListeners();
+      return result;
+    } catch (e) {
+      addLog('Failed to close positions: $e', level: 'ERROR');
+      return {'message': 'Failed: $e', 'closed_count': 0};
+    }
   }
 
   Future<List<Map<String, dynamic>>> getAccounts() async {
@@ -403,13 +436,17 @@ class BotProvider extends ChangeNotifier {
     return true;
   }
 
-  Future<String?> initializePayment(String email) async {
+  Future<Map<String, dynamic>?> initializePayment(String email, {List<String>? channels}) async {
     final data = _useMockData
         ? _mockPostResponse('/api/payment/initialize', {})
-        : await _post('/api/payment/initialize', {'email': email});
-    final url = data['authorization_url'] as String?;
-    if (url != null) addLog('Payment link generated');
-    return url;
+        : await _post('/api/payment/initialize', {
+            'email': email,
+            if (channels != null) 'channels': channels,
+          });
+    if (data['access_code'] != null) {
+      addLog('Payment link generated');
+    }
+    return data;
   }
 
   Future<bool> verifyPayment(String reference) async {

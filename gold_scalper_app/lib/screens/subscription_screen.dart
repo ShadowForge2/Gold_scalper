@@ -1,4 +1,4 @@
-import 'dart:html' as html;
+import 'dart:js' as js;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -13,7 +13,7 @@ class SubscriptionScreen extends StatefulWidget {
 }
 
 class _SubscriptionScreenState extends State<SubscriptionScreen> {
-  String _selectedMethod = 'paystack';
+  String _selectedMethod = 'card';
   final _emailCtrl = TextEditingController();
   final _refCtrl = TextEditingController();
 
@@ -29,10 +29,12 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     return Consumer<BotProvider>(
       builder: (context, bp, _) {
         return Scaffold(
-          backgroundColor: kDarkBg,
+          backgroundColor: Colors.white,
           appBar: AppBar(
             title: const Text('Subscription'),
-            backgroundColor: kDarkSurface,
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black87,
+            elevation: 0.5,
           ),
           body: ListView(
             padding: const EdgeInsets.all(16),
@@ -44,9 +46,12 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
               _buildPeriodsCard(bp),
               const SizedBox(height: 16),
               _buildMethodCards(bp),
-              if (_selectedMethod == 'paystack') ...[
+              if (_selectedMethod == 'card') ...[
                 const SizedBox(height: 12),
-                _buildPaystackForm(bp),
+                _buildPaymentForm(bp, channel: 'card'),
+              ] else if (_selectedMethod == 'bank_transfer') ...[
+                const SizedBox(height: 12),
+                _buildPaymentForm(bp, channel: 'bank_transfer'),
               ] else ...[
                 const SizedBox(height: 12),
                 _buildCryptoInfo(),
@@ -63,13 +68,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF0F172A), kDarkSurface],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+        border: Border.all(color: Colors.grey.shade200),
       ),
       child: Column(
         children: [
@@ -87,7 +88,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Status', style: TextStyle(color: kTextSecondary, fontSize: 11, fontWeight: FontWeight.w600)),
+                  Text('Status', style: TextStyle(color: Colors.grey.shade600, fontSize: 11, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
                   Text(
                     bp.trialActive
@@ -95,7 +96,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                         : bp.subscription['subscribed'] == true
                             ? 'Subscribed'
                             : 'Not Started',
-                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    style: const TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
@@ -116,7 +117,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             ],
           ),
           const SizedBox(height: 20),
-          Container(height: 1, color: Colors.white.withValues(alpha: 0.04)),
+          Container(height: 1, color: Colors.grey.shade200),
           const SizedBox(height: 20),
           Row(
             children: [
@@ -134,9 +135,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     return Expanded(
       child: Column(
         children: [
-          Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          Text(value, style: const TextStyle(color: Colors.black87, fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
-          Text(label, style: const TextStyle(color: kTextSecondary, fontSize: 10)),
+          Text(label, style: const TextStyle(color: Colors.grey, fontSize: 10)),
         ],
       ),
     );
@@ -147,38 +148,38 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: kDarkCard,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+        border: Border.all(color: Colors.grey.shade200),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Current 30-Day Period', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+          const Text('Current 30-Day Period', style: TextStyle(color: Colors.black87, fontSize: 15, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           _row('Starting Balance', '\$${(1000).toStringAsFixed(2)}'),
-          const Divider(color: kDarkBorder, height: 20),
+          const Divider(color: Colors.grey, height: 20),
           _row('Current Balance', '\$${(bp.state?.balance ?? 0).toStringAsFixed(2)}'),
-          const Divider(color: kDarkBorder, height: 20),
+          const Divider(color: Colors.grey, height: 20),
           _row('Profit', '\$${bp.currentMonthProfit.toStringAsFixed(2)}', valueColor: bp.currentMonthProfit >= 0 ? Colors.green : Colors.red),
-          const Divider(color: kDarkBorder, height: 20),
+          const Divider(color: Colors.grey, height: 20),
           _row('15% Fee Due', '\$${bp.currentMonthFee.toStringAsFixed(2)}', valueColor: kGold),
           if (bp.unpaidFees > 0) ...[
-            const Divider(color: kDarkBorder, height: 20),
-            _row('Total Unpaid Fees', '\$${bp.unpaidFees.toStringAsFixed(2)}', valueColor: Colors.amberAccent),
+            const Divider(color: Colors.grey, height: 20),
+            _row('Total Unpaid Fees', '\$${bp.unpaidFees.toStringAsFixed(2)}', valueColor: Colors.amber.shade700),
           ],
           const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: kGold.withValues(alpha: 0.06),
+              color: kGold.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: kGold.withValues(alpha: 0.12)),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Amount to Pay', style: TextStyle(color: kTextSecondary, fontSize: 13)),
+                const Text('Amount to Pay', style: TextStyle(color: Colors.black54, fontSize: 13)),
                 Text('\$${amount.toStringAsFixed(2)}', style: const TextStyle(color: kGold, fontSize: 20, fontWeight: FontWeight.bold)),
               ],
             ),
@@ -192,8 +193,8 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: const TextStyle(color: kTextSecondary, fontSize: 14)),
-        Text(value, style: TextStyle(color: valueColor ?? Colors.white70, fontWeight: FontWeight.bold, fontSize: 14)),
+        Text(label, style: const TextStyle(color: Colors.black54, fontSize: 14)),
+        Text(value, style: TextStyle(color: valueColor ?? Colors.black87, fontWeight: FontWeight.bold, fontSize: 14)),
       ],
     );
   }
@@ -203,17 +204,17 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: kDarkCard,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+        border: Border.all(color: Colors.grey.shade200),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Billing History', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+          const Text('Billing History', style: TextStyle(color: Colors.black87, fontSize: 15, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           if (periods.isEmpty)
-            const Text('No billing periods yet.', style: TextStyle(color: kTextSecondary, fontSize: 13))
+            const Text('No billing periods yet.', style: TextStyle(color: Colors.grey, fontSize: 13))
           else
             ...periods.map((p) => _periodTile(p)),
         ],
@@ -231,9 +232,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: kDarkBg,
+        color: Colors.grey.shade50,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: kDarkBorder.withValues(alpha: 0.2)),
+        border: Border.all(color: Colors.grey.shade200),
       ),
       child: Row(
         children: [
@@ -241,7 +242,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('$start → ${end ?? 'current'}', style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600)),
+                Text('$start → ${end ?? 'current'}', style: const TextStyle(color: Colors.black54, fontSize: 12, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 4),
                 Text('Profit: \$${profit.toStringAsFixed(2)}', style: TextStyle(color: profit >= 0 ? Colors.green : Colors.red, fontSize: 12)),
               ],
@@ -254,7 +255,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
               if (paid)
                 const Text('PAID', style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold))
               else if (fee > 0 && end != null)
-                const Text('UNPAID', style: TextStyle(color: Colors.amberAccent, fontSize: 10, fontWeight: FontWeight.bold)),
+                const Text('UNPAID', style: TextStyle(color: Colors.orange, fontSize: 10, fontWeight: FontWeight.bold)),
             ],
           ),
         ],
@@ -263,21 +264,30 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   }
 
   Widget _buildMethodCards(BotProvider bp) {
-    final amount = bp.unpaidFees > 0 ? bp.unpaidFees : bp.currentMonthFee;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Payment Method', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+        const Text('Payment Method', style: TextStyle(color: Colors.black87, fontSize: 15, fontWeight: FontWeight.bold)),
         const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
               child: _methodCard(
-                icon: Icons.payments_rounded,
-                label: 'Paystack',
-                desc: 'Pay with card, bank\nor USSD',
-                selected: _selectedMethod == 'paystack',
-                onTap: () => setState(() => _selectedMethod = 'paystack'),
+                icon: Icons.credit_card_rounded,
+                label: 'Card',
+                desc: 'Pay with debit\nor credit card',
+                selected: _selectedMethod == 'card',
+                onTap: () => setState(() => _selectedMethod = 'card'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _methodCard(
+                icon: Icons.account_balance_rounded,
+                label: 'Bank Transfer',
+                desc: 'Pay via bank\ntransfer',
+                selected: _selectedMethod == 'bank_transfer',
+                onTap: () => setState(() => _selectedMethod = 'bank_transfer'),
               ),
             ),
             const SizedBox(width: 12),
@@ -308,56 +318,63 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: selected ? kGold.withValues(alpha: 0.1) : kDarkCard,
+          color: selected ? kGold.withValues(alpha: 0.1) : Colors.grey.shade100,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: selected ? kGold : kDarkBorder.withValues(alpha: 0.3),
+            color: selected ? kGold : Colors.grey.shade300,
             width: selected ? 1.5 : 1,
           ),
         ),
         child: Column(
           children: [
-            Icon(icon, color: selected ? kGold : kTextSecondary, size: 28),
+            Icon(icon, color: selected ? kGold : Colors.grey, size: 28),
             const SizedBox(height: 8),
-            Text(label, style: TextStyle(color: selected ? kGold : Colors.white70, fontWeight: FontWeight.bold, fontSize: 14)),
+            Text(label, style: TextStyle(color: selected ? kGold : Colors.black54, fontWeight: FontWeight.bold, fontSize: 14)),
             const SizedBox(height: 4),
-            Text(desc, textAlign: TextAlign.center, style: const TextStyle(color: kTextSecondary, fontSize: 10, height: 1.3)),
+            Text(desc, textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey, fontSize: 10, height: 1.3)),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildPaystackForm(BotProvider bp) {
+  Widget _buildPaymentForm(BotProvider bp, {required String channel}) {
     final amount = bp.unpaidFees > 0 ? bp.unpaidFees : bp.currentMonthFee;
+    final isCard = channel == 'card';
+    final icon = isCard ? Icons.credit_card_rounded : Icons.account_balance_rounded;
+    final title = isCard ? 'Card Payment' : 'Bank Transfer';
+    final buttonLabel = isCard
+        ? 'Pay \$${amount.toStringAsFixed(2)} with Card'
+        : 'Pay \$${amount.toStringAsFixed(2)} via Bank Transfer';
+    final channels = isCard ? ['card'] : ['bank_transfer'];
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: kDarkCard,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: kGold.withValues(alpha: 0.08)),
+        border: Border.all(color: kGold.withValues(alpha: 0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.payments_rounded, color: kGold, size: 18),
+              Icon(icon, color: kGold, size: 18),
               const SizedBox(width: 8),
-              const Text('Paystack Payment', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+              Text(title, style: const TextStyle(color: Colors.black87, fontSize: 15, fontWeight: FontWeight.bold)),
             ],
           ),
           const SizedBox(height: 16),
           TextField(
             controller: _emailCtrl,
-            style: const TextStyle(color: Colors.white),
+            style: const TextStyle(color: Colors.black87),
             decoration: InputDecoration(
               labelText: 'Email Address',
-              labelStyle: const TextStyle(color: kTextSecondary),
+              labelStyle: const TextStyle(color: Colors.grey),
               hintText: 'you@email.com',
-              hintStyle: TextStyle(color: kTextSecondary.withValues(alpha: 0.5)),
+              hintStyle: TextStyle(color: Colors.grey.shade400),
               filled: true,
-              fillColor: kDarkBg,
+              fillColor: Colors.grey.shade100,
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
@@ -370,13 +387,13 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: kDarkBg,
+              color: Colors.grey.shade100,
               borderRadius: BorderRadius.circular(10),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Amount', style: TextStyle(color: kTextSecondary, fontSize: 13)),
+                const Text('Amount', style: TextStyle(color: Colors.black54, fontSize: 13)),
                 Text('\$${amount.toStringAsFixed(2)}', style: const TextStyle(color: kGold, fontSize: 16, fontWeight: FontWeight.bold)),
               ],
             ),
@@ -393,65 +410,42 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                   );
                   return;
                 }
-                final url = await bp.initializePayment(email);
-                if (url != null && context.mounted) {
-                  html.window.open(url, '_blank');
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Paystack opened in new tab')),
-                  );
+                final result = await bp.initializePayment(email, channels: channels);
+                if (result != null && context.mounted) {
+                  final accessCode = result['access_code'] as String?;
+                  if (accessCode != null) {
+                    js.context.callMethod('paystackInline', [
+                      accessCode,
+                      (ref) {
+                        bp.verifyPayment(ref as String);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Payment successful!')),
+                          );
+                        }
+                      },
+                      () {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Payment cancelled')),
+                          );
+                        }
+                      },
+                    ]);
+                  } else {
+                    final url = result['authorization_url'] as String?;
+                    if (url != null) {
+                      js.context.callMethod('open', [url, '_blank']);
+                    }
+                  }
                 }
               },
               icon: const Icon(Icons.payment_rounded),
-              label: Text('Pay \$${amount.toStringAsFixed(2)} with Paystack'),
+              label: Text(buttonLabel),
               style: ElevatedButton.styleFrom(
                 backgroundColor: kGold,
                 foregroundColor: Colors.black,
                 padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Container(height: 1, color: kDarkBorder.withValues(alpha: 0.3)),
-          const SizedBox(height: 16),
-          const Text('Verify Payment', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _refCtrl,
-            style: const TextStyle(color: Colors.white),
-            decoration: InputDecoration(
-              hintText: 'Paste reference from Paystack',
-              hintStyle: TextStyle(color: kTextSecondary.withValues(alpha: 0.5)),
-              filled: true,
-              fillColor: kDarkBg,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: kGold),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () async {
-                final ref = _refCtrl.text.trim();
-                if (ref.isEmpty) return;
-                final ok = await bp.verifyPayment(ref);
-                if (ok && context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Payment verified!')),
-                  );
-                  _refCtrl.clear();
-                }
-              },
-              icon: const Icon(Icons.verified_rounded, size: 18),
-              label: const Text('Verify Payment'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: kGold,
-                side: const BorderSide(color: kGold),
-                padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
@@ -465,9 +459,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: kDarkCard,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+        border: Border.all(color: Colors.grey.shade200),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -476,7 +470,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             children: [
               const Icon(Icons.currency_bitcoin_rounded, color: kGold, size: 18),
               const SizedBox(width: 8),
-              const Text('Crypto Payment', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+              const Text('Crypto Payment', style: TextStyle(color: Colors.black87, fontSize: 15, fontWeight: FontWeight.bold)),
             ],
           ),
           const SizedBox(height: 16),
@@ -489,7 +483,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: kGold.withValues(alpha: 0.06),
+              color: kGold.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: kGold.withValues(alpha: 0.1)),
             ),
@@ -500,7 +494,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 Expanded(
                   child: Text(
                     'After sending crypto, contact support with transaction ID for verification.',
-                    style: TextStyle(color: kTextSecondary, fontSize: 11, height: 1.3),
+                    style: TextStyle(color: Colors.black54, fontSize: 11, height: 1.3),
                   ),
                 ),
               ],
@@ -515,9 +509,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: kDarkBg,
+        color: Colors.grey.shade50,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: kDarkBorder.withValues(alpha: 0.15)),
+        border: Border.all(color: Colors.grey.shade200),
       ),
       child: Row(
         children: [
@@ -525,9 +519,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(network, style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600)),
+                Text(network, style: const TextStyle(color: Colors.black54, fontSize: 12, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 4),
-                Text(address, style: const TextStyle(color: kTextSecondary, fontSize: 11)),
+                Text(address, style: const TextStyle(color: Colors.grey, fontSize: 11)),
               ],
             ),
           ),

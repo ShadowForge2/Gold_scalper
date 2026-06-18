@@ -31,6 +31,23 @@
 
   <title>Gold Scalper Pro</title>
   <link rel="manifest" href="manifest.json">
+  <script src="https://js.paystack.co/v1/inline.js"></script>
+  <script>
+    function paystackInline(accessCode, onSuccessCallback, onCancelCallback) {
+      PaystackPop.setup({
+        access_code: accessCode,
+        onSuccess: function(transaction) {
+          if (onSuccessCallback) onSuccessCallback(transaction.reference);
+        },
+        onCancel: function() {
+          if (onCancelCallback) onCancelCallback();
+        },
+        onError: function(error) {
+          console.error('Paystack error:', error);
+        }
+      });
+    }
+  </script>
 </head>
 <body>
   <!--

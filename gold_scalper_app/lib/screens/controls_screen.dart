@@ -32,7 +32,7 @@ class ControlsScreen extends StatelessWidget {
             const SizedBox(height: 16),
             FadeInScale(
               delay: const Duration(milliseconds: 300),
-              child: _buildDangerZone(bp),
+              child: _buildDangerZone(context, bp),
             ),
           ],
         );
@@ -41,7 +41,7 @@ class ControlsScreen extends StatelessWidget {
   }
 
   Widget _buildBotControlCard(s, BotProvider bp) {
-    final isRunning = s != null && s.state != 'STOPPED';
+    final isRunning = s != null && s.status == 'running';
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -233,7 +233,42 @@ class ControlsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildDangerZone(BotProvider bp) {
+  Future<void> _confirmCloseAll(BuildContext context, BotProvider bp) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 22),
+            SizedBox(width: 10),
+            Text('Close All Positions', style: TextStyle(color: Colors.redAccent, fontSize: 16)),
+          ],
+        ),
+        content: const Text(
+          'This will close ALL open positions — both profitable and losing.\n\n'
+          'This action cannot be undone.',
+          style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Close All', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await bp.closeAllPositions();
+    }
+  }
+
+  Widget _buildDangerZone(BuildContext context, BotProvider bp) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -249,7 +284,7 @@ class ControlsScreen extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => bp.closeAllPositions(),
+              onPressed: () => _confirmCloseAll(context, bp),
               icon: const Icon(Icons.close),
               label: const Text('Close All Positions'),
               style: OutlinedButton.styleFrom(

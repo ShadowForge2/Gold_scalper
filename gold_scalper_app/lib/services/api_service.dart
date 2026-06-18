@@ -129,8 +129,13 @@ class ApiService {
     }
   }
 
-  Future<bool> closeAllPositions() async {
-    return false;
+  Future<Map<String, dynamic>> closeAllPositions() async {
+    try {
+      final data = await _post('/api/trades/close_all', {});
+      return data;
+    } catch (e) {
+      return {'message': 'Failed to close positions', 'closed_count': 0};
+    }
   }
 
   Future<List<Map<String, dynamic>>> getAccounts() async {
