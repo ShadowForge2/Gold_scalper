@@ -27,6 +27,7 @@ class Bot:
         "COOLDOWN": "COOLDOWN",
         "STOPPED": "STOPPED",
         "WAITING_FOR_FUNDS": "WAITING_FOR_FUNDS",
+        "MARKET_CLOSED": "MARKET_CLOSED",
     }
 
     def __init__(self, logger: Optional[BotLogger] = None):
@@ -225,6 +226,19 @@ class Bot:
                 self.state = self.STATES["WAITING_FOR_FUNDS"]
                 return
 
+        if not cfg.is_market_open():
+            if self.state == self.STATES["IN_TRADE"]:
+                self.logger.info("Market closed, managing open positions only")
+            elif self.state != self.STATES["MARKET_CLOSED"]:
+                self.logger.info("Market closed, pausing until reopen")
+                self.state = self.STATES["MARKET_CLOSED"]
+                return
+            else:
+                return
+        elif self.state == self.STATES["MARKET_CLOSED"]:
+            self.logger.info("Market reopened, resuming normal operation")
+            self.state = self.STATES["IDLE"]
+
         if self.state == self.STATES["IN_TRADE"]:
             await self._handle_in_trade(pnl_data)
         elif self.state == self.STATES["COOLDOWN"]:
@@ -280,8 +294,20 @@ class Bot:
         h1_data = self.client.get_rates(
             self.symbol, cfg.BIAS_TIMEFRAME, 3
         )
-        h1_high = h1_data["high"].iloc[-2] if h1_data is not None and len(h1_data) >= 2 else None
-        h1_low = h1_data["low"].iloc[-2] if h1_data is not None and len(h1_data) >= 2 else None
+        if h1_data is not None and len(h1_data) >= 2:
+            bias_dir = self._bias_summary.get("bias", "NEUTRAL")
+            if bias_dir == "BULLISH":
+                h1_high = h1_data["high_ask"].iloc[-2]
+                h1_low = h1_data["low_ask"].iloc[-2]
+            elif bias_dir == "BEARISH":
+                h1_high = h1_data["high_bid"].iloc[-2]
+                h1_low = h1_data["low_bid"].iloc[-2]
+            else:
+                h1_high = h1_data["high"].iloc[-2]
+                h1_low = h1_data["low"].iloc[-2]
+        else:
+            h1_high = None
+            h1_low = None
 
         signal = self.signal_engine.evaluate(
             m1_data, self._bias_summary, current_price,
@@ -435,7 +461,9 @@ class Bot:
     async def _handle_waiting_for_funds(self):
         info = self.client.get_account_info()
         if info and info["balance"] >= cfg.MIN_BALANCE:
-            self.scaler.initialize(info["balance"])
+            self.scaler.update_peak(info["balance"])
+            if self.scaler.starting_balance is None:
+                self.scaler.initialize(info["balance"])
             self.logger.info(
                 f"Funds detected: ${info['balance']:.2f}. Starting bot."
             )

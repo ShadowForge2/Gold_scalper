@@ -105,6 +105,7 @@ class RiskManager:
 
         if self._session_reset_day != now.day:
             self.session_trades = 0
+            self.consecutive_losses = 0
             self._session_reset_day = now.day
 
         if self.session_trades >= self.max_trades_per_session:

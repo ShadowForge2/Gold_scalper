@@ -315,7 +315,7 @@ def run_bt(sig_df, h1, label):
             score = scores[idx]
             if score >= params["entry_threshold"] and sigs[idx] is not None:
                 scaler.base_trades = params["base_trades"]
-                lot = scaler.get_lot(balance) * params["lot_mult"]
+                lot = min(scaler.get_lot(balance) * params["lot_mult"], cfg.MAX_LOT)
                 t = _tier_params(_tier(balance))
                 num_tr = min(t[3], params["max_trades"], scaler.get_trades_per_event(balance, score))
                 total_lot = lot * num_tr

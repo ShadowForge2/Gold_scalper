@@ -25,7 +25,9 @@ BIAS_WARMUP_DAYS = 14
 INITIAL_BALANCE = 20.0
 BACKTEST_CASH_FLOWS = []     # e.g. [{"time": "2025-07-01 00:00", "amount": -500.0}]
 CONTRACT_SIZE = 100        # XAUUSD: 1 standard lot = 100 oz
-SPREAD_PER_LOT_USD = 25.0  # ~$25 spread round trip per lot on XAUUSD
+SPREAD_PER_LOT_USD = 25.0  # base spread per lot (varies by session)
+SLIPPAGE_PER_LOT_USD = 3.0 # avg slippage per lot per entry
+SPREAD_ROUND_TRIP = 2      # spread paid on both entry + exit
 LEVERAGE = 200              # Capital.com gold leverage (professional/offshore)
 MARGIN_MAX_PCT = 1.0        # match real bot — no internal margin check
 
@@ -48,11 +50,23 @@ def _session_allowed(ts, sessions_str):
         return True
     return False
 
-def _pnl(entry_px, exit_px, direction, lot, num_trades):
+def _get_spread_multiplier(ts):
+    h = ts.hour
+    if 13 <= h < 17:
+        return 0.9
+    if 8 <= h < 13:
+        return 1.0
+    if 0 <= h < 8:
+        return 1.6
+    return 1.3
+
+def _pnl(entry_px, exit_px, direction, lot, num_trades, entry_time=None):
     delta = exit_px - entry_px if direction == "BUY" else entry_px - exit_px
     gross = delta * CONTRACT_SIZE * lot * num_trades
-    spread = SPREAD_PER_LOT_USD * lot * num_trades
-    return gross - spread
+    sm = _get_spread_multiplier(entry_time) if entry_time is not None else 1.0
+    spread_cost = SPREAD_PER_LOT_USD * lot * num_trades * SPREAD_ROUND_TRIP * sm
+    slippage_cost = SLIPPAGE_PER_LOT_USD * lot * num_trades
+    return gross - spread_cost - slippage_cost
 
 # ── equity tiers ──
 
@@ -512,7 +526,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
 
         # ── EXIT ──
         if cur is not None:
-            event_pnl = _pnl(cur["entry_price"], px, cur["direction"], cur["lot"], cur["num_trades"])
+            event_pnl = _pnl(cur["entry_price"], px, cur["direction"], cur["lot"], cur["num_trades"], entry_time=cur["entry_time"])
             exit_window = sig_df.iloc[max(0, idx - 10):idx]
             should_exit, exit_score_val, reason = signal_engine.evaluate_exit(
                 exit_window, cur["entry_price"], cur["direction"], cur.get("entry_score"),
@@ -520,7 +534,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
             )
 
             if should_exit:
-                pnl = _pnl(cur["entry_price"], px, cur["direction"], cur["lot"], cur["num_trades"])
+                pnl = _pnl(cur["entry_price"], px, cur["direction"], cur["lot"], cur["num_trades"], entry_time=cur["entry_time"])
                 balance += pnl
                 daily_pnl += pnl
                 if balance > peak:
@@ -540,7 +554,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
                 continue
 
             if event_pnl <= -event_loss_limit:
-                pnl = _pnl(cur["entry_price"], px, cur["direction"], cur["lot"], cur["num_trades"])
+                pnl = _pnl(cur["entry_price"], px, cur["direction"], cur["lot"], cur["num_trades"], entry_time=cur["entry_time"])
                 balance += pnl
                 daily_pnl += pnl
                 if balance > peak:
@@ -619,7 +633,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
     # final close
     if cur is not None:
         mid = float(sig_df["close"].iloc[-1])
-        pnl = _pnl(cur["entry_price"], mid, cur["direction"], cur["lot"], cur["num_trades"])
+        pnl = _pnl(cur["entry_price"], mid, cur["direction"], cur["lot"], cur["num_trades"], entry_time=cur["entry_time"])
         balance += pnl
         trades.append({
             "entry_time": cur["entry_time"], "exit_time": sig_df["time"].iloc[-1],

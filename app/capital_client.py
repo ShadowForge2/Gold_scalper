@@ -314,14 +314,30 @@ class CapitalClient:
             dt = datetime.fromisoformat(t)
             if dt.tzinfo is not None:
                 dt = dt.replace(tzinfo=None)
+            open_bid = float(p.get("openPrice", {}).get("bid", 0))
+            open_ask = float(p.get("openPrice", {}).get("offer", 0))
+            high_bid = float(p.get("highPrice", {}).get("bid", 0))
+            high_ask = float(p.get("highPrice", {}).get("offer", 0))
+            low_bid = float(p.get("lowPrice", {}).get("bid", 0))
+            low_ask = float(p.get("lowPrice", {}).get("offer", 0))
+            close_bid = float(p.get("closePrice", {}).get("bid", 0))
+            close_ask = float(p.get("closePrice", {}).get("offer", 0))
             rows.append({
                 "time": dt,
-                "open": float(p.get("openPrice", {}).get("bid", 0)),
-                "high": float(p.get("highPrice", {}).get("bid", 0)),
-                "low": float(p.get("lowPrice", {}).get("bid", 0)),
-                "close": float(p.get("closePrice", {}).get("bid", 0)),
+                "open": open_bid,
+                "high": high_bid,
+                "low": low_bid,
+                "close": close_bid,
+                "open_bid": open_bid,
+                "open_ask": open_ask,
+                "high_bid": high_bid,
+                "high_ask": high_ask,
+                "low_bid": low_bid,
+                "low_ask": low_ask,
+                "close_bid": close_bid,
+                "close_ask": close_ask,
                 "tick_volume": int(p.get("lastTradedVolume", 0)),
-                "spread": 0,
+                "spread": round(max(0, open_ask - open_bid), 5),
                 "real_volume": int(p.get("lastTradedVolume", 0)),
             })
         return rows
