@@ -372,7 +372,11 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             return JSONResponse(status_code=500, content={"error": "Payment gateway error"})
         if bot_pool:
             bot_pool.add_log(ident, "Payment link generated", "INFO")
-        return {"authorization_url": result.get("authorization_url"), "reference": result.get("reference")}
+        return {
+            "authorization_url": result.get("authorization_url"),
+            "reference": result.get("reference"),
+            "access_code": result.get("access_code"),
+        }
 
     @app.post("/api/payment/verify")
     async def payment_verify(data: dict):
