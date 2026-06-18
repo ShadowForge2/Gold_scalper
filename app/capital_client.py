@@ -217,6 +217,7 @@ class CapitalClient:
                     "volume_min": float(dr.get("minDealSize", {}).get("value", 0.01)),
                     "volume_max": float(dr.get("maxDealSize", {}).get("value", 100)),
                     "volume_step": float(dr.get("minSizeIncrement", {}).get("value", 0.01)),
+                    "margin_rate": float(dr.get("marginFactor", {}).get("value", 0.05)),
                     "trade_mode": "ENABLED" if snap.get("marketStatus") == "TRADEABLE" else "DISABLED",
                     "market_status": snap.get("marketStatus", ""),
                     "filling_mode": 0,
@@ -494,8 +495,17 @@ class CapitalClient:
                 )
                 return None
         result = self._open_position_raw(epic, direction, volume, stop_loss, take_profit, reference=reference)
-        if result:
-            return result.get("dealReference")
+        if result is None:
+            return None
+        # Poll to confirm position actually opened
+        for _ in range(5):
+            time.sleep(0.5)
+            fresh = self.get_positions()
+            for p in fresh:
+                if p.get("comment", "").startswith(str(magic) + ":"):
+                    self._last_order_error = ""
+                    return p.get("ticket")
+        self._last_order_error = "Order submitted but position not confirmed"
         return None
 
     def close_position(self, ticket) -> bool:

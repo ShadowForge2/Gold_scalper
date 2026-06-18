@@ -463,8 +463,20 @@ class Bot:
         direction = signal["direction"]
         score = signal["score"]
 
+        # Re-fetch fresh info for confirmation checks
+        fresh_info = self.client.get_symbol_info(self.symbol)
+        if fresh_info is None:
+            self.logger.warning("Entry blocked: cannot fetch symbol info")
+            self.state = self.STATES["IDLE"]
+            return
+
+        if fresh_info.get("market_status") != "TRADEABLE":
+            self.logger.warning(f"Entry blocked: market {fresh_info.get('market_status')}")
+            self.state = self.STATES["IDLE"]
+            return
+
         account = self.client.get_account_info()
-        balance = account.get("balance", 0) if account else symbol_info.get("balance", 0)
+        balance = account.get("balance", 0) if account else fresh_info.get("balance", 0)
         if balance < cfg.MIN_BALANCE:
             self.logger.warning(
                 f"Entry blocked: balance ${balance:.2f} below minimum ${cfg.MIN_BALANCE:.2f}"
@@ -475,15 +487,40 @@ class Bot:
         self.scaler.update_peak(balance)
 
         lot = min(self.scaler.get_lot(balance) * cfg.LOT_MULTIPLIER, cfg.MAX_LOT)
-        vol_step = symbol_info.get("volume_step", cfg.LOT_STEP)
+        vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
         lot = round(lot / vol_step) * vol_step
-        lot = max(symbol_info.get("volume_min", cfg.MIN_LOT), min(lot, symbol_info.get("volume_max", cfg.MAX_LOT)))
+        lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), min(lot, fresh_info.get("volume_max", cfg.MAX_LOT)))
         max_trades = self.scaler.get_trades_per_event(balance, score)
+
+        # Price drift check — reject if price moved outside signal range
+        current_price = fresh_info["bid"] if direction == "SELL" else fresh_info["ask"]
+        signal_price = symbol_info["bid"] if direction == "SELL" else symbol_info["ask"]
+        drift_pct = abs(current_price - signal_price) / signal_price * 100 if signal_price else 0
+        if drift_pct > cfg.MAX_SPREAD_PIPS * 0.1:
+            self.logger.warning(
+                f"Entry blocked: price drifted {drift_pct:.3f}% "
+                f"from signal price ${signal_price:.2f} to ${current_price:.2f}"
+            )
+            self.state = self.STATES["IDLE"]
+            return
+
+        # Margin check — verify sufficient free margin for the position
+        margin_rate = fresh_info.get("margin_rate", 0.05)
+        est_margin = lot * current_price * margin_rate * max_trades
+        free_margin = account.get("free_margin", 0) if account else 0
+        if free_margin < est_margin:
+            self.logger.warning(
+                f"Entry blocked: insufficient margin "
+                f"(est ${est_margin:.2f} needed, ${free_margin:.2f} available)"
+            )
+            self.state = self.STATES["IDLE"]
+            return
 
         self.logger.info(
             f"Entry: {direction} | score={score:.2f} | "
             f"balance=${balance:.2f} | lot={lot:.2f} | "
-            f"max_trades={max_trades} | "
+            f"max_trades={max_trades} | drift={drift_pct:.3f}% | "
+            f"margin=${free_margin:.2f} | "
             f"tier={self.scaler._tier(balance)} "
             f"({self.scaler.growth_pct(balance):.1f}% growth)"
         )
@@ -502,10 +539,11 @@ class Bot:
             else:
                 break
 
-        # Re-read balance after trades (margin may affect equity)
-        fresh = self.client.get_account_info()
-        if fresh:
-            self.scaler.update_peak(fresh["balance"])
+        # Re-read balance and refresh positions after trades
+        fresh_acct = self.client.get_account_info()
+        if fresh_acct:
+            self.scaler.update_peak(fresh_acct["balance"])
+        self.position_manager.refresh()
 
         if self.position_manager.in_event:
             self.state = self.STATES["IN_TRADE"]
