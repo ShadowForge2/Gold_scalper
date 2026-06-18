@@ -1,0 +1,22 @@
+C:\Users\1`030 G4\OneDrive\Desktop\sir A.K hee\Dot Agni\Gold scalper\main.py:14: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+C:\Users\1`030 G4\OneDrive\Desktop\sir A.K hee\Dot Agni\Gold scalper\main.py:20: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("shutdown")
+INFO:     Started server process [17004]
+INFO:     Waiting for application startup.
+2026-06-17 01:33:37,415 - GoldScalper - INFO - Initializing XAUUSD scalping bot...
+2026-06-17 01:33:37,415 - GoldScalper - INFO - Broker: Capital.com (REST API)
+2026-06-17 01:33:39,128 - GoldScalper - ERROR - Connection failed: (0, 'No error')
+2026-06-17 01:33:39,129 - GoldScalper - INFO - Bot loop started
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)

@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import 'providers/device_provider.dart';
 import 'providers/bot_provider.dart';
 import 'screens/home_screen.dart';
-import 'screens/welcome_screen.dart';
+import 'screens/welcome/welcome_screen.dart';
 import 'theme.dart';
 
 void main() {
