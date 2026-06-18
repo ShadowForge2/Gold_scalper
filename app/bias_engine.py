@@ -10,11 +10,16 @@ class BiasEngine:
         self.strength: float = 0.0
         self.last_updated: Optional[datetime] = None
         self.summary: Dict = {}
+        self._last_votes: Optional[float] = None
 
     def update(self, h1_data: pd.DataFrame) -> Dict:
         trend = self._detect_trend(h1_data)
         self.bias = trend
-        self.strength = 0.3 if trend != "NEUTRAL" else 0.0
+        if self._last_votes is not None:
+            raw = abs(self._last_votes) / 1.5
+            self.strength = min(raw, 1.0)
+        else:
+            self.strength = 0.0
         self.last_updated = datetime.now()
 
         self.summary = {
@@ -29,6 +34,7 @@ class BiasEngine:
 
     def _detect_trend(self, df: pd.DataFrame, lookback: int = 5) -> str:
         if df is None or len(df) < lookback * 3:
+            self._last_votes = None
             return "NEUTRAL"
 
         close = df["close"].astype(float)
@@ -58,6 +64,7 @@ class BiasEngine:
                 lows.append(df["low"].iloc[i])
 
         if len(highs) < 2 or len(lows) < 2:
+            self._last_votes = votes
             if votes >= 1.0:
                 return "BULLISH"
             if votes <= -1.0:
@@ -75,6 +82,8 @@ class BiasEngine:
         swing_score = (h_up - h_dn) + (l_up - l_dn)
         swing_total = max(1, (len(recent_h)-1) + (len(recent_l)-1))
         votes += swing_score / swing_total
+
+        self._last_votes = votes
 
         if votes >= 0.75:
             return "BULLISH"

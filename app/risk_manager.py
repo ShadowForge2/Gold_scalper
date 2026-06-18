@@ -119,8 +119,7 @@ class RiskManager:
                 remaining = int(self.cooldown_seconds - elapsed)
                 return False, f"cooldown ({remaining}s remaining)"
 
-        spread_pips = symbol_info.get("spread", 0) * \
-            (symbol_info.get("point", 0.0001) / 0.0001)
+        spread_pips = symbol_info.get("spread", 0)
         if spread_pips > self.max_spread:
             return False, f"spread_too_high ({spread_pips:.1f} > {self.max_spread})"
 
@@ -180,7 +179,7 @@ class RiskManager:
         time_decimal = hour + minute / 60.0
 
         sessions = {
-            "ASIA": (0, 9),
+            "ASIA": (0, 8),
             "LONDON": (8, 17),
             "NEW_YORK": (13, 22),
         }

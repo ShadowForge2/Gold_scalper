@@ -215,8 +215,9 @@ class SignalEngine:
         px = df["close"].iloc[-1]
         diff = px - entry if direction == "BUY" else entry - px
 
-        stop_loss = -0.15
-        trail_trigger = 0.20
+        atr = self._compute_atr(df, 14)
+        stop_loss = -(max(atr * 0.5, 0.15))
+        trail_trigger = max(atr * 1.0, 0.20)
         trail_retrace_pct = 0.50
 
         if diff <= stop_loss:
@@ -247,9 +248,13 @@ class SignalEngine:
         px = df["close"].iloc[-1]
         diff = px - entry if direction == "BUY" else entry - px
 
-        if diff <= -0.15:
+        atr = self._compute_atr(df, 14)
+        sl = -(max(atr * 0.5, 0.15))
+        tp = max(atr * 2.0, 0.60)
+
+        if diff <= sl:
             return True, 1.0, "stop_loss"
-        if diff >= 0.60:
+        if diff >= tp:
             return True, 0.0, "take_profit"
         return False, 0.0, "holding"
 
@@ -260,7 +265,7 @@ class SignalEngine:
 
         atr = self._compute_atr(df, 14)
 
-        if diff <= -0.15:
+        if diff <= -(max(atr * 0.5, 0.15)):
             return True, 1.0, "stop_loss"
 
         if atr > 0 and len(df) >= 5:
