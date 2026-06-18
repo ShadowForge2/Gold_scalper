@@ -57,6 +57,7 @@ class Bot:
         self._last_reconnect_time = 0.0
         self._reconnect_backoff_max = 60.0
 
+
     async def initialize(self) -> bool:
         self.logger.info(f"Initializing {self.symbol} scalping bot...")
 
@@ -242,8 +243,8 @@ class Bot:
         if now - self._last_bias_time >= cfg.BIAS_UPDATE_INTERVAL_SEC or \
            self.state == self.STATES["IDLE"]:
             self._last_bias_time = now
-            await self._update_bias()
-            self.state = self.STATES["AWAITING_SIGNAL"]
+            if await self._update_bias():
+                self.state = self.STATES["AWAITING_SIGNAL"]
 
         if self.state != self.STATES["AWAITING_SIGNAL"]:
             return
@@ -440,13 +441,13 @@ class Bot:
             )
             self.state = self.STATES["IDLE"]
 
-    async def _update_bias(self):
+    async def _update_bias(self) -> bool:
         h1_data = self.client.get_rates(
             self.symbol, cfg.BIAS_TIMEFRAME, 96
         )
         if h1_data is None or len(h1_data) < 20:
             self.logger.warning("Cannot update bias: insufficient H1 data")
-            return
+            return False
 
         summary = self.bias_engine.update(h1_data)
         self._bias_summary = summary
@@ -457,6 +458,7 @@ class Bot:
             f"H1={summary['primary_trend']}) "
             f"{'TRADEABLE' if tradeable else 'WAITING'}"
         )
+        return True
 
     async def _execute_entry(self, signal: Dict, symbol_info: Dict):
         self.state = self.STATES["ENTERING"]

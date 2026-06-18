@@ -315,8 +315,10 @@ class SignalEngine:
         if avg_body == 0:
             return 0.0
 
+        atr = self._compute_atr(df, 14)
+        ref = max(atr, df["close"].iloc[-1] * 0.0001)
         raw = (recent_change / (older_change + 1e-10)) * \
-               (avg_body / (df["close"].iloc[-1] * 0.001 + 1e-10))
+               (avg_body / (ref + 1e-10))
         return min(abs(raw), 1.0)
 
     def _compute_atr(self, df: pd.DataFrame, period: int = 14) -> float:
