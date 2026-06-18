@@ -538,17 +538,39 @@ class Bot:
             self.state = self.STATES["IDLE"]
             return
 
-        # Margin check — verify sufficient free margin for the position
+        # Margin-aware lot sizing — reduce until it fits available margin
         margin_rate = fresh_info.get("margin_rate", 0.05)
-        est_margin = lot * current_price * margin_rate * max_trades
         free_margin = account.get("free_margin", 0)
+        if max_trades > 1:
+            single_margin = lot * current_price * margin_rate * 1
+            if free_margin < single_margin * max_trades and free_margin >= single_margin:
+                self.logger.info(
+                    f"Reducing max_trades from {max_trades} to 1 "
+                    f"(margin: ${free_margin:.2f} available, "
+                    f"${single_margin * max_trades:.2f} needed for {max_trades})"
+                )
+                max_trades = 1
+        est_margin = lot * current_price * margin_rate * max_trades
         if free_margin < est_margin:
-            self.logger.warning(
-                f"Entry blocked: insufficient margin "
-                f"(est ${est_margin:.2f} needed, ${free_margin:.2f} available)"
-            )
-            self.state = self.STATES["IDLE"]
-            return
+            max_lot_by_margin = free_margin * 0.9 / (current_price * margin_rate * max_trades)
+            vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
+            max_lot_by_margin = round(max_lot_by_margin / vol_step) * vol_step
+            max_lot_by_margin = max(fresh_info.get("volume_min", cfg.MIN_LOT), max_lot_by_margin)
+            if max_lot_by_margin < lot:
+                self.logger.info(
+                    f"Reducing lot from {lot:.2f} to {max_lot_by_margin:.2f} "
+                    f"(margin: ${free_margin:.2f} available, "
+                    f"${est_margin:.2f} needed)"
+                )
+                lot = max_lot_by_margin
+            est_margin = lot * current_price * margin_rate * max_trades
+            if free_margin < est_margin:
+                self.logger.warning(
+                    f"Entry blocked: insufficient margin "
+                    f"(est ${est_margin:.2f} needed, ${free_margin:.2f} available)"
+                )
+                self.state = self.STATES["IDLE"]
+                return
 
         self.logger.info(
             f"Entry: {direction} | score={score:.2f} | "
