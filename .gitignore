@@ -18,6 +18,14 @@ __pycache__/
 # Data
 *.csv
 *.xlsx
+*.parquet
+data/
+
+# Runtime
+*.db
+*.err
+*.log
+backend.*
 
 # IDE
 .vscode/
