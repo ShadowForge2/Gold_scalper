@@ -46,6 +46,8 @@ class CapitalClient:
         self._realized_daily_pnl = 0.0
         self._last_position_pnl: Dict[str, float] = {}
         self._last_order_error = ""
+        self._request_times: deque = deque(maxlen=20)
+        self._max_requests_per_sec = 8
 
     def initialize(self, api_key: Optional[str] = None,
                    identifier: Optional[str] = None,
@@ -150,7 +152,7 @@ class CapitalClient:
         return self.initialize(self.api_key, self.identifier, self.password)
 
     def last_error(self) -> Tuple[int, str]:
-        return 0, self._last_error if hasattr(self, '_last_error') else "No error"
+        return 0, self._last_order_error or "No error"
 
     def last_order_error(self) -> str:
         return self._last_order_error
@@ -498,12 +500,12 @@ class CapitalClient:
         if result is None:
             return None
         # Poll to confirm position actually opened
+        expected_prefix = str(magic) + ":"
         for _ in range(5):
             time.sleep(0.5)
             fresh = self.get_positions()
             for p in fresh:
-                if p.get("comment", "").startswith(str(magic) + ":"):
-                    self._last_order_error = ""
+                if p.get("comment", "").startswith(expected_prefix):
                     return p.get("ticket")
         self._last_order_error = "Order submitted but position not confirmed"
         return None
@@ -522,7 +524,7 @@ class CapitalClient:
         try:
             r = self._request("DELETE", f"{self.base_url}/api/v1/positions/{deal_id}",
                                      headers=self._auth_headers())
-            return r.ok
+            return r is not None and r.ok
         except Exception:
             return False
 
@@ -550,6 +552,6 @@ class CapitalClient:
         try:
             r = self._request("PUT", f"{self.base_url}/api/v1/positions/{deal_id}",
                                   headers=self._auth_headers(), json=body)
-            return r.ok
+            return r is not None and r.ok
         except Exception:
             return False

@@ -476,7 +476,11 @@ class Bot:
             return
 
         account = self.client.get_account_info()
-        balance = account.get("balance", 0) if account else fresh_info.get("balance", 0)
+        if account is None:
+            self.logger.warning("Entry blocked: cannot fetch account info")
+            self.state = self.STATES["IDLE"]
+            return
+        balance = account.get("balance", 0)
         if balance < cfg.MIN_BALANCE:
             self.logger.warning(
                 f"Entry blocked: balance ${balance:.2f} below minimum ${cfg.MIN_BALANCE:.2f}"
@@ -507,7 +511,7 @@ class Bot:
         # Margin check — verify sufficient free margin for the position
         margin_rate = fresh_info.get("margin_rate", 0.05)
         est_margin = lot * current_price * margin_rate * max_trades
-        free_margin = account.get("free_margin", 0) if account else 0
+        free_margin = account.get("free_margin", 0)
         if free_margin < est_margin:
             self.logger.warning(
                 f"Entry blocked: insufficient margin "
