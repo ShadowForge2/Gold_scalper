@@ -583,11 +583,13 @@ class Bot:
 
     def _enter_cooldown(self):
         self.state = self.STATES["COOLDOWN"]
+        mult = 1 + self.risk_manager.consecutive_losses
+        duration = cfg.RE_ENTRY_COOLDOWN_SEC * mult
         self._cooldown_until = datetime.now() + \
-            timedelta(seconds=cfg.RE_ENTRY_COOLDOWN_SEC)
+            timedelta(seconds=duration)
         self.logger.info(
-            f"Cooldown for {cfg.RE_ENTRY_COOLDOWN_SEC}s until "
-            f"{self._cooldown_until.strftime('%H:%M:%S')}"
+            f"Cooldown for {duration}s (losses={self.risk_manager.consecutive_losses}) "
+            f"until {self._cooldown_until.strftime('%H:%M:%S')}"
         )
 
     def get_state_summary(self) -> Dict:
