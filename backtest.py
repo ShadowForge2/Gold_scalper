@@ -26,8 +26,8 @@ INITIAL_BALANCE = 20.0
 BACKTEST_CASH_FLOWS = []     # e.g. [{"time": "2025-07-01 00:00", "amount": -500.0}]
 CONTRACT_SIZE = 100        # XAUUSD: 1 standard lot = 100 oz
 SPREAD_PER_LOT_USD = 25.0  # ~$25 spread round trip per lot on XAUUSD
-LEVERAGE = 500              # high leverage to reduce margin per lot
-MARGIN_MAX_PCT = 0.80       # cap margin used at 80% of equity
+LEVERAGE = 200              # Capital.com gold leverage (professional/offshore)
+MARGIN_MAX_PCT = 1.0        # match real bot — no internal margin check
 
 # Timeframe constants (same values as MT5 constants)
 TIMEFRAME_H1 = 16385
@@ -42,9 +42,9 @@ def _session_allowed(ts, sessions_str):
     sessions = [s.strip().upper() for s in sessions_str.split(",")]
     if "ASIA" in sessions and 0 <= h < 8:
         return True
-    if "LONDON" in sessions and 7 <= h < 16:
+    if "LONDON" in sessions and 8 <= h < 17:
         return True
-    if "NEW_YORK" in sessions and 12 <= h < 21:
+    if "NEW_YORK" in sessions and 13 <= h < 22:
         return True
     return False
 
@@ -584,7 +584,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
             tier_et = max(et, tp["entry_threshold"])
             if score >= tier_et and sigs[idx] is not None:
                 scaler.base_trades = base_tr
-                lot = scaler.get_lot(balance) * lot_mult
+                lot = min(scaler.get_lot(balance) * lot_mult, cfg.MAX_LOT)
                 num_tr = min(tp["num_trades"], max_trades, scaler.get_trades_per_event(balance, score))
                 # cap total exposure per event
                 total_lot = lot * num_tr
