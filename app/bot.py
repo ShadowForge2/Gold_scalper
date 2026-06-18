@@ -53,6 +53,9 @@ class Bot:
         self._account_id: Optional[str] = None
         self._state_file: Optional[str] = None
         self._last_state_write = 0.0
+        self._reconnect_attempts = 0
+        self._last_reconnect_time = 0.0
+        self._reconnect_backoff_max = 60.0
 
     async def initialize(self) -> bool:
         self.logger.info(f"Initializing {self.symbol} scalping bot...")
@@ -84,6 +87,7 @@ class Bot:
         self.position_manager = PositionManager(self.client)
 
         if success:
+            self._reconnect_attempts = 0
             info = self.client.get_account_info()
             if info:
                 self.scaler.initialize(info["balance"])
@@ -122,6 +126,7 @@ class Bot:
         self.position_manager = PositionManager(self.client)
 
         if success:
+            self._reconnect_attempts = 0
             info = self.client.get_account_info()
             if info:
                 self.scaler.initialize(info["balance"])
@@ -182,8 +187,21 @@ class Bot:
             return
 
         if not self.client.is_connected():
-            self.logger.warning("Connection lost, attempting reconnect...")
-            await self.initialize()
+            now_t = time.time()
+            backoff = min(2 ** self._reconnect_attempts, self._reconnect_backoff_max)
+            if now_t - self._last_reconnect_time >= backoff:
+                self.logger.warning(
+                    f"Connection lost, reconnecting "
+                    f"(attempt {self._reconnect_attempts + 1}, "
+                    f"backoff={backoff:.0f}s)..."
+                )
+                await self.initialize()
+                if self.client.is_connected():
+                    self._reconnect_attempts = 0
+                    self.logger.info("Reconnected successfully")
+                else:
+                    self._reconnect_attempts += 1
+                self._last_reconnect_time = now_t
             self._write_state()
             return
 
@@ -457,6 +475,9 @@ class Bot:
         self.scaler.update_peak(balance)
 
         lot = min(self.scaler.get_lot(balance) * cfg.LOT_MULTIPLIER, cfg.MAX_LOT)
+        vol_step = symbol_info.get("volume_step", cfg.LOT_STEP)
+        lot = round(lot / vol_step) * vol_step
+        lot = max(symbol_info.get("volume_min", cfg.MIN_LOT), min(lot, symbol_info.get("volume_max", cfg.MAX_LOT)))
         max_trades = self.scaler.get_trades_per_event(balance, score)
 
         self.logger.info(

@@ -3,6 +3,7 @@ import pandas as pd
 import time
 from typing import Optional, List, Dict, Tuple
 from datetime import datetime
+from collections import deque
 import config as cfg
 
 
@@ -95,6 +96,43 @@ class CapitalClient:
         self._last_activity = time.time()
         return self.connected
 
+    def _throttle(self):
+        now = time.time()
+        while len(self._request_times) > 0 and now - self._request_times[0] > 1.0:
+            self._request_times.popleft()
+        if len(self._request_times) >= self._max_requests_per_sec:
+            sleep_for = 1.0 - (now - self._request_times[0])
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+        self._request_times.append(time.time())
+
+    def _request(self, method: str, url: str, **kwargs) -> Optional[requests.Response]:
+        self._throttle()
+        for attempt in range(2):
+            try:
+                r = self._session.request(method, url, **kwargs)
+                # 429: rate limited — sleep Retry-After then retry
+                if r.status_code == 429:
+                    retry_after = int(r.headers.get("Retry-After", 5))
+                    self._last_order_error = f"HTTP 429: rate limited, retrying after {retry_after}s"
+                    time.sleep(retry_after)
+                    self._throttle()
+                    continue
+                # 401: session expired — re-login and retry once
+                if r.status_code == 401 and attempt == 0:
+                    self._last_order_error = "HTTP 401: unauthorized, re-authenticating"
+                    if self._login():
+                        self._throttle()
+                        continue
+                    self._last_order_error = "Re-authentication failed"
+                return r
+            except Exception:
+                if attempt == 0:
+                    time.sleep(1)
+                    continue
+                raise
+        return None
+
     def shutdown(self):
         if self.connected:
             try:
@@ -128,7 +166,7 @@ class CapitalClient:
             self._last_order_error = "session_not_connected"
             return None
         try:
-            r = self._session.get(f"{self.base_url}/api/v1/accounts", headers=self._auth_headers())
+            r = self._request("GET", f"{self.base_url}/api/v1/accounts", headers=self._auth_headers())
             if r.ok:
                 accounts = r.json().get("accounts", [])
                 for acct in accounts:
@@ -156,19 +194,17 @@ class CapitalClient:
 
     def get_symbol_info(self, symbol: str) -> Optional[Dict]:
         epic = self._resolve_epic(symbol)
-        if epic in self._symbol_info_cache:
-            return self._symbol_info_cache[epic]
         if not self._ensure_session():
             return None
         try:
-            r = self._session.get(f"{self.base_url}/api/v1/markets/{epic}", headers=self._auth_headers())
+            r = self._request("GET", f"{self.base_url}/api/v1/markets/{epic}", headers=self._auth_headers())
             if r.ok:
                 data = r.json()
                 snap = data.get("snapshot", {})
                 inst = data.get("instrument", {})
                 dr = data.get("dealingRules", {})
                 dpf = int(snap.get("decimalPlacesFactor", 2))
-                info = {
+                return {
                     "name": inst.get("name", symbol),
                     "epic": epic,
                     "spread": max(0, float(snap.get("offer", 0) or 0) - float(snap.get("bid", 0) or 0)),
@@ -186,8 +222,6 @@ class CapitalClient:
                     "filling_mode": 0,
                     "trade_stops_level": 0,
                 }
-                self._symbol_info_cache[epic] = info
-                return info
         except Exception:
             pass
         return None
@@ -198,7 +232,7 @@ class CapitalClient:
         if not self._ensure_session():
             return None
         try:
-            r = self._session.get(f"{self.base_url}/api/v1/prices/{epic}",
+            r = self._request("GET", f"{self.base_url}/api/v1/prices/{epic}",
                                   params={"resolution": resolution, "max": count},
                                   headers=self._auth_headers())
             if r.ok:
@@ -219,7 +253,7 @@ class CapitalClient:
 
         # Try range-based query first
         try:
-            r = self._session.get(f"{self.base_url}/api/v1/prices/{epic}",
+            r = self._request("GET", f"{self.base_url}/api/v1/prices/{epic}",
                                   params={"resolution": resolution,
                                           "from": from_dt.strftime("%Y-%m-%dT%H:%M:%S"),
                                           "to": to_dt.strftime("%Y-%m-%dT%H:%M:%S")},
@@ -242,7 +276,7 @@ class CapitalClient:
                 params = {"resolution": resolution, "max": 1000}
                 if cursor_to:
                     params["to"] = cursor_to
-                r = self._session.get(f"{self.base_url}/api/v1/prices/{epic}",
+                r = self._request("GET", f"{self.base_url}/api/v1/prices/{epic}",
                                       params=params,
                                       headers=self._auth_headers())
                 if not r.ok:
@@ -294,7 +328,7 @@ class CapitalClient:
             return []
         try:
             target_epic = self._resolve_epic(cfg.CAPITAL_EPIC) if magic is not None else None
-            r = self._session.get(f"{self.base_url}/api/v1/positions", headers=self._auth_headers())
+            r = self._request("GET", f"{self.base_url}/api/v1/positions", headers=self._auth_headers())
             if r.ok:
                 result = []
                 for pos_data in r.json().get("positions", []):
@@ -341,7 +375,7 @@ class CapitalClient:
         if not self._ensure_session():
             return []
         try:
-            r = self._session.get(f"{self.base_url}/api/v1/history/activity",
+            r = self._request("GET", f"{self.base_url}/api/v1/history/activity",
                                   params={"from": from_dt.strftime("%Y-%m-%dT%H:%M:%S"),
                                           "to": to_dt.strftime("%Y-%m-%dT%H:%M:%S"),
                                           "detailed": "true"},
@@ -427,7 +461,7 @@ class CapitalClient:
         if reference:
             body["reference"] = reference
         try:
-            r = self._session.post(f"{self.base_url}/api/v1/positions",
+            r = self._request("POST", f"{self.base_url}/api/v1/positions",
                                    headers=self._auth_headers(), json=body)
             if r.ok:
                 self._last_order_error = ""
@@ -447,6 +481,18 @@ class CapitalClient:
                       slippage: int = 30) -> Optional[str]:
         epic = self._resolve_epic(symbol)
         reference = str(magic) + ":" + comment if comment else str(magic)
+        positions = self.get_positions()
+        for p in positions:
+            p_epic = EPIC_MAP.get(p.get("symbol", ""), p.get("symbol", ""))
+            if p_epic != epic:
+                continue
+            p_dir = p.get("type", "")
+            if p_dir and p_dir != direction.upper():
+                self._last_order_error = (
+                    f"Opposing position exists ({p_dir}) for {epic} "
+                    f"cannot open {direction.upper()}"
+                )
+                return None
         result = self._open_position_raw(epic, direction, volume, stop_loss, take_profit, reference=reference)
         if result:
             return result.get("dealReference")
@@ -464,7 +510,7 @@ class CapitalClient:
         if not self._ensure_session():
             return False
         try:
-            r = self._session.delete(f"{self.base_url}/api/v1/positions/{deal_id}",
+            r = self._request("DELETE", f"{self.base_url}/api/v1/positions/{deal_id}",
                                      headers=self._auth_headers())
             return r.ok
         except Exception:
@@ -492,7 +538,7 @@ class CapitalClient:
         if not body:
             return False
         try:
-            r = self._session.put(f"{self.base_url}/api/v1/positions/{deal_id}",
+            r = self._request("PUT", f"{self.base_url}/api/v1/positions/{deal_id}",
                                   headers=self._auth_headers(), json=body)
             return r.ok
         except Exception:
