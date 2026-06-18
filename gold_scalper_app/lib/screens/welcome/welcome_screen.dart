@@ -14,6 +14,7 @@ import '../../widgets/sentiments/ai_sentiment_engine.dart';
 import '../../widgets/ui/logo_section.dart';
 import '../../widgets/ui/action_buttons.dart';
 import '../../widgets/ui/background_gradient.dart';
+import '../home_screen.dart';
 
 class WelcomeScreen extends StatefulWidget {
   const WelcomeScreen({super.key});
@@ -104,7 +105,11 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                 AnimatedOpacity(
                   opacity: _showButton ? 1.0 : 0.0,
                   duration: const Duration(milliseconds: 800),
-                  child: ActionButtons(),
+                  child: ActionButtons(
+                    onExplore: () => Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(builder: (_) => const HomeScreen()),
+                    ),
+                  ),
                 ),
               ],
             ),

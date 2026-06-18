@@ -49,23 +49,35 @@ class _LogoSectionState extends State<LogoSection>
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          'Hide',
-          style: TextStyle(
-            color: AIColors.white.withValues(alpha: fade),
-            fontSize: 52,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 20,
+        ShaderMask(
+          shaderCallback: (bounds) => LinearGradient(
+            colors: [
+              AIColors.white.withValues(alpha: fade),
+              const Color(0xFFD4AF37).withValues(alpha: 0.9 * fade),
+              AIColors.white.withValues(alpha: fade),
+            ],
+            stops: const [0.0, 0.5, 1.0],
+          ).createShader(bounds),
+          blendMode: BlendMode.srcIn,
+          child: Text(
+            'HIDE',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 64,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 24,
+              height: 1.1,
+            ),
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 8),
         Text(
           _text.substring(0, _index),
           style: TextStyle(
             color: AIColors.hologram.withValues(alpha: 0.9 * fade),
             fontSize: 24,
-            letterSpacing: 12,
-            fontWeight: FontWeight.w300,
+            letterSpacing: 14,
+            fontWeight: FontWeight.w400,
           ),
         ),
       ],

@@ -17,7 +17,7 @@ class ControlsScreen extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           children: [
             FadeInScale(
-              child: _buildBotControlCard(s, bp),
+              child: _buildBotControlCard(context, s, bp),
             ),
             const SizedBox(height: 16),
             FadeInScale(
@@ -40,7 +40,7 @@ class ControlsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBotControlCard(s, BotProvider bp) {
+  Widget _buildBotControlCard(BuildContext context, s, BotProvider bp) {
     final isRunning = s != null && s.status == 'running';
     return Container(
       padding: const EdgeInsets.all(16),
@@ -82,7 +82,7 @@ class ControlsScreen extends StatelessWidget {
                 )
               else
                 OutlinedButton.icon(
-                  onPressed: () => bp.stopBot(),
+                  onPressed: () => _confirmStopBot(context, bp),
                   icon: const Icon(Icons.stop),
                   label: const Text('Stop Bot'),
                   style: OutlinedButton.styleFrom(
@@ -231,6 +231,41 @@ class ControlsScreen extends StatelessWidget {
       contentPadding: EdgeInsets.zero,
       dense: true,
     );
+  }
+
+  Future<void> _confirmStopBot(BuildContext context, BotProvider bp) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Row(
+          children: [
+            Icon(Icons.stop_circle_outlined, color: Colors.redAccent, size: 22),
+            SizedBox(width: 10),
+            Text('Stop Bot', style: TextStyle(color: Colors.redAccent, fontSize: 16)),
+          ],
+        ),
+        content: const Text(
+          'Are you sure you want to stop the bot?\n\n'
+          'Active positions will remain open.',
+          style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Stop', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await bp.stopBot();
+    }
   }
 
   Future<void> _confirmCloseAll(BuildContext context, BotProvider bp) async {

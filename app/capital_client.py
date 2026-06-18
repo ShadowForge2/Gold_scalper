@@ -515,12 +515,15 @@ class CapitalClient:
         result = self._open_position_raw(epic, direction, volume, stop_loss, take_profit, reference=reference)
         if result is None:
             return None
-        # Poll to confirm position actually opened
+        deal_ref = result.get("dealReference", "")
+        # Poll up to 12s to confirm position
         expected_prefix = str(magic) + ":"
-        for _ in range(5):
+        for _ in range(24):
             time.sleep(0.5)
             fresh = self.get_positions()
             for p in fresh:
+                if p.get("ticket") == deal_ref:
+                    return p.get("ticket")
                 if p.get("comment", "").startswith(expected_prefix):
                     return p.get("ticket")
         self._last_order_error = "Order submitted but position not confirmed"

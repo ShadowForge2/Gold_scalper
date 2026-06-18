@@ -1,7 +1,5 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:http/http.dart' as http;
 import '../providers/device_provider.dart';
 import '../providers/bot_provider.dart';
 import '../widgets/status_indicator.dart';
@@ -27,6 +25,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _identifierCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
+  }
+
+  String _formatDuration(Duration? d) {
+    if (d == null || d == Duration.zero) return '';
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60);
+    return '${h}h ${m}m';
   }
 
   Future<void> _save() async {
@@ -77,20 +82,69 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _field('Password', _passwordCtrl, obscure: true),
             const SizedBox(height: 12),
             _demoToggle(),
+            if (!device.canEditCredentials) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: device.accountTied
+                      ? Colors.red.withValues(alpha: 0.1)
+                      : kGold.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: device.accountTied
+                        ? Colors.red.withValues(alpha: 0.3)
+                        : kGold.withValues(alpha: 0.2),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      device.accountTied
+                          ? Icons.lock_rounded
+                          : Icons.timer_outlined,
+                      size: 14,
+                      color: device.accountTied ? Colors.redAccent : kGold,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        device.accountTied
+                            ? 'This account is tied to this device and cannot be changed.'
+                            : 'Credentials can only be edited once every 24 hours.',
+                        style: TextStyle(
+                          color:
+                              device.accountTied ? Colors.redAccent : kGold,
+                          fontSize: 11,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _save,
+                onPressed: device.canEditCredentials ? _save : null,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: kGold,
+                  backgroundColor:
+                      device.canEditCredentials ? kGold : kDarkBorder,
                   foregroundColor: Colors.black,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10)),
                 ),
-                child: const Text('Save Credentials',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                child: Text(
+                  device.accountTied
+                      ? 'Account Locked'
+                      : device.credentialsSavedAt != null && !device.canEditCredentials
+                          ? 'Cooldown — ${_formatDuration(device.cooldownRemaining)}'
+                          : 'Save Credentials',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
             ),
           ]),
@@ -183,6 +237,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  void _switchMode(bool isDemo) {
+    if (isDemo == _isDemo) return;
+    setState(() {
+      _isDemo = isDemo;
+      _apiKeyCtrl.clear();
+      _identifierCtrl.clear();
+      _passwordCtrl.clear();
+    });
+    _snack(isDemo
+        ? 'Input your demo credentials only'
+        : 'Input your live credentials only');
+  }
+
   Widget _demoToggle() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -201,7 +268,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 GestureDetector(
-                  onTap: () => setState(() => _isDemo = true),
+                  onTap: () => _switchMode(true),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 14, vertical: 6),
@@ -221,7 +288,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 GestureDetector(
-                  onTap: () => setState(() => _isDemo = false),
+                  onTap: () => _switchMode(false),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 14, vertical: 6),

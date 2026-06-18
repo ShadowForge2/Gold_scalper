@@ -39,15 +39,15 @@ class TradeExecutor:
         self.logger.trade(f"Closed position {ticket}")
         return True
 
-    def close_all_bot_positions(self) -> int:
+    def close_all_bot_positions(self) -> List:
         positions = self.mt5.get_positions(magic=cfg.MAGIC_NUMBER)
-        closed = 0
+        closed_tickets = []
         for pos in positions:
             if self.close_position(pos["ticket"]):
-                closed += 1
-        if closed > 0:
-            self.logger.info(f"Closed {closed} bot position(s)")
-        return closed
+                closed_tickets.append(pos["ticket"])
+        if closed_tickets:
+            self.logger.info(f"Closed {len(closed_tickets)} bot position(s)")
+        return closed_tickets
 
     def close_all_positions(self, symbol: Optional[str] = None) -> int:
         positions = self.mt5.get_positions()

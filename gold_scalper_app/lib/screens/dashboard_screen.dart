@@ -159,23 +159,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'HIDE',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                        color: kGold,
-                        letterSpacing: 1.2,
+                    ShaderMask(
+                      shaderCallback: (bounds) => const LinearGradient(
+                        colors: [kGold, Color(0xFFD4AF37), kGold],
+                        stops: [0.0, 0.5, 1.0],
+                      ).createShader(bounds),
+                      blendMode: BlendMode.srcIn,
+                      child: const Text(
+                        'HIDE',
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                          letterSpacing: 6,
+                          height: 1.1,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 2),
                     const Text(
                       'Gold Scalper Pro',
                       style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: kTextPrimary,
-                        letterSpacing: -0.5,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w400,
+                        color: kTextSecondary,
+                        letterSpacing: 3,
                       ),
                     ),
                     const SizedBox(height: 6),

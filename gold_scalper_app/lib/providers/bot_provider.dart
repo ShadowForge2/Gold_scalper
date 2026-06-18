@@ -16,7 +16,7 @@ class BotProvider extends ChangeNotifier {
   Timer? _timer;
   final _rand = Random(42);
 
-  bool _useMockData = true;
+  bool _useMockData = false;
 
   BotState? _state;
   List<Trade> _recentTrades = [];
@@ -28,7 +28,7 @@ class BotProvider extends ChangeNotifier {
   bool _botRunning = false;
   Map<String, dynamic> _subscription = {};
 
-  static const _baseUrl = 'http://localhost:8000';
+  static const _baseUrl = 'http://localhost:8001';
 
   BotProvider(this._device);
 
@@ -292,7 +292,24 @@ class BotProvider extends ChangeNotifier {
       _timer = Timer.periodic(const Duration(seconds: 4), (_) {
         _tickMock();
       });
+    } else {
+      _timer?.cancel();
+      _timer = Timer.periodic(const Duration(seconds: 5), (_) {
+        _tickLive();
+      });
     }
+  }
+
+  Future<void> _tickLive() async {
+    try {
+      final stateData = await _get('/api/device/bot/state');
+      _state = BotState.fromJson(stateData);
+      _botRunning = stateData['running'] == true;
+      final logData = await _get('/api/device/bot/logs');
+      _logs = (logData['logs'] as List).map((l) => LogEntry.fromJson(l)).toList();
+      _subscription = await _get('/api/device/subscription');
+    } catch (_) {}
+    notifyListeners();
   }
 
   void _tickMock() {
@@ -371,6 +388,7 @@ class BotProvider extends ChangeNotifier {
         return false;
       }
     }
+    await _device.markBotStarted();
     notifyListeners();
     return true;
   }
@@ -427,7 +445,22 @@ class BotProvider extends ChangeNotifier {
 
   Future<bool> addAccount(
       String apiKey, String identifier, String password, bool demo) async {
-    addLog('Account saved: $identifier');
+    addLog('Saving account: $identifier');
+    if (!_useMockData) {
+      try {
+        await _post('/api/device/accounts', {
+          'api_key': apiKey,
+          'identifier': identifier,
+          'password': password,
+          'demo': demo,
+        });
+      } catch (e) {
+        addLog('Failed to save account: $e', level: 'ERROR');
+        return false;
+      }
+    }
+    await _device.saveCredentialsTimestamp();
+    addLog('Account saved: $identifier', level: 'TRADE');
     return true;
   }
 

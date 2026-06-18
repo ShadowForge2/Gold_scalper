@@ -116,8 +116,10 @@ class Bot:
             return False
 
     async def initialize_with_credentials(self, api_key: str, identifier: str, password: str, demo: bool = True) -> bool:
-        self.logger.info(f"Initializing user bot for Capital.com (demo={demo})...")
+        self.logger.info("Connecting to broker...")
         self.client = CapitalClient()
+        self.logger.info("Establishing secure connection...")
+        self.logger.info("Authenticating client...")
         success = self.client.initialize(
             api_key=api_key,
             identifier=identifier,
@@ -132,7 +134,8 @@ class Bot:
             info = self.client.get_account_info()
             if info:
                 self.scaler.initialize(info["balance"])
-                self.logger.info(f"Connected: ${info['balance']:.2f} | Leverage: 1:{info['leverage']}")
+                self.logger.info(f"Account connected ✓")
+                self.logger.info(f"Balance: ${info['balance']:.2f} | Leverage: 1:{info['leverage']}")
                 if info["balance"] < cfg.MIN_BALANCE:
                     self.logger.warning(f"Balance ${info['balance']:.2f} below minimum ${cfg.MIN_BALANCE:.2f}")
                     self.state = self.STATES["WAITING_FOR_FUNDS"]
@@ -145,13 +148,14 @@ class Bot:
             return True
         else:
             err = self.client.last_error()
-            self.logger.error(f"Connection failed: {err}")
+            self.logger.error(f"Authentication failed: {err}")
             self.state = self.STATES["STOPPED"]
             return False
 
     async def shutdown(self):
         self._running = False
-        self.trade_executor.close_all_bot_positions()
+        for ticket in self.trade_executor.close_all_bot_positions():
+            self.position_manager.note_closed(ticket)
         self.client.shutdown()
         self.logger.info("Bot shutdown complete")
 
@@ -212,7 +216,8 @@ class Bot:
         )
         if not daily_ok:
             self.logger.warning(f"Stopping bot: {daily_msg}")
-            self.trade_executor.close_all_bot_positions()
+            for ticket in self.trade_executor.close_all_bot_positions():
+                self.position_manager.note_closed(ticket)
             self.state = self.STATES["STOPPED"]
             return
 
@@ -259,6 +264,7 @@ class Bot:
             self._last_bias_time = now
             if await self._update_bias():
                 self.state = self.STATES["AWAITING_SIGNAL"]
+                self.logger.info("Looking for clear setup...")
 
         if self.state != self.STATES["AWAITING_SIGNAL"]:
             return
@@ -316,13 +322,14 @@ class Bot:
         self._current_signal = signal
 
         if signal:
-            self.logger.info(
-                f"[DEBUG] Signal evaluated: {signal['direction']} "
-                f"score={signal['score']:.3f} "
-                f"breakout_dist={signal.get('breakout_dist', 0):.2f} "
-                f"range={signal.get('range_size', 0):.2f} "
-                f"price={current_price:.2f} "
-                f"h1_high={h1_high:.2f} h1_low={h1_low:.2f}"
+            reason = (
+                f"Price broke above H1 high (${h1_high:.2f}) with bullish momentum"
+                if signal['direction'] == 'BUY'
+                else f"Price broke below H1 low (${h1_low:.2f}) with bearish momentum"
+            )
+            self.logger.signal(
+                f"Signal found: {signal['direction']} | {reason} "
+                f"(score={signal['score']:.3f})"
             )
         else:
             rejection = self.signal_engine.last_rejection or {}
@@ -418,7 +425,8 @@ class Bot:
         )
         if not event_ok:
             self.logger.warning(f"Event stop: {event_msg}")
-            self.trade_executor.close_all_bot_positions()
+            for ticket in self.trade_executor.close_all_bot_positions():
+                self.position_manager.note_closed(ticket)
             self.risk_manager.record_exit(pnl_data["event_pnl"])
             self._enter_cooldown()
             return
@@ -447,7 +455,8 @@ class Bot:
             self.logger.signal(
                 f"Exit signal: score={exit_score:.2f} reason={reason}"
             )
-            self.trade_executor.close_all_bot_positions()
+            for ticket in self.trade_executor.close_all_bot_positions():
+                self.position_manager.note_closed(ticket)
             self.risk_manager.record_exit(pnl_data["event_pnl"])
             self._enter_cooldown()
             return
@@ -685,11 +694,13 @@ class Bot:
 
     async def emergency_close(self):
         self.logger.warning("Emergency close triggered")
-        count = self.trade_executor.close_all_bot_positions()
+        closed_tickets = self.trade_executor.close_all_bot_positions()
+        for ticket in closed_tickets:
+            self.position_manager.note_closed(ticket)
         self.position_manager.refresh()
         self.state = self.STATES["COOLDOWN"]
         self._enter_cooldown()
-        return count
+        return len(closed_tickets)
 
     def update_settings(self, settings: Dict):
         if "max_daily_loss" in settings:
