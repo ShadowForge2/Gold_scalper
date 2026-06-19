@@ -8,12 +8,14 @@ class DeviceProvider extends ChangeNotifier {
   DateTime? _credentialsSavedAt;
   bool _botStartedOnce = false;
   bool _accountTied = false;
+  bool _tutorialSeen = false;
 
   static const _deviceIdKey = 'device_id';
   static const _launchCountKey = 'launch_count';
   static const _credsSavedAtKey = 'credentials_saved_at';
   static const _botStartedKey = 'bot_started_once';
   static const _accountTiedKey = 'account_tied';
+  static const _tutorialSeenKey = 'tutorial_seen';
 
   String? get deviceId => _deviceId;
   bool get loading => _loading;
@@ -21,6 +23,7 @@ class DeviceProvider extends ChangeNotifier {
   DateTime? get credentialsSavedAt => _credentialsSavedAt;
   bool get botStartedOnce => _botStartedOnce;
   bool get accountTied => _accountTied;
+  bool get tutorialSeen => _tutorialSeen;
 
   Duration? get cooldownRemaining {
     if (_accountTied) return null;
@@ -52,6 +55,7 @@ class DeviceProvider extends ChangeNotifier {
     }
     _botStartedOnce = prefs.getBool(_botStartedKey) ?? false;
     _accountTied = prefs.getBool(_accountTiedKey) ?? false;
+    _tutorialSeen = prefs.getBool(_tutorialSeenKey) ?? false;
 
     _loading = false;
     notifyListeners();
@@ -72,6 +76,13 @@ class DeviceProvider extends ChangeNotifier {
       _accountTied = true;
       await prefs.setBool(_accountTiedKey, true);
     }
+    notifyListeners();
+  }
+
+  Future<void> markTutorialSeen() async {
+    _tutorialSeen = true;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_tutorialSeenKey, true);
     notifyListeners();
   }
 

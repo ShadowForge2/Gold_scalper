@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/bot_provider.dart';
+import '../providers/device_provider.dart';
 import '../widgets/fade_in_scale.dart';
+import '../widgets/onboarding_tutorial.dart';
 import '../theme.dart';
 import 'dashboard_screen.dart';
 import 'live_feed_screen.dart';
@@ -63,6 +65,9 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
 
+    final device = context.watch<DeviceProvider>();
+    final showTutorial = device.firstLaunch && !device.tutorialSeen && !device.loading;
+
     return Scaffold(
       backgroundColor: kDarkBg,
       appBar: AppBar(
@@ -105,10 +110,18 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(width: 4),
         ],
       ),
-      body: PageView(
-        controller: _pageController,
-        physics: const NeverScrollableScrollPhysics(),
-        children: _screens,
+      body: Stack(
+        children: [
+          PageView(
+            controller: _pageController,
+            physics: const NeverScrollableScrollPhysics(),
+            children: _screens,
+          ),
+          if (showTutorial)
+            OnboardingTutorial(
+              onDismiss: () => device.markTutorialSeen(),
+            ),
+        ],
       ),
       bottomNavigationBar: _buildBottomNav(),
     );
