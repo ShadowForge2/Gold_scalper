@@ -36,3 +36,9 @@ backend.*
 # OS
 Thumbs.db
 .DS_Store
+
+*.txt
+backend_error.txt
+backend_output.txt
+flutter_web_error.txt
+flutter_web_output.txt
