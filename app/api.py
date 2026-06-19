@@ -406,27 +406,66 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         account = state.get("account") or {}
         balance = account.get("balance", 0) or 0
         starting = scaler.get("starting_balance", 0) or 0
-        net = balance - starting if starting > 0 else 0
+
+        closed = bot_data.get("closed_trades", []) or []
+        wins = sum(1 for t in closed if (t.get("profit") or 0) > 0)
+        losses = sum(1 for t in closed if (t.get("profit") or 0) <= 0)
+        total = wins + losses
+        gross_profit = sum(t.get("profit", 0) for t in closed if (t.get("profit") or 0) > 0)
+        gross_loss = abs(sum(t.get("profit", 0) for t in closed if (t.get("profit") or 0) < 0))
+        net_pnl = gross_profit - gross_loss
+        win_rate = round(wins / total * 100, 1) if total > 0 else 0
+        profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (round(gross_profit, 2) if gross_profit > 0 else 0)
+        avg_win = round(gross_profit / wins, 2) if wins > 0 else 0
+        avg_loss = round(gross_loss / losses, 2) if losses > 0 else 0
+
+        max_dd = 0.0
+        if closed:
+            sorted_closed = sorted(closed, key=lambda t: t.get("closed_at", ""))
+            running = starting
+            peak = starting
+            for t in sorted_closed:
+                running += t.get("profit", 0)
+                if running > peak:
+                    peak = running
+                dd = peak - running
+                if dd > max_dd:
+                    max_dd = dd
+
         return {
-            "trades": 0,
-            "wins": 0,
-            "losses": 0,
-            "win_rate": 0,
-            "gross_profit": 0,
-            "gross_loss": 0,
-            "net_pnl": round(net, 2),
-            "profit_factor": 0,
-            "avg_win": 0,
-            "avg_loss": 0,
-            "max_dd": 0,
+            "trades": total,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": win_rate,
+            "gross_profit": round(gross_profit, 2),
+            "gross_loss": round(gross_loss, 2),
+            "net_pnl": round(net_pnl, 2),
+            "profit_factor": profit_factor,
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+            "max_dd": round(max_dd, 2),
             "starting_balance": round(starting, 2),
             "ending_balance": round(balance, 2),
-            "return_pct": round((net / starting * 100) if starting > 0 else 0, 2),
+            "return_pct": round((net_pnl / starting * 100) if starting > 0 else 0, 2),
             "monthly": [],
             "daily": [],
         }
 
     # ── Subscription ─────────────────────────────────────────────
+    @app.post("/api/device/trades/close_all")
+    async def device_close_all(device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
+        did = device_id or "unknown"
+        if bot_pool is None:
+            return JSONResponse(status_code=503, content={"error": "Bot pool not available"})
+        dev = await get_device(did)
+        if not dev or not dev.get("accounts"):
+            return JSONResponse(status_code=400, content={"error": "No accounts"})
+        ident = dev["accounts"][0]["identifier"]
+        count = await bot_pool.emergency_close(ident)
+        return {"message": f"Closed {count} position(s)", "closed_count": count}
+
     @app.get("/api/device/subscription")
     async def device_subscription(device_id: str = Header(None, alias="X-Device-Id")):
         if not _db_ok():
