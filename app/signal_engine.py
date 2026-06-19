@@ -224,9 +224,12 @@ class SignalEngine:
             return True, 1.0, "stop_loss"
 
         if len(df) >= 5:
-            highs = df["high"].values[-5:] if direction == "BUY" else df["close"].values[-5:]
-            refs = df["low"].values[-5:] if direction == "SELL" else df["close"].values[-5:]
-            peak = float(np.max(highs - entry)) if direction == "BUY" else float(np.max(entry - refs))
+            if direction == "BUY":
+                peaks = df["high"].values[-5:]
+                peak = float(np.max(peaks - entry))
+            else:
+                troughs = df["low"].values[-5:]
+                peak = float(np.max(entry - troughs))
             if peak >= trail_trigger:
                 pullback = peak - max(0, diff)
                 if pullback / peak > trail_retrace_pct:

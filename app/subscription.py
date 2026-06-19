@@ -1,4 +1,9 @@
+import hashlib
+import hmac
+import json
 import os
+import uuid
+from base64 import b64encode
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 
@@ -7,6 +12,9 @@ import requests as http_requests
 from app import database as db_mod
 
 PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "")
+CRYPTOMUS_MERCHANT_ID = os.getenv("CRYPTOMUS_MERCHANT_ID", "")
+CRYPTOMUS_API_KEY = os.getenv("CRYPTOMUS_API_KEY", "")
+CRYPTOMUS_BASE = "https://api.cryptomus.com/v1"
 
 
 # ── Device tracking (async DB) ──────────────────────────────────
@@ -393,6 +401,77 @@ async def verify_payment(reference: str) -> Optional[Dict]:
             "amount": amount_paid,
             "subscription_end": record["subscription_end"] if record else None,
         }
+    except Exception:
+        pass
+    return None
+
+
+# ── Cryptomus ──────────────────────────────────────────────────────
+
+_cryptomus_orders: dict = {}
+
+
+def _cryptomus_register_order(order_id: str, identifier: str):
+    _cryptomus_orders[order_id] = identifier
+
+
+def _cryptomus_get_identifier(order_id: str) -> str:
+    return _cryptomus_orders.pop(order_id, "")
+
+
+def _cryptomus_sign(payload: dict) -> tuple:
+    json_str = json.dumps(payload, separators=(",", ":"))
+    encoded = b64encode(json_str.encode()).decode()
+    sign = hmac.new(CRYPTOMUS_API_KEY.encode(), encoded.encode(), hashlib.sha256).hexdigest()
+    return encoded, sign
+
+
+def _cryptomus_headers() -> Dict:
+    return {
+        "merchant": CRYPTOMUS_MERCHANT_ID,
+        "Content-Type": "application/json",
+    }
+
+
+def create_cryptomus_payment(amount_usd: float, order_id: str, email: str = "",
+                              url_return: str = "", url_callback: str = "") -> Optional[Dict]:
+    if not CRYPTOMUS_MERCHANT_ID or not CRYPTOMUS_API_KEY:
+        return None
+    try:
+        payload = {
+            "amount": f"{amount_usd:.2f}",
+            "currency": "USDT",
+            "order_id": order_id,
+            "url_return": url_return or "https://gold-scalper-qyhg.onrender.com",
+            "url_callback": url_callback or "https://gold-scalper-qyhg.onrender.com/api/payment/cryptomus/callback",
+            "is_payment_multiple": False,
+        }
+        if email:
+            payload["email"] = email
+        encoded, sign = _cryptomus_sign(payload)
+        headers = _cryptomus_headers()
+        headers["sign"] = sign
+        r = http_requests.post(f"{CRYPTOMUS_BASE}/payment", headers=headers, json=payload, timeout=15)
+        if r.ok:
+            data = r.json()
+            if data.get("state") == 0:
+                return data.get("result")
+    except Exception:
+        pass
+    return None
+
+
+def get_cryptomus_payment(order_id: str) -> Optional[Dict]:
+    if not CRYPTOMUS_MERCHANT_ID or not CRYPTOMUS_API_KEY:
+        return None
+    try:
+        payload = {"order_id": order_id}
+        encoded, sign = _cryptomus_sign(payload)
+        headers = _cryptomus_headers()
+        headers["sign"] = sign
+        r = http_requests.post(f"{CRYPTOMUS_BASE}/payment/info", headers=headers, json=payload, timeout=15)
+        if r.ok:
+            return r.json().get("result")
     except Exception:
         pass
     return None

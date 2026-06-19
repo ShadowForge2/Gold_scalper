@@ -1,4 +1,6 @@
 import os
+import uuid
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from fastapi import FastAPI, Header
@@ -14,6 +16,9 @@ from app.subscription import (
     add_account, remove_account, restore_device_by_capital_id,
     start_trial, get_subscription,
     can_start_live, initialize_payment, verify_payment,
+    create_cryptomus_payment, get_cryptomus_payment,
+    _get_sub_record, _save_sub_record,
+    _cryptomus_register_order, _cryptomus_get_identifier,
 )
 import config as cfg
 
@@ -28,12 +33,6 @@ class AddAccountRequest(BaseModel):
 class PaystackInitRequest(BaseModel):
     email: str
     channels: Optional[List[str]] = None
-
-
-def _device_id(x_device_id: Optional[str] = Header(None)) -> str:
-    if not x_device_id:
-        return "unknown"
-    return x_device_id
 
 
 def sanitize_account(acct: Dict) -> Dict:
@@ -277,8 +276,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         state = bot_pool.get_state(ident)
         if state is None:
             return {"running": False, "state": None}
-        state["running"] = True
-        return state
+        running = bot_pool.is_running(ident) or False
+        return {**state, "running": running}
 
     @app.get("/api/device/bot/logs")
     async def device_bot_logs(device_id: str = Header(None, alias="X-Device-Id")):
@@ -296,6 +295,134 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         ident = accounts[0]["identifier"]
         logs = bot_pool.get_logs(ident)
         return {"logs": logs}
+
+    # ── Device Bot Config ───────────────────────────────────────
+    @app.get("/api/device/bot/config")
+    async def device_bot_config(device_id: str = Header(None, alias="X-Device-Id")):
+        return {
+            "LOT_MULTIPLIER": str(cfg.LOT_MULTIPLIER),
+            "MAX_DAILY_LOSS_USD": str(cfg.MAX_DAILY_LOSS_USD),
+            "MAX_EVENT_LOSS_USD": str(cfg.MAX_EVENT_LOSS_USD),
+            "SIGNAL_ENTRY_THRESHOLD": str(cfg.SIGNAL_ENTRY_THRESHOLD),
+            "EXIT_THRESHOLD_TIGHT": str(cfg.EXIT_THRESHOLD_TIGHT),
+            "MAX_SPREAD_PIPS": str(cfg.MAX_SPREAD_PIPS),
+            "MAX_TRADES_PER_EVENT": str(cfg.MAX_TRADES_PER_EVENT),
+            "MAX_TRADES_PER_SESSION": str(cfg.MAX_TRADES_PER_SESSION),
+            "MAX_CONSECUTIVE_LOSSES": str(cfg.MAX_CONSECUTIVE_LOSSES),
+            "RE_ENTRY_COOLDOWN_SEC": str(cfg.RE_ENTRY_COOLDOWN_SEC),
+            "BIAS_UPDATE_INTERVAL_SEC": str(cfg.BIAS_UPDATE_INTERVAL_SEC),
+            "ALLOWED_SESSIONS": cfg.ALLOWED_SESSIONS,
+            "MIN_BALANCE": str(cfg.MIN_BALANCE),
+            "MAX_LOT": str(cfg.MAX_LOT),
+            "LOT_SIZE": str(cfg.LOT_SIZE),
+        }
+
+    @app.post("/api/device/bot/config")
+    async def device_bot_config_update(data: dict, device_id: str = Header(None, alias="X-Device-Id")):
+        if bot_pool is None:
+            return JSONResponse(status_code=503, content={"error": "Bot pool not available"})
+        did = device_id or "unknown"
+        dev = await get_device(did)
+        if not dev or not dev.get("accounts"):
+            return JSONResponse(status_code=400, content={"error": "No accounts"})
+        ident = dev["accounts"][0]["identifier"]
+        # Normalize env-var style keys to the format update_settings expects
+        KEY_MAP = {
+            "MAX_DAILY_LOSS_USD": "max_daily_loss",
+            "MAX_EVENT_LOSS_USD": "max_event_loss",
+            "MAX_TRADES_PER_EVENT": "max_trades_per_event",
+            "MAX_TRADES_PER_SESSION": "max_trades_per_session",
+            "RE_ENTRY_COOLDOWN_SEC": "cooldown_seconds",
+            "MAX_CONSECUTIVE_LOSSES": "consecutive_loss_limit",
+            "LOT_MULTIPLIER": "lot_multiplier",
+            "SIGNAL_ENTRY_THRESHOLD": "signal_entry_threshold",
+            "EXIT_THRESHOLD_TIGHT": "exit_threshold_tight",
+            "MAX_SPREAD_PIPS": "max_spread_pips",
+            "BIAS_UPDATE_INTERVAL_SEC": "bias_update_interval_sec",
+            "ALLOWED_SESSIONS": "allowed_sessions",
+        }
+        normalized = {}
+        for k, v in data.items():
+            target = KEY_MAP.get(k, k)
+            try:
+                normalized[target] = float(v)
+            except (ValueError, TypeError):
+                normalized[target] = v
+        if bot_pool.is_running(ident):
+            bot_pool.update_settings(ident, normalized)
+        else:
+            bot_pool.add_log(ident, "Config saved (bot not running, settings will apply on next start)", "INFO")
+        return {"success": True, "message": "Config updated"}
+
+    # ── Device Bot Trades ───────────────────────────────────────
+    @app.get("/api/device/bot/trades")
+    async def device_bot_trades(device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
+        did = device_id or "unknown"
+        if bot_pool is None:
+            return {"trades": []}
+        dev = await get_device(did)
+        if not dev or not dev.get("accounts"):
+            return {"trades": []}
+        ident = dev["accounts"][0]["identifier"]
+        state = bot_pool.get_state(ident)
+        trades = []
+        if state and state.get("bot"):
+            bot_data = state["bot"]
+            pm = bot_data.get("positions", {})
+            positions = pm.get("positions", []) if isinstance(pm, dict) else []
+            for pos in positions:
+                trades.append({
+                    "entry_time": pos.get("time", ""),
+                    "direction": pos.get("type", "BUY"),
+                    "lot": pos.get("volume", 0),
+                    "entry_price": pos.get("open", 0),
+                    "current_price": pos.get("current", 0),
+                    "pnl": pos.get("profit", 0),
+                    "ticket": pos.get("ticket", 0),
+                })
+        return {"trades": trades}
+
+    # ── Device Bot Performance ──────────────────────────────────
+    @app.get("/api/device/bot/performance")
+    async def device_bot_performance(device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
+        did = device_id or "unknown"
+        if bot_pool is None:
+            return {"trades": 0}
+        dev = await get_device(did)
+        if not dev or not dev.get("accounts"):
+            return {"trades": 0}
+        ident = dev["accounts"][0]["identifier"]
+        state = bot_pool.get_state(ident)
+        if not state or not state.get("bot"):
+            return {"trades": 0}
+        bot_data = state["bot"]
+        scaler = bot_data.get("scaler") or {}
+        account = state.get("account") or {}
+        balance = account.get("balance", 0) or 0
+        starting = scaler.get("starting_balance", 0) or 0
+        net = balance - starting if starting > 0 else 0
+        return {
+            "trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "win_rate": 0,
+            "gross_profit": 0,
+            "gross_loss": 0,
+            "net_pnl": round(net, 2),
+            "profit_factor": 0,
+            "avg_win": 0,
+            "avg_loss": 0,
+            "max_dd": 0,
+            "starting_balance": round(starting, 2),
+            "ending_balance": round(balance, 2),
+            "return_pct": round((net / starting * 100) if starting > 0 else 0, 2),
+            "monthly": [],
+            "daily": [],
+        }
 
     # ── Subscription ─────────────────────────────────────────────
     @app.get("/api/device/subscription")
@@ -389,5 +516,79 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         if bot_pool:
             bot_pool.add_log(ident, f"Payment of ${amount:.2f} verified. Subscription active for 30 more days.", "INFO")
         return {"message": "Payment verified", "data": result}
+
+    # ── Cryptomus ──────────────────────────────────────────────────
+    @app.post("/api/payment/cryptomus/init")
+    async def cryptomus_init(data: dict, device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
+        did = device_id or "unknown"
+        dev = await get_device(did)
+        if not dev or not dev.get("accounts"):
+            return JSONResponse(status_code=400, content={"error": "No accounts found"})
+        ident = dev["accounts"][0]["identifier"]
+        bal = 0.0
+        if bot_pool:
+            state = bot_pool.get_state(ident)
+            if state and state.get("account") and not state["account"].get("error"):
+                bal = state["account"].get("balance", 0)
+        sub = await get_subscription(ident, bal)
+        due = sub.get("unpaid_fees", sub.get("due_amount", 0))
+        amount = float(data.get("amount", due))
+        if amount <= 0:
+            amount = due
+        if amount <= 0:
+            amount = 1.0
+        email = data.get("email", "")
+        order_id = f"crypt_{uuid.uuid4().hex[:16]}"
+        _cryptomus_register_order(order_id, ident)
+        result = create_cryptomus_payment(
+            amount_usd=amount, order_id=order_id, email=email,
+            url_return=data.get("url_return", ""),
+            url_callback=data.get("url_callback", ""),
+        )
+        if result is None:
+            return JSONResponse(status_code=500, content={"error": "Cryptomus payment gateway error"})
+        if bot_pool:
+            bot_pool.add_log(ident, f"Cryptomus payment of ${amount:.2f} created", "INFO")
+        return {
+            "order_id": order_id,
+            "amount": amount,
+            "payment_url": result.get("url"),
+            "uuid": result.get("uuid"),
+        }
+
+    @app.post("/api/payment/cryptomus/status")
+    async def cryptomus_status(data: dict):
+        order_id = data.get("order_id", "")
+        if not order_id:
+            return JSONResponse(status_code=400, content={"error": "order_id required"})
+        result = get_cryptomus_payment(order_id)
+        if result is None:
+            return JSONResponse(status_code=404, content={"error": "Payment not found"})
+        return result
+
+    @app.post("/api/payment/cryptomus/callback")
+    async def cryptomus_callback(data: dict):
+        order_id = data.get("order_id", "")
+        status = data.get("status", "")
+        if not order_id or not status:
+            return {"ok": False}
+        ident = _cryptomus_get_identifier(order_id)
+        if status in ("paid", "paid_over"):
+            amount = float(data.get("amount", 0))
+            record = await _get_sub_record(ident) if ident else None
+            if record:
+                record["paid_amount"] = record.get("paid_amount", 0) + amount
+                record["subscribed"] = True
+                record["subscription_end"] = (datetime.utcnow() + timedelta(days=30)).isoformat()
+                for p in record.get("monthly_periods", []):
+                    if not p.get("fee_paid") and p.get("fee_15pct", 0) > 0:
+                        p["fee_paid"] = True
+                        p["paid_at"] = datetime.utcnow().isoformat()
+                await _save_sub_record(record)
+                if bot_pool:
+                    bot_pool.add_log(ident, f"Cryptomus payment of ${amount:.2f} verified. Subscription active.", "INFO")
+        return {"ok": True}
 
     return app

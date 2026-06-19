@@ -259,7 +259,8 @@ class Bot:
         now = time.monotonic()
         if not hasattr(self, '_last_bias_time'):
             self._last_bias_time = 0.0
-        if now - self._last_bias_time >= cfg.BIAS_UPDATE_INTERVAL_SEC or \
+        bias_interval = getattr(self, '_bias_update_interval', cfg.BIAS_UPDATE_INTERVAL_SEC)
+        if now - self._last_bias_time >= bias_interval or \
            self.state == self.STATES["IDLE"]:
             self._last_bias_time = now
             if await self._update_bias():
@@ -344,7 +345,8 @@ class Bot:
                 },
             )
 
-        if signal and signal["score"] >= cfg.SIGNAL_ENTRY_THRESHOLD:
+        entry_thresh = getattr(self, '_signal_entry_threshold_override', cfg.SIGNAL_ENTRY_THRESHOLD)
+        if signal and signal["score"] >= entry_thresh:
             can_enter, reason = self.risk_manager.can_enter_trade(
                 symbol_info, datetime.now()
             )
@@ -378,7 +380,7 @@ class Bot:
                     "breakout_dist": signal.get("breakout_dist", 0),
                     "range_size": signal.get("range_size", 0),
                     "score": signal["score"],
-                    "threshold": cfg.SIGNAL_ENTRY_THRESHOLD,
+                    "threshold": entry_thresh,
                 },
             )
 
@@ -447,8 +449,10 @@ class Bot:
             return
 
         entry_score = self._current_signal.get("score") if self._current_signal else None
+        exit_thresh = getattr(self, '_exit_threshold_override', cfg.EXIT_THRESHOLD_TIGHT)
         should_exit, exit_score, reason = self.signal_engine.evaluate_exit(
-            m1_data, entry_price, direction, entry_score, exit_mode=1
+            m1_data, entry_price, direction, entry_score,
+            exit_mode=1, exit_threshold=exit_thresh,
         )
 
         if should_exit:
@@ -529,7 +533,8 @@ class Bot:
 
         self.scaler.update_peak(balance)
 
-        lot = min(self.scaler.get_lot(balance) * cfg.LOT_MULTIPLIER, cfg.MAX_LOT)
+        lot_mult = getattr(self, '_lot_multiplier_override', cfg.LOT_MULTIPLIER)
+        lot = min(self.scaler.get_lot(balance) * lot_mult, cfg.MAX_LOT)
         vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
         lot = round(lot / vol_step) * vol_step
         lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), min(lot, fresh_info.get("volume_max", cfg.MAX_LOT)))
@@ -643,7 +648,7 @@ class Bot:
     def _enter_cooldown(self):
         self.state = self.STATES["COOLDOWN"]
         mult = 1 + self.risk_manager.consecutive_losses
-        duration = cfg.RE_ENTRY_COOLDOWN_SEC * mult
+        duration = self.risk_manager.cooldown_seconds * mult
         self._cooldown_until = datetime.now() + \
             timedelta(seconds=duration)
         self.logger.info(
@@ -713,6 +718,21 @@ class Bot:
             self.risk_manager.max_trades_per_session = int(settings["max_trades_per_session"])
         if "cooldown_seconds" in settings:
             self.risk_manager.cooldown_seconds = int(settings["cooldown_seconds"])
+        if "consecutive_loss_limit" in settings:
+            self.risk_manager.max_consecutive_losses = int(settings["consecutive_loss_limit"])
+        if "lot_multiplier" in settings:
+            self._lot_multiplier_override = float(settings["lot_multiplier"])
+        if "signal_entry_threshold" in settings:
+            self._signal_entry_threshold_override = float(settings["signal_entry_threshold"])
+        if "exit_threshold_tight" in settings:
+            self._exit_threshold_override = float(settings["exit_threshold_tight"])
+        if "max_spread_pips" in settings:
+            self.risk_manager.max_spread = float(settings["max_spread_pips"])
+        if "bias_update_interval_sec" in settings:
+            self._bias_update_interval = float(settings["bias_update_interval_sec"])
+        if "allowed_sessions" in settings:
+            sessions = str(settings["allowed_sessions"])
+            self.risk_manager.allowed_sessions = [s.strip().upper() for s in sessions.split(",")]
         self.logger.info("Bot settings updated")
 
     def login(self, server: str, account: str, password: str) -> Dict:

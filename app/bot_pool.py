@@ -59,6 +59,11 @@ class BotPool:
                 loop.call_soon_threadsafe(loop.stop)
             return {"success": True, "message": "Bot stopped"}
 
+    def is_running(self, identifier: str) -> bool:
+        ident = _fmt_id(identifier)
+        with self._lock:
+            return ident in self._bots
+
     def get_state(self, identifier: str) -> Optional[Dict]:
         ident = _fmt_id(identifier)
         state_file = os.path.join(STATE_DIR, f"{ident}.json")
@@ -113,6 +118,21 @@ class BotPool:
     def is_running(self, identifier: str) -> bool:
         return _fmt_id(identifier) in self._bots
 
+    def update_settings(self, identifier: str, settings: Dict) -> Dict:
+        ident = _fmt_id(identifier)
+        with self._lock:
+            bot = self._bots.get(ident)
+            if bot is None:
+                return {"success": False, "error": "Bot not running"}
+            bot.update_settings(settings)
+            return {"success": True, "message": "Settings updated"}
+
+    def _remove_bot(self, ident: str):
+        with self._lock:
+            self._bots.pop(ident, None)
+            self._loops.pop(ident, None)
+            self._threads.pop(ident, None)
+
     def stop_all(self):
         with self._lock:
             ids = list(self._bots.keys())
@@ -126,6 +146,7 @@ class BotPool:
         except Exception as e:
             bot.logger.error(f"Bot thread error: {e}")
         finally:
+            self._remove_bot(ident)
             loop.close()
 
     async def _run_bot(self, ident: str, bot: Bot, creds: Dict):
@@ -138,6 +159,7 @@ class BotPool:
         if not ok:
             bot.logger.error("Failed to initialize bot with credentials")
             self._write_state(ident, {"state": "STOPPED", "error": "init_failed"})
+            self._remove_bot(ident)
             return
 
         self._write_state(ident, {
@@ -147,6 +169,7 @@ class BotPool:
         })
 
         await bot.run()
+        self._remove_bot(ident)
 
     def _write_state(self, ident: str, extra: Optional[Dict] = None):
         with self._lock:

@@ -50,7 +50,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const SizedBox(height: 10),
               FadeInScale(
                 delay: const Duration(milliseconds: 250),
-                child: _buildStatsGrid(s),
+                child: _buildStatsGrid(s, bp),
               ),
               const SizedBox(height: 20),
               if (bp.equityCurve.isNotEmpty) ...[
@@ -373,7 +373,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildStatsGrid(s) {
+  Widget _buildStatsGrid(s, BotProvider bp) {
+    final p = bp.performance;
     return GridView.count(
       crossAxisCount: 2,
       shrinkWrap: true,
@@ -381,13 +382,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
       crossAxisSpacing: 12,
       mainAxisSpacing: 12,
       childAspectRatio: 1.6,
-      children: const [
-        MetricCard(title: 'WIN RATE', value: '69.1%', valueColor: kSuccess, icon: Icons.percent_rounded),
-        MetricCard(title: 'PROFIT FACTOR', value: '4.25', valueColor: kGold, icon: Icons.insights_rounded),
-        MetricCard(title: 'MAX DRAWDOWN', value: '\$2,186', valueColor: kDanger, icon: Icons.south_east_rounded),
-        MetricCard(title: 'TOTAL TRADES', value: '385', valueColor: kInfo, icon: Icons.swap_vert_rounded),
+      children: [
+        MetricCard(
+          title: 'WIN RATE',
+          value: p != null ? '${p.winRate.toStringAsFixed(1)}%' : '--',
+          valueColor: kSuccess,
+          icon: Icons.percent_rounded,
+        ),
+        MetricCard(
+          title: 'PROFIT FACTOR',
+          value: p != null ? p.profitFactor.toStringAsFixed(2) : '--',
+          valueColor: kGold,
+          icon: Icons.insights_rounded,
+        ),
+        MetricCard(
+          title: 'MAX DRAWDOWN',
+          value: p != null ? '\$${_fmt(p.maxDrawdown)}' : '--',
+          valueColor: kDanger,
+          icon: Icons.south_east_rounded,
+        ),
+        MetricCard(
+          title: 'TOTAL TRADES',
+          value: p != null ? '${p.totalTrades}' : '--',
+          valueColor: kInfo,
+          icon: Icons.swap_vert_rounded,
+        ),
       ],
     );
+  }
+
+  String _fmt(double v) {
+    if (v >= 1000) return '${(v / 1000).toStringAsFixed(1)}k';
+    return v.toStringAsFixed(0);
   }
 
   Widget _buildChartCard(BotProvider bp) {

@@ -429,7 +429,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
         "sessions": cfg.ALLOWED_SESSIONS,
         "bias_strength_min": cfg.BIAS_STRENGTH_MIN,
         "lot_multiplier": cfg.LOT_MULTIPLIER,
-        "max_total_lot_per_event": max(1.0, INITIAL_BALANCE / 20.0),
+        "max_total_lot_per_event": cfg.MAX_LOT,
         "max_trades_per_event": cfg.MAX_TRADES_PER_EVENT,
         "event_loss_limit": cfg.MAX_EVENT_LOSS_USD,
         "consecutive_loss_limit": cfg.MAX_CONSECUTIVE_LOSSES,

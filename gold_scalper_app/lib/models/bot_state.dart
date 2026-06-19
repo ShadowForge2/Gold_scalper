@@ -50,6 +50,34 @@ class BotState {
     );
   }
 
+  factory BotState.fromApiResponse(Map<String, dynamic> json) {
+    final bot = json['bot'] as Map<String, dynamic>? ?? {};
+    final account = json['account'] as Map<String, dynamic>? ?? {};
+    final bias = bot['bias'] as Map<String, dynamic>? ?? {};
+    final positions = bot['positions'] as Map<String, dynamic>? ?? {};
+    final risk = bot['risk'] as Map<String, dynamic>? ?? {};
+    final signal = bot['signal'] as Map<String, dynamic>? ?? {};
+
+    final isRunning = json['running'] == true;
+    final hasError = account['error'] != null;
+
+    return BotState(
+      status: isRunning ? 'running' : 'stopped',
+      state: bot['state'] ?? (isRunning ? 'AWAITING_SIGNAL' : 'IDLE'),
+      connected: !hasError,
+      broker: 'Capital.com',
+      symbol: bot['symbol'] ?? 'XAUUSD',
+      balance: (account['balance'] ?? 0).toDouble(),
+      dailyPnl: (positions['daily_pnl'] ?? 0).toDouble(),
+      bid: (account['bid'] ?? 0).toDouble(),
+      ask: (account['ask'] ?? 0).toDouble(),
+      bias: bias['bias'] ?? 'NEUTRAL',
+      biasStrength: ((bias['strength'] ?? 0) * 100).toDouble(),
+      openPositions: (positions['open_count'] ?? 0).toInt(),
+      timestamp: DateTime.now(),
+    );
+  }
+
   BotState copyWith({
     String? status, String? state, bool? connected, String? broker,
     String? symbol, double? balance, double? dailyPnl, double? bid,

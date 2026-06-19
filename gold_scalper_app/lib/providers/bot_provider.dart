@@ -317,36 +317,60 @@ class BotProvider extends ChangeNotifier {
       _equityCurve = _mockEquityCurve();
       _botRunning = true;
     } else {
-      try {
-        final stateData = await _get('/api/device/bot/state');
-        _state = BotState.fromJson(stateData);
-        final logData = await _get('/api/device/bot/logs');
-        _logs = (logData['logs'] as List).map((l) => LogEntry.fromJson(l)).toList();
-        _subscription = await _get('/api/device/subscription');
-      } catch (_) {}
+      await _fetchAll();
     }
 
     _loading = false;
     notifyListeners();
 
-    if (_useMockData) {
-      _timer?.cancel();
-      _timer = Timer.periodic(const Duration(seconds: 4), (_) {
-        _tickMock();
-      });
-    } else {
-      _timer?.cancel();
-      _timer = Timer.periodic(const Duration(seconds: 5), (_) {
-        _tickLive();
-      });
-    }
+    _timer?.cancel();
+    final interval = _useMockData
+        ? const Duration(seconds: 4)
+        : const Duration(seconds: 5);
+    _timer = Timer.periodic(interval, (_) {
+      _useMockData ? _tickMock() : _tickLive();
+    });
+  }
+
+  Future<void> _fetchAll() async {
+    try {
+      final stateData = await _get('/api/device/bot/state');
+      _state = BotState.fromApiResponse(stateData);
+      _botRunning = stateData['running'] == true;
+    } catch (_) {}
+
+    try {
+      final logData = await _get('/api/device/bot/logs');
+      _logs = (logData['logs'] as List).map((l) => LogEntry.fromJson(l)).toList();
+    } catch (_) {}
+
+    try {
+      _subscription = await _get('/api/device/subscription');
+    } catch (_) {}
+
+    try {
+      final cfgData = await _get('/api/device/bot/config');
+      _config = BotConfig.fromJson(cfgData);
+    } catch (_) {}
+
+    try {
+      final perfData = await _get('/api/device/bot/performance');
+      _performance = Performance.fromJson(perfData);
+    } catch (_) {}
+
+    try {
+      final tradeData = await _get('/api/device/bot/trades');
+      final tradesList = tradeData['trades'] as List? ?? [];
+      _recentTrades = tradesList.map((t) => Trade.fromJson(t)).toList();
+    } catch (_) {}
   }
 
   Future<void> _tickLive() async {
     try {
       final stateData = await _get('/api/device/bot/state');
-      _state = BotState.fromJson(stateData);
+      _state = BotState.fromApiResponse(stateData);
       _botRunning = stateData['running'] == true;
+
       final logData = await _get('/api/device/bot/logs');
       _logs = (logData['logs'] as List).map((l) => LogEntry.fromJson(l)).toList();
       _subscription = await _get('/api/device/subscription');
@@ -524,6 +548,20 @@ class BotProvider extends ChangeNotifier {
     return data;
   }
 
+  Future<Map<String, dynamic>?> initCryptomusPayment(double amount, String email) async {
+    if (_useMockData) return {'payment_url': 'https://pay.cryptomus.com/mock'};
+    try {
+      return await _post('/api/payment/cryptomus/init', {
+        'amount': amount,
+        'email': email,
+        'url_return': 'https://gold-scalper-qyhg.onrender.com',
+      });
+    } catch (e) {
+      addLog('Failed to create Cryptomus payment: $e', level: 'ERROR');
+      return null;
+    }
+  }
+
   Future<bool> verifyPayment(String reference) async {
     if (!_useMockData) {
       await _post('/api/payment/verify', {'reference': reference});
@@ -538,6 +576,18 @@ class BotProvider extends ChangeNotifier {
   void updateConfig(BotConfig config) {
     _config = config;
     notifyListeners();
+  }
+
+  Future<bool> saveConfig() async {
+    if (_useMockData) return true;
+    try {
+      await _post('/api/device/bot/config', _config.toJson());
+      addLog('Config saved to bot', level: 'INFO');
+      return true;
+    } catch (e) {
+      addLog('Failed to save config: $e', level: 'ERROR');
+      return false;
+    }
   }
 
   @override

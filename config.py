@@ -105,6 +105,11 @@ MARKET_OPEN_SUNDAY_UTC = _env_int("MARKET_OPEN_SUNDAY_UTC", 23)
 MARKET_CLOSE_FRIDAY_UTC = _env_int("MARKET_CLOSE_FRIDAY_UTC", 22)
 
 
+# Cryptomus
+CRYPTOMUS_MERCHANT_ID = _env_str("CRYPTOMUS_MERCHANT_ID", "")
+CRYPTOMUS_API_KEY = _env_str("CRYPTOMUS_API_KEY", "")
+
+
 def is_market_open() -> bool:
     from datetime import datetime as _dt
     now = _dt.utcnow()

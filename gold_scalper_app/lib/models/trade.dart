@@ -34,17 +34,22 @@ class Trade {
       : 0;
 
   factory Trade.fromJson(Map<String, dynamic> json) {
+    DateTime? parseTime(String? val) {
+      if (val == null || val.isEmpty) return null;
+      return DateTime.tryParse(val);
+    }
+
     return Trade(
-      id: json['id'] ?? '',
-      entryTime: DateTime.parse(json['entry_time']),
-      exitTime: json['exit_time'] != null ? DateTime.parse(json['exit_time']) : null,
+      id: json['id']?.toString() ?? json['ticket']?.toString() ?? '',
+      entryTime: parseTime(json['entry_time']) ?? DateTime.now(),
+      exitTime: parseTime(json['exit_time']),
       direction: json['direction'] ?? 'BUY',
       entryPrice: (json['entry_price'] ?? 0).toDouble(),
       exitPrice: json['exit_price']?.toDouble(),
       pnl: (json['pnl'] ?? 0).toDouble(),
       lot: (json['lot'] ?? 0).toDouble(),
       numTrades: json['num_trades'] ?? 1,
-      score: (json['score'] ?? 0).toDouble(),
+      score: (json['score'] ?? json['entry_score'] ?? 0).toDouble(),
       exitReason: json['exit_reason'] ?? '',
       balance: (json['balance'] ?? 0).toDouble(),
     );

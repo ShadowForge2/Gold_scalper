@@ -153,6 +153,23 @@ class ControlsScreen extends StatelessWidget {
           _sliderSetting('Cooldown (sec)', cfg.reEntryCooldownSec.toDouble(), 10, 600, 10, (v) {
             bp.updateConfig(cfg.copyWith(reEntryCooldownSec: v.round()));
           }),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => bp.saveConfig(),
+              icon: const Icon(Icons.save_rounded, size: 16),
+              label: const Text('Save Settings'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kGold,
+                foregroundColor: Colors.black,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );

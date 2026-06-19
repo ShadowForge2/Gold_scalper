@@ -185,7 +185,9 @@ class RiskManager:
             "NEW_YORK": (13, 22),
         }
 
-        allowed = [s.strip().upper() for s in cfg.ALLOWED_SESSIONS.split(",")]
+        allowed = getattr(self, 'allowed_sessions', None)
+        if allowed is None:
+            allowed = [s.strip().upper() for s in cfg.ALLOWED_SESSIONS.split(",")]
 
         for name in allowed:
             if name in sessions:

@@ -52,6 +52,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
               ] else if (_selectedMethod == 'bank_transfer') ...[
                 const SizedBox(height: 12),
                 _buildPaymentForm(bp, channel: 'bank_transfer'),
+              ] else if (_selectedMethod == 'cryptomus') ...[
+                const SizedBox(height: 12),
+                _buildCryptomusForm(bp),
               ] else ...[
                 const SizedBox(height: 12),
                 _buildCryptoInfo(),
@@ -294,10 +297,10 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             Expanded(
               child: _methodCard(
                 icon: Icons.currency_bitcoin_rounded,
-                label: 'Crypto',
-                desc: 'Pay with USDT,\nBTC or ETH',
-                selected: _selectedMethod == 'crypto',
-                onTap: () => setState(() => _selectedMethod = 'crypto'),
+                label: 'Cryptomus',
+                desc: 'Pay with USDT\nvia Cryptomus',
+                selected: _selectedMethod == 'cryptomus',
+                onTap: () => setState(() => _selectedMethod = 'cryptomus'),
               ),
             ),
           ],
@@ -448,6 +451,121 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCryptomusForm(BotProvider bp) {
+    final amount = bp.unpaidFees > 0 ? bp.unpaidFees : bp.currentMonthFee;
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.currency_bitcoin_rounded, color: kGold, size: 18),
+              const SizedBox(width: 8),
+              const Text('Cryptomus Crypto Payment', style: TextStyle(color: Colors.black87, fontSize: 15, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Pay with USDT, BTC, ETH or other crypto via Cryptomus.',
+            style: TextStyle(color: Colors.black54, fontSize: 13),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _emailCtrl,
+            style: const TextStyle(color: Colors.black87),
+            decoration: InputDecoration(
+              labelText: 'Email (optional)',
+              labelStyle: const TextStyle(color: Colors.grey),
+              hintText: 'you@email.com',
+              hintStyle: TextStyle(color: Colors.grey.shade400),
+              filled: true,
+              fillColor: Colors.grey.shade100,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: kGold),
+              ),
+            ),
+            keyboardType: TextInputType.emailAddress,
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Amount', style: TextStyle(color: Colors.black54, fontSize: 13)),
+                Text('\$${amount.toStringAsFixed(2)}', style: const TextStyle(color: kGold, fontSize: 16, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                final email = _emailCtrl.text.trim();
+                final result = await bp.initCryptomusPayment(amount, email);
+                if (result != null && context.mounted) {
+                  final payUrl = result['payment_url'] as String?;
+                  if (payUrl != null) {
+                    js.context.callMethod('open', [payUrl, '_blank']);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Cryptomus payment page opened')),
+                    );
+                  }
+                } else if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Failed to create payment')),
+                  );
+                }
+              },
+              icon: const Icon(Icons.payment_rounded),
+              label: Text('Pay \$${amount.toStringAsFixed(2)} with Crypto'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kGold,
+                foregroundColor: Colors.black,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: kGold.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: kGold.withValues(alpha: 0.1)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.info_outline_rounded, color: kGold, size: 14),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'After payment, your subscription will be activated automatically.',
+                    style: TextStyle(color: Colors.black54, fontSize: 11, height: 1.3),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
