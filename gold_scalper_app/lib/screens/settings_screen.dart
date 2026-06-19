@@ -234,6 +234,8 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
         );
       },
       child: _buildSection('Capital.com Credentials', [
+        _apiHelpTile(),
+        const SizedBox(height: 8),
         _field('API Key', _apiKeyCtrl),
         const SizedBox(height: 8),
         _field('Identifier (Email)', _identifierCtrl,
@@ -470,6 +472,98 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
           ),
         ),
       ],
+    );
+  }
+
+  void _showApiHelp() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.help_outline_rounded, color: kGold, size: 22),
+            const SizedBox(width: 10),
+            const Text('Get Your API Key',
+                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _helpStep('1', 'Open Capital.com in Chrome.'),
+            const SizedBox(height: 10),
+            _helpStep('2', 'Log in to your account.'),
+            const SizedBox(height: 10),
+            _helpStep('3', 'Go to Settings → API integrations.'),
+            const SizedBox(height: 10),
+            _helpStep('4', 'Tap Generate API key.'),
+            const SizedBox(height: 10),
+            _helpStep('5', 'Enable 2FA if asked.'),
+            const SizedBox(height: 10),
+            _helpStep('6', 'Copy and save the key right away.'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Got it', style: TextStyle(color: kGold, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _helpStep(String num, String text) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 22,
+          height: 22,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: kGold.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(num,
+              style: const TextStyle(color: kGold, fontSize: 11, fontWeight: FontWeight.bold)),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(text,
+              style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.3)),
+        ),
+      ],
+    );
+  }
+
+  Widget _apiHelpTile() {
+    return GestureDetector(
+      onTap: _showApiHelp,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+        decoration: BoxDecoration(
+          color: kGold.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: kGold.withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.help_outline_rounded, color: kGold, size: 16),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'How to get your API key',
+                style: TextStyle(color: kGold, fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, color: kGold.withValues(alpha: 0.6), size: 18),
+          ],
+        ),
+      ),
     );
   }
 
