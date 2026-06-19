@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/bot_state.dart';
 import '../models/trade.dart';
 import '../models/performance.dart';
@@ -31,6 +32,8 @@ class BotProvider extends ChangeNotifier {
   String? _activeUrl;
   int? _navigateToTab;
   bool _highlightCredentials = false;
+
+  static const _configKey = 'saved_bot_config';
 
   static const _baseUrls = [
     'https://gold-scalper-qyhg.onrender.com',
@@ -171,6 +174,38 @@ class BotProvider extends ChangeNotifier {
     if (path.contains('/bot/logs')) {
       return {
         'logs': _generateMockLogs(),
+      };
+    }
+    if (path.contains('/bot/performance')) {
+      return {
+        'trades': 385,
+        'wins': 266,
+        'losses': 119,
+        'win_rate': 69.1,
+        'gross_profit': 5842.0,
+        'gross_loss': 2190.0,
+        'net_pnl': 3652.0,
+        'profit_factor': 4.25,
+        'avg_win': 21.96,
+        'avg_loss': 18.40,
+        'max_dd': 2186.0,
+        'starting_balance': 500.0,
+        'ending_balance': 4152.0,
+        'return_pct': 730.4,
+        'monthly': [],
+        'daily': [],
+      };
+    }
+    if (path.contains('/equity_curve')) {
+      return {
+        'points': [
+          {'time': DateTime.now().subtract(const Duration(days: 60)).toIso8601String(), 'balance': 500.0},
+          {'time': DateTime.now().subtract(const Duration(days: 45)).toIso8601String(), 'balance': 680.0},
+          {'time': DateTime.now().subtract(const Duration(days: 30)).toIso8601String(), 'balance': 920.0},
+          {'time': DateTime.now().subtract(const Duration(days: 15)).toIso8601String(), 'balance': 1350.0},
+          {'time': DateTime.now().subtract(const Duration(days: 5)).toIso8601String(), 'balance': 2100.0},
+          {'time': DateTime.now().toIso8601String(), 'balance': 4152.0},
+        ],
       };
     }
     if (path.contains('/subscription')) {
@@ -316,6 +351,7 @@ class BotProvider extends ChangeNotifier {
 
   Future<void> init() async {
     _loading = true;
+    await _loadConfig();
     notifyListeners();
 
     if (_useMockData) {
@@ -372,6 +408,19 @@ class BotProvider extends ChangeNotifier {
       final tradesList = tradeData['trades'] as List? ?? [];
       _recentTrades = tradesList.map((t) => Trade.fromJson(t)).toList();
     } catch (_) {}
+
+    await _fetchEquityCurve();
+  }
+
+  Future<void> _fetchEquityCurve() async {
+    try {
+      final data = await _get('/api/device/bot/equity_curve');
+      final points = data['points'] as List? ?? [];
+      _equityCurve = points.map((p) => EquityPoint(
+        time: DateTime.tryParse(p['time'] ?? '') ?? DateTime.now(),
+        balance: (p['balance'] ?? 0).toDouble(),
+      )).toList();
+    } catch (_) {}
   }
 
   Future<void> _tickLive() async {
@@ -390,13 +439,7 @@ class BotProvider extends ChangeNotifier {
       _performance = Performance.fromJson(perfData);
     } catch (_) {}
 
-    try {
-      final bal = _state?.balance ?? 0;
-      if (bal > 0) {
-        _equityCurve.add(EquityPoint(time: DateTime.now(), balance: bal));
-        if (_equityCurve.length > 500) _equityCurve.removeAt(0);
-      }
-    } catch (_) {}
+    await _fetchEquityCurve();
 
     notifyListeners();
   }
@@ -535,7 +578,7 @@ class BotProvider extends ChangeNotifier {
       return {'message': 'All positions closed', 'closed_count': 0};
     }
     try {
-      final result = await _post('/api/trades/close_all', {});
+      final result = await _post('/api/device/trades/close_all', {});
       final count = result['closed_count'] ?? 0;
       addLog('All positions closed: $count position(s)', level: 'TRADE');
       _state = _state?.copyWith(state: 'IDLE', openPositions: 0);
@@ -618,19 +661,30 @@ class BotProvider extends ChangeNotifier {
     return true;
   }
 
+  Future<void> _loadConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_configKey);
+      if (raw != null) {
+        final json = Map<String, dynamic>.from(jsonDecode(raw));
+        _config = BotConfig.fromJson(json);
+      }
+    } catch (_) {}
+  }
+
   void updateConfig(BotConfig config) {
     _config = config;
     notifyListeners();
   }
 
   Future<bool> saveConfig() async {
-    if (_useMockData) return true;
     try {
-      await _post('/api/device/bot/config', _config.toJson());
-      addLog('Config saved to bot', level: 'INFO');
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_configKey, jsonEncode(_config.toJson()));
+      addLog('Settings saved locally', level: 'INFO');
       return true;
     } catch (e) {
-      addLog('Failed to save config: $e', level: 'ERROR');
+      addLog('Failed to save settings: $e', level: 'ERROR');
       return false;
     }
   }

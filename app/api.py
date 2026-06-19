@@ -451,6 +451,46 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             "daily": [],
         }
 
+    # ── Device Bot Equity Curve ─────────────────────────────────
+    @app.get("/api/device/bot/equity_curve")
+    async def device_equity_curve(device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
+        did = device_id or "unknown"
+        if bot_pool is None:
+            return {"points": []}
+        dev = await get_device(did)
+        if not dev or not dev.get("accounts"):
+            return {"points": []}
+        ident = dev["accounts"][0]["identifier"]
+        state = bot_pool.get_state(ident)
+        if not state or not state.get("bot"):
+            return {"points": []}
+        bot_data = state["bot"]
+        scaler = bot_data.get("scaler") or {}
+        starting = scaler.get("starting_balance", 0) or 0
+        closed = bot_data.get("closed_trades", []) or []
+        if not closed or starting <= 0:
+            return {"points": []}
+
+        sorted_closed = sorted(closed, key=lambda t: t.get("closed_at", ""))
+        points = []
+        running = starting
+        points.append({"time": sorted_closed[0].get("closed_at", ""), "balance": round(starting, 2)})
+        for t in sorted_closed:
+            running += t.get("profit", 0)
+            points.append({
+                "time": t.get("closed_at", ""),
+                "balance": round(running, 2),
+            })
+
+        account = state.get("account") or {}
+        balance = account.get("balance", 0) or 0
+        if balance > 0:
+            points.append({"time": datetime.utcnow().isoformat(), "balance": round(balance, 2)})
+
+        return {"points": points}
+
     # ── Subscription ─────────────────────────────────────────────
     @app.post("/api/device/trades/close_all")
     async def device_close_all(device_id: str = Header(None, alias="X-Device-Id")):
