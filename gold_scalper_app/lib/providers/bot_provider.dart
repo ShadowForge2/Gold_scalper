@@ -31,7 +31,6 @@ class BotProvider extends ChangeNotifier {
   String? _activeUrl;
 
   static const _baseUrls = [
-    'http://localhost:8001',
     'https://gold-scalper-qyhg.onrender.com',
     'https://gold-scalper.onrender.com',
   ];
