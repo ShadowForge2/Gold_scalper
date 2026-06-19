@@ -29,10 +29,10 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     return Consumer<BotProvider>(
       builder: (context, bp, _) {
         return Scaffold(
-          backgroundColor: Colors.white,
+          backgroundColor: const Color(0xFFF0F0F0),
           appBar: AppBar(
             title: const Text('Subscription'),
-            backgroundColor: Colors.white,
+            backgroundColor: const Color(0xFFF0F0F0),
             foregroundColor: Colors.black87,
             elevation: 0.5,
           ),
@@ -91,7 +91,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Status', style: TextStyle(color: Colors.grey.shade600, fontSize: 11, fontWeight: FontWeight.w600)),
+                  Text('Status', style: TextStyle(color: Colors.grey.shade700, fontSize: 11, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
                   Text(
                     bp.trialActive
@@ -140,7 +140,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         children: [
           Text(value, style: const TextStyle(color: Colors.black87, fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
-          Text(label, style: const TextStyle(color: Colors.grey, fontSize: 10)),
+          Text(label, style: const TextStyle(color: Colors.grey.shade600, fontSize: 11)),
         ],
       ),
     );
@@ -148,6 +148,10 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
 
   Widget _buildProfitCard(BotProvider bp) {
     final amount = bp.unpaidFees > 0 ? bp.unpaidFees : bp.currentMonthFee;
+    final periods = bp.monthlyPeriods;
+    final startingBalance = periods.isNotEmpty
+        ? (periods.first['starting_balance'] ?? 1000).toDouble()
+        : 1000.0;
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -160,11 +164,11 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         children: [
           const Text('Current 30-Day Period', style: TextStyle(color: Colors.black87, fontSize: 15, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
-          _row('Starting Balance', '\$${(1000).toStringAsFixed(2)}'),
+          _row('Starting Balance', '\$${startingBalance.toStringAsFixed(2)}'),
           const Divider(color: Colors.grey, height: 20),
           _row('Current Balance', '\$${(bp.state?.balance ?? 0).toStringAsFixed(2)}'),
           const Divider(color: Colors.grey, height: 20),
-          _row('Profit', '\$${bp.currentMonthProfit.toStringAsFixed(2)}', valueColor: bp.currentMonthProfit >= 0 ? Colors.green : Colors.red),
+          _row('Profit', '\$${bp.currentMonthProfit.toStringAsFixed(2)}', valueColor: bp.currentMonthProfit >= 0 ? Colors.green.shade700 : Colors.red.shade700),
           const Divider(color: Colors.grey, height: 20),
           _row('15% Fee Due', '\$${bp.currentMonthFee.toStringAsFixed(2)}', valueColor: kGold),
           if (bp.unpaidFees > 0) ...[
@@ -182,7 +186,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Amount to Pay', style: TextStyle(color: Colors.black54, fontSize: 13)),
+                const Text('Amount to Pay', style: TextStyle(color: Colors.black87, fontSize: 13)),
                 Text('\$${amount.toStringAsFixed(2)}', style: const TextStyle(color: kGold, fontSize: 20, fontWeight: FontWeight.bold)),
               ],
             ),
@@ -196,7 +200,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: const TextStyle(color: Colors.black54, fontSize: 14)),
+        Text(label, style: const TextStyle(color: Colors.black87, fontSize: 14)),
         Text(value, style: TextStyle(color: valueColor ?? Colors.black87, fontWeight: FontWeight.bold, fontSize: 14)),
       ],
     );
@@ -217,7 +221,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
           const Text('Billing History', style: TextStyle(color: Colors.black87, fontSize: 15, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           if (periods.isEmpty)
-            const Text('No billing periods yet.', style: TextStyle(color: Colors.grey, fontSize: 13))
+            const Text('No billing periods yet.', style: TextStyle(color: Colors.grey.shade600, fontSize: 13))
           else
             ...periods.map((p) => _periodTile(p)),
         ],
@@ -245,7 +249,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('$start → ${end ?? 'current'}', style: const TextStyle(color: Colors.black54, fontSize: 12, fontWeight: FontWeight.w600)),
+                Text('$start → ${end ?? 'current'}', style: const TextStyle(color: Colors.black87, fontSize: 12, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 4),
                 Text('Profit: \$${profit.toStringAsFixed(2)}', style: TextStyle(color: profit >= 0 ? Colors.green : Colors.red, fontSize: 12)),
               ],
@@ -334,7 +338,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             const SizedBox(height: 8),
             Text(label, style: TextStyle(color: selected ? kGold : Colors.black54, fontWeight: FontWeight.bold, fontSize: 14)),
             const SizedBox(height: 4),
-            Text(desc, textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey, fontSize: 10, height: 1.3)),
+            Text(desc, textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey.shade700, fontSize: 11, height: 1.3)),
           ],
         ),
       ),
@@ -373,9 +377,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             style: const TextStyle(color: Colors.black87),
             decoration: InputDecoration(
               labelText: 'Email Address',
-              labelStyle: const TextStyle(color: Colors.grey),
+              labelStyle: const TextStyle(color: Colors.grey.shade700),
               hintText: 'you@email.com',
-              hintStyle: TextStyle(color: Colors.grey.shade400),
+              hintStyle: TextStyle(color: Colors.grey.shade500),
               filled: true,
               fillColor: Colors.grey.shade100,
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
@@ -396,7 +400,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Amount', style: TextStyle(color: Colors.black54, fontSize: 13)),
+                const Text('Amount', style: TextStyle(color: Colors.black87, fontSize: 13)),
                 Text('\$${amount.toStringAsFixed(2)}', style: const TextStyle(color: kGold, fontSize: 16, fontWeight: FontWeight.bold)),
               ],
             ),
@@ -480,7 +484,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
           const SizedBox(height: 16),
           const Text(
             'Pay with USDT, BTC, ETH or other crypto via Cryptomus.',
-            style: TextStyle(color: Colors.black54, fontSize: 13),
+            style: TextStyle(color: Colors.black87, fontSize: 13),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -488,9 +492,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             style: const TextStyle(color: Colors.black87),
             decoration: InputDecoration(
               labelText: 'Email (optional)',
-              labelStyle: const TextStyle(color: Colors.grey),
+              labelStyle: const TextStyle(color: Colors.grey.shade700),
               hintText: 'you@email.com',
-              hintStyle: TextStyle(color: Colors.grey.shade400),
+              hintStyle: TextStyle(color: Colors.grey.shade500),
               filled: true,
               fillColor: Colors.grey.shade100,
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
@@ -511,7 +515,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Amount', style: TextStyle(color: Colors.black54, fontSize: 13)),
+                const Text('Amount', style: TextStyle(color: Colors.black87, fontSize: 13)),
                 Text('\$${amount.toStringAsFixed(2)}', style: const TextStyle(color: kGold, fontSize: 16, fontWeight: FontWeight.bold)),
               ],
             ),
@@ -562,7 +566,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 Expanded(
                   child: Text(
                     'After payment, your subscription will be activated automatically.',
-                    style: TextStyle(color: Colors.black54, fontSize: 11, height: 1.3),
+                    style: TextStyle(color: Colors.black87, fontSize: 12, height: 1.3),
                   ),
                 ),
               ],
@@ -612,7 +616,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 Expanded(
                   child: Text(
                     'After sending crypto, contact support with transaction ID for verification.',
-                    style: TextStyle(color: Colors.black54, fontSize: 11, height: 1.3),
+                    style: TextStyle(color: Colors.black87, fontSize: 12, height: 1.3),
                   ),
                 ),
               ],
@@ -637,9 +641,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(network, style: const TextStyle(color: Colors.black54, fontSize: 12, fontWeight: FontWeight.w600)),
+                Text(network, style: const TextStyle(color: Colors.black87, fontSize: 12, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 4),
-                Text(address, style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                Text(address, style: const TextStyle(color: Colors.grey.shade700, fontSize: 11)),
               ],
             ),
           ),
