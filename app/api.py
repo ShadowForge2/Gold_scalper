@@ -48,7 +48,6 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[o.strip() for o in cors_origins.split(",")] if cors_origins != "*" else ["*"],
-        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )

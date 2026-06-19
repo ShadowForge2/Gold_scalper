@@ -80,13 +80,18 @@ class BotProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Map<String, String> get _getHeaders {
+    final h = <String, String>{'X-Device-Id': _device.deviceId ?? ''};
+    return h;
+  }
+
   Future<Map<String, dynamic>> _get(String path, {bool retried = false}) async {
     if (_useMockData) return _mockResponse(path);
     final url = baseUrl;
     try {
       final r = await _client.get(
         Uri.parse('$url$path'),
-        headers: _device.headers,
+        headers: _getHeaders,
       );
       if (r.statusCode == 200) return jsonDecode(r.body);
       throw Exception('GET $path: ${r.statusCode}');

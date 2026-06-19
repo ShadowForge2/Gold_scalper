@@ -1,0 +1,28 @@
+Resolving dependencies...
+Downloading packages...
+  fl_chart 0.69.2 (1.2.0 available)
+  flutter_lints 5.0.0 (6.0.0 available)
+  intl 0.19.0 (0.20.2 available)
+  lints 5.1.1 (6.1.0 available)
+  meta 1.17.0 (1.18.3 available)
+  shared_preferences_android 2.4.23 (2.4.26 available)
+  vector_math 2.2.0 (2.4.0 available)
+Got dependencies!
+7 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+Launching lib\main.dart on Web Server in debug mode...
+Waiting for connection from debug service on Web Server...         27.5s
+lib\main.dart is being served at http://localhost:8080
+The web-server device requires the Dart Debug Chrome extension for debugging. Consider using the Chrome or Edge devices for an improved development workflow.
+
+Flutter run key commands.
+r Hot reload. 
+R Hot restart.
+h List all available interactive commands.
+d Detach (terminate "flutter run" but leave application running).
+c Clear the screen
+q Quit (terminate the application on the device).
+
+Debug service listening on ws://127.0.0.1:53645/e1C2SW4SsYo=/ws
+A Dart VM Service on Web Server is available at: http://127.0.0.1:53645/e1C2SW4SsYo=
+The Flutter DevTools debugger and profiler on Web Server is available at: http://127.0.0.1:53645/e1C2SW4SsYo=/devtools/?uri=ws://127.0.0.1:53645/e1C2SW4SsYo=/ws
