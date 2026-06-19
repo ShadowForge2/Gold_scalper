@@ -44,10 +44,13 @@ def sanitize_account(acct: Dict) -> Dict:
 def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> FastAPI:
     app = FastAPI(title="Gold Scalper", version="2.0.0")
 
-    cors_origins = os.getenv("CORS_ORIGINS", "*")
+    origins = [
+        "http://localhost:8080", "http://127.0.0.1:8080",
+        "https://gold-scalper-qyhg.onrender.com", "https://gold-scalper.onrender.com",
+    ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[o.strip() for o in cors_origins.split(",")] if cors_origins != "*" else ["*"],
+        allow_origins=origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
