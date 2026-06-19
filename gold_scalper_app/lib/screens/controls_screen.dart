@@ -5,9 +5,14 @@ import '../widgets/status_indicator.dart';
 import '../widgets/fade_in_scale.dart';
 import '../theme.dart';
 
-class ControlsScreen extends StatelessWidget {
+class ControlsScreen extends StatefulWidget {
   const ControlsScreen({super.key});
 
+  @override
+  State<ControlsScreen> createState() => _ControlsScreenState();
+}
+
+class _ControlsScreenState extends State<ControlsScreen> {
   @override
   Widget build(BuildContext context) {
     return Consumer<BotProvider>(
@@ -40,6 +45,24 @@ class ControlsScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _startBot(BuildContext context, BotProvider bp) async {
+    final ok = await bp.startBot();
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Connect a demo or live account first'),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          action: SnackBarAction(
+            label: 'SETTINGS',
+            textColor: Colors.white,
+            onPressed: () => bp.requestCredentialsSetup(),
+          ),
+        ),
+      );
+    }
+  }
+
   Widget _buildBotControlCard(BuildContext context, s, BotProvider bp) {
     final isRunning = s != null && s.status == 'running';
     return Container(
@@ -70,7 +93,7 @@ class ControlsScreen extends StatelessWidget {
             children: [
               if (!isRunning)
                 ElevatedButton.icon(
-                  onPressed: () => bp.startBot(),
+                  onPressed: () => _startBot(context, bp),
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('Start Bot'),
                   style: ElevatedButton.styleFrom(

@@ -140,7 +140,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         children: [
           Text(value, style: const TextStyle(color: Colors.black87, fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
-          Text(label, style: const TextStyle(color: Colors.grey.shade600, fontSize: 11)),
+          Text(label, style: TextStyle(color: Colors.grey.shade600, fontSize: 11)),
         ],
       ),
     );
@@ -148,10 +148,6 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
 
   Widget _buildProfitCard(BotProvider bp) {
     final amount = bp.unpaidFees > 0 ? bp.unpaidFees : bp.currentMonthFee;
-    final periods = bp.monthlyPeriods;
-    final startingBalance = periods.isNotEmpty
-        ? (periods.first['starting_balance'] ?? 1000).toDouble()
-        : 1000.0;
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -164,8 +160,6 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         children: [
           const Text('Current 30-Day Period', style: TextStyle(color: Colors.black87, fontSize: 15, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
-          _row('Starting Balance', '\$${startingBalance.toStringAsFixed(2)}'),
-          const Divider(color: Colors.grey, height: 20),
           _row('Current Balance', '\$${(bp.state?.balance ?? 0).toStringAsFixed(2)}'),
           const Divider(color: Colors.grey, height: 20),
           _row('Profit', '\$${bp.currentMonthProfit.toStringAsFixed(2)}', valueColor: bp.currentMonthProfit >= 0 ? Colors.green.shade700 : Colors.red.shade700),
@@ -221,7 +215,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
           const Text('Billing History', style: TextStyle(color: Colors.black87, fontSize: 15, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           if (periods.isEmpty)
-            const Text('No billing periods yet.', style: TextStyle(color: Colors.grey.shade600, fontSize: 13))
+            Text('No billing periods yet.', style: TextStyle(color: Colors.grey.shade600, fontSize: 13))
           else
             ...periods.map((p) => _periodTile(p)),
         ],
@@ -338,7 +332,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             const SizedBox(height: 8),
             Text(label, style: TextStyle(color: selected ? kGold : Colors.black54, fontWeight: FontWeight.bold, fontSize: 14)),
             const SizedBox(height: 4),
-            Text(desc, textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey.shade700, fontSize: 11, height: 1.3)),
+            Text(desc, textAlign: TextAlign.center, style: TextStyle(color: Colors.grey.shade700, fontSize: 11, height: 1.3)),
           ],
         ),
       ),
@@ -377,7 +371,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             style: const TextStyle(color: Colors.black87),
             decoration: InputDecoration(
               labelText: 'Email Address',
-              labelStyle: const TextStyle(color: Colors.grey.shade700),
+              labelStyle: TextStyle(color: Colors.grey.shade700),
               hintText: 'you@email.com',
               hintStyle: TextStyle(color: Colors.grey.shade500),
               filled: true,
@@ -492,7 +486,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             style: const TextStyle(color: Colors.black87),
             decoration: InputDecoration(
               labelText: 'Email (optional)',
-              labelStyle: const TextStyle(color: Colors.grey.shade700),
+              labelStyle: TextStyle(color: Colors.grey.shade700),
               hintText: 'you@email.com',
               hintStyle: TextStyle(color: Colors.grey.shade500),
               filled: true,
@@ -643,7 +637,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
               children: [
                 Text(network, style: const TextStyle(color: Colors.black87, fontSize: 12, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 4),
-                Text(address, style: const TextStyle(color: Colors.grey.shade700, fontSize: 11)),
+                Text(address, style: TextStyle(color: Colors.grey.shade700, fontSize: 11)),
               ],
             ),
           ),

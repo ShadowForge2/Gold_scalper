@@ -29,6 +29,8 @@ class BotProvider extends ChangeNotifier {
   Map<String, dynamic> _subscription = {};
 
   String? _activeUrl;
+  int? _navigateToTab;
+  bool _highlightCredentials = false;
 
   static const _baseUrls = [
     'https://gold-scalper-qyhg.onrender.com',
@@ -40,6 +42,8 @@ class BotProvider extends ChangeNotifier {
   }
 
   String get baseUrl => _activeUrl ?? _baseUrls.first;
+  int? get navigateToTab => _navigateToTab;
+  bool get highlightCredentials => _highlightCredentials;
 
   BotState? get state => _state;
   List<Trade> get recentTrades => _recentTrades;
@@ -380,6 +384,20 @@ class BotProvider extends ChangeNotifier {
       _logs = (logData['logs'] as List).map((l) => LogEntry.fromJson(l)).toList();
       _subscription = await _get('/api/device/subscription');
     } catch (_) {}
+
+    try {
+      final perfData = await _get('/api/device/bot/performance');
+      _performance = Performance.fromJson(perfData);
+    } catch (_) {}
+
+    try {
+      final bal = _state?.balance ?? 0;
+      if (bal > 0) {
+        _equityCurve.add(EquityPoint(time: DateTime.now(), balance: bal));
+        if (_equityCurve.length > 500) _equityCurve.removeAt(0);
+      }
+    } catch (_) {}
+
     notifyListeners();
   }
 
@@ -442,6 +460,22 @@ class BotProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void requestCredentialsSetup() {
+    _highlightCredentials = true;
+    _navigateToTab = 4;
+    notifyListeners();
+  }
+
+  void clearNavigation() {
+    _navigateToTab = null;
+    notifyListeners();
+  }
+
+  void clearHighlight() {
+    _highlightCredentials = false;
+    notifyListeners();
+  }
+
   Future<bool> startBot() async {
     addLog('Starting bot...');
     if (_useMockData) {
@@ -450,6 +484,12 @@ class BotProvider extends ChangeNotifier {
       addLog('Bot started successfully', level: 'TRADE');
     } else {
       try {
+        final accts = await getAccounts();
+        if (accts.isEmpty) {
+          addLog('No account configured. Please add credentials first.', level: 'WARNING');
+          notifyListeners();
+          return false;
+        }
         await _post('/api/device/bot/start', {});
         _botRunning = true;
         addLog('Bot started successfully', level: 'TRADE');

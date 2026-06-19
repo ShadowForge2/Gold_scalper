@@ -48,6 +48,21 @@ class _HomeScreenState extends State<HomeScreen> {
     final bp = context.watch<BotProvider>();
     final inTrade = bp.state?.state == 'IN_TRADE';
 
+    final navTab = bp.navigateToTab;
+    if (navTab != null && navTab != _currentIndex) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        bp.clearNavigation();
+        if (mounted) {
+          setState(() => _currentIndex = navTab);
+          _pageController.animateToPage(
+            navTab,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOutCubic,
+          );
+        }
+      });
+    }
+
     return Scaffold(
       backgroundColor: kDarkBg,
       appBar: AppBar(

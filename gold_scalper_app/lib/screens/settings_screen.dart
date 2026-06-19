@@ -13,11 +13,28 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProviderStateMixin {
   final _apiKeyCtrl = TextEditingController();
   final _identifierCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _isDemo = true;
+  late AnimationController _pulseCtrl;
+  late Animation<double> _pulseAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
+    _pulseAnim = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pulseCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   void dispose() {
@@ -62,6 +79,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final bp = context.watch<BotProvider>();
     final device = context.watch<DeviceProvider>();
+
+    if (bp.highlightCredentials) {
+      _pulseCtrl.repeat(reverse: true);
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) {
+          bp.clearHighlight();
+          _pulseCtrl.stop();
+          _pulseCtrl.reset();
+        }
+      });
+    }
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -73,7 +102,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 16),
         FadeInScale(
           delay: const Duration(milliseconds: 100),
-          child: _buildSection('Capital.com Credentials', [
+          child: _buildCredentialsSection(bp, device),
             _field('API Key', _apiKeyCtrl),
             const SizedBox(height: 8),
             _field('Identifier (Email)', _identifierCtrl,
@@ -184,6 +213,98 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: _buildFooter(),
         ),
       ],
+    );
+  }
+
+  Widget _buildCredentialsSection(BotProvider bp, DeviceProvider device) {
+    return AnimatedBuilder(
+      animation: _pulseAnim,
+      builder: (context, child) {
+        final pulse = _pulseCtrl.isAnimating ? _pulseAnim.value : 0.0;
+        final glow = kGold.withValues(alpha: (1.0 - pulse) * 0.4);
+        return Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              if (_pulseCtrl.isAnimating)
+                BoxShadow(color: glow, blurRadius: 12 + pulse * 8, spreadRadius: pulse * 2),
+            ],
+          ),
+          child: child,
+        );
+      },
+      child: _buildSection('Capital.com Credentials', [
+        _field('API Key', _apiKeyCtrl),
+        const SizedBox(height: 8),
+        _field('Identifier (Email)', _identifierCtrl,
+            keyboardType: TextInputType.emailAddress),
+        const SizedBox(height: 8),
+        _field('Password', _passwordCtrl, obscure: true),
+        const SizedBox(height: 12),
+        _demoToggle(),
+        if (!device.canEditCredentials) ...[
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: device.accountTied
+                  ? Colors.red.withValues(alpha: 0.1)
+                  : kGold.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: device.accountTied
+                    ? Colors.red.withValues(alpha: 0.3)
+                    : kGold.withValues(alpha: 0.2),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  device.accountTied
+                      ? Icons.lock_rounded
+                      : Icons.timer_outlined,
+                  size: 14,
+                  color: device.accountTied ? Colors.redAccent : kGold,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    device.accountTied
+                        ? 'This account is tied to this device and cannot be changed.'
+                        : 'Credentials can only be edited once every 24 hours.',
+                    style: TextStyle(
+                      color: device.accountTied ? Colors.redAccent : kGold,
+                      fontSize: 11,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: device.canEditCredentials ? _save : null,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: device.canEditCredentials ? kGold : kDarkBorder,
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: Text(
+              device.accountTied
+                  ? 'Account Locked'
+                  : device.credentialsSavedAt != null && !device.canEditCredentials
+                      ? 'Cooldown — ${_formatDuration(device.cooldownRemaining)}'
+                      : 'Save Credentials',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+      ]),
     );
   }
 
