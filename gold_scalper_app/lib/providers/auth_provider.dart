@@ -8,8 +8,12 @@ class AuthProvider extends ChangeNotifier {
   String? _email;
   bool _loading = false;
   String? _error;
+  String? _activeUrl;
 
-  static const _baseUrl = 'https://gold-scalper.onrender.com';
+  static const _baseUrls = [
+    'https://gold-scalper.onrender.com',
+    'https://gold-scalper-qyhg.onrender.com',
+  ];
   static const _tokenKey = 'auth_token';
   static const _emailKey = 'auth_email';
 
@@ -18,9 +22,23 @@ class AuthProvider extends ChangeNotifier {
   bool get loading => _loading;
   bool get isLoggedIn => _token != null;
   String? get error => _error;
-  String get baseUrl => _baseUrl;
+  String get baseUrl => _activeUrl ?? _baseUrls.first;
+
+  Future<String> _resolveUrl() async {
+    if (_activeUrl != null) return _activeUrl!;
+    for (final url in _baseUrls) {
+      try {
+        await http.get(Uri.parse('$url/auth/me')).timeout(const Duration(seconds: 3));
+        _activeUrl = url;
+        return url;
+      } catch (_) {}
+    }
+    _activeUrl = _baseUrls.first;
+    return _activeUrl!;
+  }
 
   Future<void> init() async {
+    await _resolveUrl();
     final prefs = await SharedPreferences.getInstance();
     _token = prefs.getString(_tokenKey);
     _email = prefs.getString(_emailKey);
@@ -37,9 +55,10 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<bool> _validateToken() async {
+    final url = baseUrl;
     try {
       final r = await http.get(
-        Uri.parse('$_baseUrl/auth/me'),
+        Uri.parse('$url/auth/me'),
         headers: {'Authorization': 'Bearer $_token'},
       );
       if (r.statusCode == 200) {
@@ -47,7 +66,10 @@ class AuthProvider extends ChangeNotifier {
         _email = data['email'];
         return true;
       }
-    } catch (_) {}
+    } catch (_) {
+      _activeUrl = null;
+      await _resolveUrl();
+    }
     return false;
   }
 
@@ -55,9 +77,10 @@ class AuthProvider extends ChangeNotifier {
     _loading = true;
     _error = null;
     notifyListeners();
+    final url = baseUrl;
     try {
       final r = await http.post(
-        Uri.parse('$_baseUrl/auth/register'),
+        Uri.parse('$url/auth/register'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'email': email, 'password': password}),
       );
@@ -73,6 +96,8 @@ class AuthProvider extends ChangeNotifier {
       notifyListeners();
       return false;
     } catch (e) {
+      _activeUrl = null;
+      await _resolveUrl();
       _error = 'Network error: ${e.toString()}';
       _loading = false;
       notifyListeners();
@@ -84,9 +109,10 @@ class AuthProvider extends ChangeNotifier {
     _loading = true;
     _error = null;
     notifyListeners();
+    final url = baseUrl;
     try {
       final r = await http.post(
-        Uri.parse('$_baseUrl/auth/login'),
+        Uri.parse('$url/auth/login'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'email': email, 'password': password}),
       );
@@ -102,6 +128,8 @@ class AuthProvider extends ChangeNotifier {
       notifyListeners();
       return false;
     } catch (e) {
+      _activeUrl = null;
+      await _resolveUrl();
       _error = 'Network error: ${e.toString()}';
       _loading = false;
       notifyListeners();
