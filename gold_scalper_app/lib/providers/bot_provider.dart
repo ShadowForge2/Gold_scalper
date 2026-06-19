@@ -28,9 +28,19 @@ class BotProvider extends ChangeNotifier {
   bool _botRunning = false;
   Map<String, dynamic> _subscription = {};
 
-  static const _baseUrl = 'http://localhost:8001';
+  String? _activeUrl;
 
-  BotProvider(this._device);
+  static const _baseUrls = [
+    'http://localhost:8001',
+    'https://gold-scalper-qyhg.onrender.com',
+    'https://gold-scalper.onrender.com',
+  ];
+
+  BotProvider(this._device) {
+    _resolveUrl();
+  }
+
+  String get baseUrl => _activeUrl ?? _baseUrls.first;
 
   BotState? get state => _state;
   List<Trade> get recentTrades => _recentTrades;
@@ -53,32 +63,65 @@ class BotProvider extends ChangeNotifier {
   List<Map<String, dynamic>> get monthlyPeriods =>
       List<Map<String, dynamic>>.from(_subscription['monthly_periods'] ?? []);
 
+  Future<void> _resolveUrl() async {
+    for (final url in _baseUrls) {
+      try {
+        await _client
+            .get(Uri.parse('$url/health'))
+            .timeout(const Duration(seconds: 3));
+        _activeUrl = url;
+        return;
+      } catch (_) {}
+    }
+    _activeUrl = _baseUrls.first;
+  }
+
   void toggleMockData() {
     _useMockData = !_useMockData;
     notifyListeners();
   }
 
-  Future<Map<String, dynamic>> _get(String path) async {
+  Future<Map<String, dynamic>> _get(String path, {bool retried = false}) async {
     if (_useMockData) return _mockResponse(path);
-    final r = await _client.get(
-      Uri.parse('$_baseUrl$path'),
-      headers: _device.headers,
-    );
-    if (r.statusCode == 200) return jsonDecode(r.body);
-    throw Exception('GET $path: ${r.statusCode}');
+    final url = baseUrl;
+    try {
+      final r = await _client.get(
+        Uri.parse('$url$path'),
+        headers: _device.headers,
+      );
+      if (r.statusCode == 200) return jsonDecode(r.body);
+      throw Exception('GET $path: ${r.statusCode}');
+    } catch (_) {
+      if (!retried) {
+        _activeUrl = null;
+        await _resolveUrl();
+        return _get(path, retried: true);
+      }
+      rethrow;
+    }
   }
 
   Future<Map<String, dynamic>> _post(
-      String path, Map<String, dynamic> body) async {
+      String path, Map<String, dynamic> body, {bool retried = false}) async {
     if (_useMockData) return _mockPostResponse(path, body);
-    final r = await _client.post(
-      Uri.parse('$_baseUrl$path'),
-      headers: _device.headers,
-      body: jsonEncode(body),
-    );
-    final data = jsonDecode(r.body);
-    if (r.statusCode == 200) return data;
-    throw Exception('POST $path: ${data['error'] ?? r.body}');
+    final url = baseUrl;
+    try {
+      final r = await _client.post(
+        Uri.parse('$url$path'),
+        headers: _device.headers,
+        body: jsonEncode(body),
+      );
+      final data = jsonDecode(r.body);
+      if (r.statusCode == 200) return data;
+      throw Exception('POST $path: ${data['error'] ?? r.body}');
+    } catch (_) {
+      if (!retried) {
+        _activeUrl = null;
+        await _resolveUrl();
+        return _post(path, body, retried: true);
+      }
+      rethrow;
+    }
   }
 
   Map<String, dynamic> _mockResponse(String path) {

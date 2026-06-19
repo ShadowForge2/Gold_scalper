@@ -28,7 +28,7 @@ class AuthProvider extends ChangeNotifier {
     if (_activeUrl != null) return _activeUrl!;
     for (final url in _baseUrls) {
       try {
-        await http.get(Uri.parse('$url/auth/me')).timeout(const Duration(seconds: 3));
+        await http.get(Uri.parse('$url/health')).timeout(const Duration(seconds: 3));
         _activeUrl = url;
         return url;
       } catch (_) {}
