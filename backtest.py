@@ -224,16 +224,17 @@ def _pre_compute(sig_df, h1):
             print(f"  bias pass: {idx}/{N}", flush=True)
         ts = sig_df["time"].iloc[idx]
         bh = ts.hour
-        if bh != last_bias_hour or biases[idx - 1] is None:
+        prev_bias = biases[idx - 1] if idx > 0 else None
+        if bh != last_bias_hour or prev_bias is None:
             last_bias_hour = bh
             current_h1_start = ts.replace(minute=0, second=0, microsecond=0)
             hs = h1[h1["time"] < current_h1_start].tail(96)
             if len(hs) >= 20:
                 biases[idx] = bias_engine.update(hs)
             elif idx > 0:
-                biases[idx] = biases[idx - 1]
+                biases[idx] = prev_bias
         else:
-            biases[idx] = biases[idx - 1] if idx > 0 else None
+            biases[idx] = prev_bias
 
     print("Pre-computing entry signals...", flush=True)
     signal_engine = SignalEngine()
@@ -361,16 +362,17 @@ def _pre_compute_h1(h1):
             print(f"  bias pass: {idx}/{N}", flush=True)
         ts = h1["time"].iloc[idx]
         bh = ts.hour
-        if bh != last_bias_hour or biases[idx - 1] is None:
+        prev_bias = biases[idx - 1] if idx > 0 else None
+        if bh != last_bias_hour or prev_bias is None:
             last_bias_hour = bh
             current_h1_start = ts.replace(minute=0, second=0, microsecond=0)
             hs = h1[h1["time"] < current_h1_start].tail(96)
             if len(hs) >= 20:
                 biases[idx] = bias_engine.update(hs)
             elif idx > 0:
-                biases[idx] = biases[idx - 1]
+                biases[idx] = prev_bias
         else:
-            biases[idx] = biases[idx - 1] if idx > 0 else None
+            biases[idx] = prev_bias
 
     print("Pre-computing entry signals...", flush=True)
     signal_engine = SignalEngine()

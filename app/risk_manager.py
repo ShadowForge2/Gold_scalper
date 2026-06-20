@@ -192,7 +192,7 @@ class RiskManager:
         for name in allowed:
             if name in sessions:
                 start, end = sessions[name]
-                if start <= time_decimal <= end:
+                if start <= time_decimal < end:
                     return True, name
 
         return False, "outside_allowed_sessions"

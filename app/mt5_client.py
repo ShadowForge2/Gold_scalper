@@ -252,7 +252,7 @@ class MT5Client:
         return result["success"]
 
     def get_total_daily_pnl(self, magic: int) -> float:
-        now = datetime.now()
+        now = datetime.utcnow()
         today_start = datetime(now.year, now.month, now.day)
         positions = self.get_positions(magic)
         open_pnl = sum(p["profit"] for p in positions)

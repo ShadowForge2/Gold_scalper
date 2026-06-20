@@ -423,7 +423,7 @@ class CapitalClient:
         return 0
 
     def get_total_daily_pnl(self, magic: int) -> float:
-        now = datetime.now()
+        now = datetime.utcnow()
         today = now.date()
 
         if self._daily_pnl_date != today:
@@ -530,11 +530,12 @@ class CapitalClient:
         return None
 
     def close_position(self, ticket) -> bool:
+        ticket_str = str(ticket)
         if isinstance(ticket, str):
             deal_id = ticket
         else:
             positions = self.get_positions()
-            pos = next((p for p in positions if p["ticket"] == ticket), None)
+            pos = next((p for p in positions if str(p["ticket"]) == ticket_str), None)
             if pos is None:
                 return False
             deal_id = pos["ticket"]

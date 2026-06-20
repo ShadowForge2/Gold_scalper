@@ -302,11 +302,11 @@ class Bot:
             self.symbol, cfg.BIAS_TIMEFRAME, 3
         )
         if h1_data is not None and len(h1_data) >= 2:
-            bias_dir = self._bias_summary.get("bias", "NEUTRAL")
-            if bias_dir == "BULLISH":
+            has_bid_ask = "high_ask" in h1_data.columns
+            if has_bid_ask and bias_dir == "BULLISH":
                 h1_high = h1_data["high_ask"].iloc[-2]
                 h1_low = h1_data["low_ask"].iloc[-2]
-            elif bias_dir == "BEARISH":
+            elif has_bid_ask and bias_dir == "BEARISH":
                 h1_high = h1_data["high_bid"].iloc[-2]
                 h1_low = h1_data["low_bid"].iloc[-2]
             else:

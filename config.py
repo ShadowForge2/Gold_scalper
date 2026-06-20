@@ -117,6 +117,6 @@ def is_market_open() -> bool:
     h = now.hour + now.minute / 60.0
     if wd == 6:
         return h >= MARKET_OPEN_SUNDAY_UTC
-    if wd == 5:
+    if wd == 4:
         return h < MARKET_CLOSE_FRIDAY_UTC
-    return 0 <= wd <= 4
+    return 0 <= wd <= 3
