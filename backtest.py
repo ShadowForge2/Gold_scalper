@@ -17,7 +17,7 @@ from app.bias_engine import BiasEngine
 from app.risk_manager import EquityScaler
 from app.capital_client import CapitalClient
 
-BACKTEST_BROKER = "MT5"       # "MT5", "MT5_H1", "CAPITAL", "YAHOO", or "YAHOO_H1"
+BACKTEST_BROKER = "DUKASCOPY" # "MT5", "MT5_H1", "CAPITAL", "YAHOO", "YAHOO_H1", or "DUKASCOPY"
 BACKTEST_YEAR = 2025          # Full year H1 validation
 BACKTEST_START = datetime(2025, 1, 1)
 BACKTEST_END = datetime(2025, 12, 31, 23, 59)
@@ -344,6 +344,32 @@ def _load_from_yahoo_h1():
     h1 = _flatten_yf(h1_raw)
     return _pre_compute_h1(h1)
 
+def _load_from_dukascopy():
+    from app.dukascopy_client import DukascopyClient
+
+    h1_fr = BACKTEST_START - timedelta(days=BIAS_WARMUP_DAYS)
+    client = DukascopyClient()
+    m1 = client.download_range(h1_fr.year, BACKTEST_END.year)
+    if len(m1) == 0:
+        print("No Dukascopy data available")
+        return None
+
+    m1 = m1[(m1["time"] >= h1_fr) & (m1["time"] <= BACKTEST_END)]
+    if len(m1) == 0:
+        print("No Dukascopy data in range")
+        return None
+
+    print(f"Dukascopy M1: {len(m1)} bars ({m1['time'].min()} to {m1['time'].max()})", flush=True)
+    h1 = client.resample_to(m1, 16385)
+    m5 = client.resample_to(m1, 5)
+
+    h1 = h1[(h1["time"] >= h1_fr) & (h1["time"] <= BACKTEST_END)].copy()
+    m5 = m5[(m5["time"] >= BACKTEST_START) & (m5["time"] <= BACKTEST_END)].copy()
+    h1.reset_index(drop=True, inplace=True)
+    m5.reset_index(drop=True, inplace=True)
+
+    return _pre_compute(m5, h1)
+
 def _pre_compute_h1(h1):
     N = len(h1)
     print(f"Loaded {N} H1 candles (H1-only mode)", flush=True)
@@ -418,6 +444,8 @@ def load_and_compute():
         return _load_from_yahoo_h1()
     elif BACKTEST_BROKER == "MT5_H1":
         return _load_from_mt5_h1()
+    elif BACKTEST_BROKER == "DUKASCOPY":
+        return _load_from_dukascopy()
     else:
         return _load_from_mt5()
 
