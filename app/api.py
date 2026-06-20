@@ -388,12 +388,15 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             pm = bot_data.get("positions", {})
             positions = pm.get("positions", []) if isinstance(pm, dict) else []
             for pos in positions:
+                time_val = pos.get("time", "")
+                if hasattr(time_val, "isoformat"):
+                    time_val = time_val.isoformat()
                 trades.append({
-                    "entry_time": pos.get("time", ""),
+                    "entry_time": time_val,
                     "direction": pos.get("type", "BUY"),
                     "lot": pos.get("volume", 0),
-                    "entry_price": pos.get("open", 0),
-                    "current_price": pos.get("current", 0),
+                    "entry_price": pos.get("price_open", 0),
+                    "current_price": pos.get("price_current", 0),
                     "pnl": pos.get("profit", 0),
                     "ticket": pos.get("ticket", 0),
                 })
@@ -483,13 +486,18 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         scaler = bot_data.get("scaler") or {}
         starting = scaler.get("starting_balance", 0) or 0
         closed = bot_data.get("closed_trades", []) or []
-        if not closed or starting <= 0:
-            return {"points": []}
 
         sorted_closed = sorted(closed, key=lambda t: t.get("closed_at", ""))
         points = []
         running = starting
         now = datetime.utcnow()
+        account = state.get("account") or {}
+        balance = account.get("balance", 0) or 0
+
+        if not closed or starting <= 0:
+            if balance > 0:
+                return {"points": [{"time": now.isoformat(), "balance": round(balance, 2)}]}
+            return {"points": []}
 
         if period == "yearly":
             year_start = datetime(now.year, 1, 1)
