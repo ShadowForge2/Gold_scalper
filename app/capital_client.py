@@ -174,10 +174,12 @@ class CapitalClient:
                 for acct in accounts:
                     if acct.get("preferred"):
                         bal = acct.get("balance", {})
+                        raw_balance = float(bal.get("balance", 0))
+                        raw_profit = float(bal.get("profitLoss", 0))
                         return {
                             "account_number": acct.get("accountId", ""),
-                            "balance": float(bal.get("balance", 0)),
-                            "equity": float(bal.get("balance", 0)),
+                            "balance": raw_balance,
+                            "equity": raw_balance + raw_profit,
                             "margin": 0,
                             "free_margin": float(bal.get("available", 0)),
                             "margin_level": 0,

@@ -397,10 +397,76 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                     "lot": pos.get("volume", 0),
                     "entry_price": pos.get("price_open", 0),
                     "current_price": pos.get("price_current", 0),
+                    "exit_time": None,
+                    "exit_price": None,
                     "pnl": pos.get("profit", 0),
                     "ticket": pos.get("ticket", 0),
                 })
+            closed = bot_data.get("closed_trades", []) or []
+            for t in closed:
+                closed_at = t.get("closed_at", "")
+                trades.append({
+                    "entry_time": t.get("entry_time", ""),
+                    "direction": t.get("type", "BUY"),
+                    "lot": t.get("volume", 0),
+                    "entry_price": t.get("entry_price", 0),
+                    "current_price": None,
+                    "exit_time": closed_at,
+                    "exit_price": t.get("exit_price", 0),
+                    "pnl": t.get("profit", 0),
+                    "ticket": t.get("ticket", ""),
+                })
         return {"trades": trades}
+
+    # ── helpers ──
+
+    def _monthly_breakdown(closed_trades, start_bal):
+        if not closed_trades:
+            return []
+        from collections import OrderedDict
+        monthly = OrderedDict()
+        running = start_bal
+        for t in closed_trades:
+            closed_at = t.get("closed_at", "")
+            month_key = closed_at[:7] if len(closed_at) >= 7 else ""
+            if not month_key:
+                continue
+            if month_key not in monthly:
+                monthly[month_key] = {"pnl": 0.0, "wins": 0, "total": 0, "start_bal": running}
+            pnl = t.get("profit", 0) or 0
+            monthly[month_key]["pnl"] += pnl
+            monthly[month_key]["total"] += 1
+            if pnl > 0:
+                monthly[month_key]["wins"] += 1
+            running += pnl
+        result = []
+        for mk, v in monthly.items():
+            wr = round(v["wins"] / v["total"] * 100, 1) if v["total"] > 0 else 0
+            result.append({"month": mk, "trades": v["total"], "pnl": round(v["pnl"], 2), "wr": wr})
+        return result
+
+    def _daily_breakdown(closed_trades):
+        if not closed_trades:
+            return []
+        from collections import OrderedDict
+        daily = OrderedDict()
+        for t in closed_trades:
+            closed_at = t.get("closed_at", "")
+            day_key = closed_at[:10] if len(closed_at) >= 10 else ""
+            if not day_key:
+                continue
+            if day_key not in daily:
+                daily[day_key] = {"pnl": 0.0, "wins": 0, "total": 0}
+            pnl = t.get("profit", 0) or 0
+            daily[day_key]["pnl"] += pnl
+            daily[day_key]["total"] += 1
+            if pnl > 0:
+                daily[day_key]["wins"] += 1
+        result = []
+        for dk, v in daily.items():
+            wr = round(v["wins"] / v["total"] * 100, 1) if v["total"] > 0 else 0
+            result.append({"date": dk, "trades": v["total"], "pnl": round(v["pnl"], 2), "wr": wr})
+        return result
 
     # ── Device Bot Performance ──────────────────────────────────
     @app.get("/api/device/bot/performance")
@@ -463,8 +529,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             "starting_balance": round(starting, 2),
             "ending_balance": round(balance, 2),
             "return_pct": round((net_pnl / starting * 100) if starting > 0 else 0, 2),
-            "monthly": [],
-            "daily": [],
+            "monthly": _monthly_breakdown(sorted_closed, starting),
+            "daily": _daily_breakdown(sorted_closed),
         }
 
     # ── Device Bot Equity Curve ─────────────────────────────────
@@ -502,7 +568,13 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         if period == "yearly":
             year_start = datetime(now.year, 1, 1)
             running = starting
-            points.append({"time": year_start.isoformat(), "balance": round(starting, 2)})
+            for t in sorted_closed:
+                closed_at = t.get("closed_at", "")
+                if not closed_at:
+                    continue
+                running += t.get("profit", 0)
+            balance_at_start = running
+            running = starting
             monthly = {}
             for t in sorted_closed:
                 closed_at = t.get("closed_at", "")
@@ -511,6 +583,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                 running += t.get("profit", 0)
                 month_key = closed_at[:7]
                 monthly[month_key] = round(running, 2)
+            points.append({"time": year_start.isoformat(), "balance": round(balance_at_start, 2)})
             for m in sorted(monthly.keys()):
                 dt = datetime.fromisoformat(m + "-01")
                 if dt >= year_start:
@@ -522,6 +595,13 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
 
         elif period == "monthly":
             month_start = datetime(now.year, now.month, 1)
+            running = starting
+            for t in sorted_closed:
+                closed_at = t.get("closed_at", "")
+                if not closed_at:
+                    continue
+                running += t.get("profit", 0)
+            balance_at_start = running
             running = starting
             daily = {}
             for t in sorted_closed:
@@ -535,7 +615,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             if daily:
                 first_day = min(daily.keys())
                 if first_day > month_start.strftime("%Y-%m-%d"):
-                    points.append({"time": month_start.isoformat(), "balance": round(starting, 2)})
+                    points.append({"time": month_start.isoformat(), "balance": round(balance_at_start, 2)})
             for d in sorted(daily.keys()):
                 points.append({"time": d + "T00:00:00", "balance": daily[d]})
             account = state.get("account") or {}
