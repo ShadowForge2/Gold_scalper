@@ -88,6 +88,8 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
       _passwordCtrl.clear();
       _snack('Account saved');
       setState(() {});
+    } else if (mounted) {
+      _snack('Failed to save account. Check your credentials and try again.');
     }
   }
 

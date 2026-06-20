@@ -43,7 +43,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               if (bp.botRunning && !_dismissedWithdrawNotice)
                 _buildWithdrawNotice(),
-              if (!bp.canTrade && !bp.isDemo && !bp.botRunning && !_dismissedSubscriptionNotice)
+              if (!bp.canTrade && !bp.isDemo && !bp.hasNoAccounts && !bp.botRunning && !_dismissedSubscriptionNotice)
                 _buildSubscriptionBanner(context),
               if (bp.isDemo && !_dismissedDemoNotice)
                 _buildDemoNotice(),
@@ -162,7 +162,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ],
                 ),
-                child: const Icon(Icons.auto_awesome_rounded, color: kGold, size: 28),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.asset(
+                    'assets/images/logo.png',
+                    width: 56,
+                    height: 56,
+                    fit: BoxFit.cover,
+                  ),
+                ),
               ),
               const SizedBox(width: 16),
               Expanded(

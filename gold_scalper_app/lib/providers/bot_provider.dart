@@ -71,6 +71,7 @@ class BotProvider extends ChangeNotifier {
       (_subscription['current_month_fee'] ?? 0).toDouble();
   List<Map<String, dynamic>> get monthlyPeriods =>
       List<Map<String, dynamic>>.from(_subscription['monthly_periods'] ?? []);
+  bool get hasNoAccounts => _subscription['error'] != null || _subscription['is_new'] == true;
   bool get subscriptionBlocked => _subscriptionBlocked;
   bool get navigateToSubscription => _navigateToSubscription;
 
@@ -392,7 +393,16 @@ class BotProvider extends ChangeNotifier {
 
     try {
       final logData = await _get('/api/device/bot/logs');
-      _logs = (logData['logs'] as List).map((l) => LogEntry.fromJson(l)).toList();
+      final backendLogs = (logData['logs'] as List).map((l) => LogEntry.fromJson(l)).toList();
+      if (backendLogs.isNotEmpty) {
+        final existingMsgs = _logs.map((e) => e.message).toSet();
+        for (final entry in backendLogs) {
+          if (!existingMsgs.contains(entry.message)) {
+            _logs.add(entry);
+          }
+        }
+        if (_logs.length > 200) _logs.removeRange(0, _logs.length - 200);
+      }
     } catch (_) {}
 
     try {
@@ -436,11 +446,20 @@ class BotProvider extends ChangeNotifier {
       _botRunning = stateData['running'] == true;
 
       final logData = await _get('/api/device/bot/logs');
-      _logs = (logData['logs'] as List).map((l) => LogEntry.fromJson(l)).toList();
+      final backendLogs = (logData['logs'] as List).map((l) => LogEntry.fromJson(l)).toList();
+      if (backendLogs.isNotEmpty) {
+        final existingMsgs = _logs.map((e) => e.message).toSet();
+        for (final entry in backendLogs) {
+          if (!existingMsgs.contains(entry.message)) {
+            _logs.add(entry);
+          }
+        }
+        if (_logs.length > 200) _logs.removeRange(0, _logs.length - 200);
+      }
       _subscription = await _get('/api/device/subscription');
     } catch (_) {}
 
-    if (_botRunning && !isDemo && !canTrade && !_subscriptionBlocked) {
+    if (_botRunning && !isDemo && !hasNoAccounts && !canTrade && !_subscriptionBlocked) {
       _subscriptionBlocked = true;
       addLog('Your free trial has ended. Please subscribe to continue trading.', level: 'WARNING');
       requestSubscription();

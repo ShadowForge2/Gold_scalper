@@ -144,7 +144,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         return {"accounts": bot.list_accounts()}
 
     @app.post("/api/accounts")
-    async def add_account(data: dict):
+    async def mt_add_account(data: dict):
         label = data.get("label", "")
         server = data.get("server", "")
         account = data.get("account", "")
@@ -155,7 +155,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         return JSONResponse(status_code=400, content=result)
 
     @app.delete("/api/accounts/{account_id}")
-    async def remove_account(account_id: str):
+    async def mt_remove_account(account_id: str):
         result = bot.remove_account(account_id)
         if result["success"]:
             return {"message": result["message"], "accounts": bot.list_accounts()}
@@ -526,7 +526,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         did = device_id or "unknown"
         dev = await get_device(did)
         if not dev or not dev.get("accounts"):
-            return {"error": "No accounts", "trial_active": False, "can_trade": False, "demo": False}
+            return {"error": "No accounts", "trial_active": False, "can_trade": True, "demo": True, "is_new": True}
         acct = dev["accounts"][0]
         ident = acct["identifier"]
         demo = acct.get("demo", True)
@@ -555,7 +555,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         did = device_id or "unknown"
         dev = await get_device(did)
         if not dev or not dev.get("accounts"):
-            return {"error": "No accounts", "trial_active": False, "can_trade": False, "demo": False}
+            return {"error": "No accounts", "trial_active": False, "can_trade": True, "demo": True, "is_new": True}
         acct = dev["accounts"][0]
         ident = acct["identifier"]
         demo = acct.get("demo", True)

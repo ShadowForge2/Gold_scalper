@@ -78,8 +78,15 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                       ),
                     ],
                   ),
-                  child: const Icon(Icons.auto_awesome_rounded,
-                      color: Colors.black, size: 48),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: Image.asset(
+                      'assets/images/logo.png',
+                      width: 60,
+                      height: 60,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 32),
                 const Text(
