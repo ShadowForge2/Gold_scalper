@@ -32,6 +32,8 @@ class BotProvider extends ChangeNotifier {
   String? _activeUrl;
   int? _navigateToTab;
   bool _highlightCredentials = false;
+  bool _subscriptionBlocked = false;
+  bool _navigateToSubscription = false;
 
   static const _configKey = 'saved_bot_config';
 
@@ -58,6 +60,7 @@ class BotProvider extends ChangeNotifier {
   bool get botRunning => _botRunning;
   Map<String, dynamic> get subscription => _subscription;
   bool get canTrade => _subscription['can_trade'] == true;
+  bool get isDemo => _subscription['demo'] == true;
   bool get trialActive => _subscription['trial_active'] == true;
   int get daysRemaining => _subscription['days_remaining'] ?? 0;
   double get dueAmount => (_subscription['due_amount'] ?? 0).toDouble();
@@ -68,6 +71,8 @@ class BotProvider extends ChangeNotifier {
       (_subscription['current_month_fee'] ?? 0).toDouble();
   List<Map<String, dynamic>> get monthlyPeriods =>
       List<Map<String, dynamic>>.from(_subscription['monthly_periods'] ?? []);
+  bool get subscriptionBlocked => _subscriptionBlocked;
+  bool get navigateToSubscription => _navigateToSubscription;
 
   Future<void> _resolveUrl() async {
     for (final url in _baseUrls) {
@@ -218,6 +223,7 @@ class BotProvider extends ChangeNotifier {
         'can_trade': true,
         'due_amount': 0.0,
         'unpaid_fees': 0.0,
+        'demo': true,
         'current_month_profit': 250.42,
         'current_month_fee': 37.56,
         'monthly_periods': [
@@ -434,6 +440,20 @@ class BotProvider extends ChangeNotifier {
       _subscription = await _get('/api/device/subscription');
     } catch (_) {}
 
+    if (_botRunning && !isDemo && !canTrade && !_subscriptionBlocked) {
+      _subscriptionBlocked = true;
+      addLog('Your free trial has ended. Please subscribe to continue trading.', level: 'WARNING');
+      requestSubscription();
+      try {
+        await _post('/api/device/bot/stop', {});
+        _botRunning = false;
+        addLog('Bot stopped automatically due to expired trial/subscription.', level: 'WARNING');
+      } catch (_) {}
+    }
+    if (_subscriptionBlocked && (isDemo || canTrade)) {
+      _subscriptionBlocked = false;
+    }
+
     try {
       final perfData = await _get('/api/device/bot/performance');
       _performance = Performance.fromJson(perfData);
@@ -519,32 +539,71 @@ class BotProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void requestSubscription() {
+    _navigateToSubscription = true;
+    notifyListeners();
+  }
+
+  void clearSubscriptionNavigation() {
+    _navigateToSubscription = false;
+    notifyListeners();
+  }
+
   Future<bool> startBot() async {
     addLog('Starting bot...');
     if (_useMockData) {
       _botRunning = true;
       _state = _state?.copyWith(status: 'running', state: 'AWAITING_SIGNAL');
       addLog('Bot started successfully', level: 'TRADE');
-    } else {
-      try {
-        final accts = await getAccounts();
-        if (accts.isEmpty) {
-          addLog('No account configured. Please add credentials first.', level: 'WARNING');
-          notifyListeners();
-          return false;
-        }
-        await _post('/api/device/bot/start', {});
-        _botRunning = true;
-        addLog('Bot started successfully', level: 'TRADE');
-      } catch (e) {
-        addLog('Failed to start bot: $e', level: 'ERROR');
+      await _device.markBotStarted();
+      notifyListeners();
+      return true;
+    }
+    try {
+      final accts = await getAccounts();
+      if (accts.isEmpty) {
+        addLog('No account configured. Please add credentials first.', level: 'WARNING');
         notifyListeners();
         return false;
       }
+      final demo = accts.isNotEmpty && accts.first['demo'] == true;
+      if (!demo && !canTrade) {
+        _subscriptionBlocked = true;
+        addLog('Please subscribe to continue using the service.', level: 'WARNING');
+        requestSubscription();
+        notifyListeners();
+        return false;
+      }
+      final url = baseUrl;
+      final r = await _client.post(
+        Uri.parse('$url/api/device/bot/start'),
+        headers: _device.headers,
+        body: jsonEncode({}),
+      );
+      final data = jsonDecode(r.body);
+      if (r.statusCode == 200) {
+        _botRunning = true;
+        _subscriptionBlocked = false;
+        addLog('Bot started successfully', level: 'TRADE');
+        await _device.markBotStarted();
+        notifyListeners();
+        return true;
+      }
+      if (r.statusCode == 402) {
+        _subscriptionBlocked = true;
+        addLog('Trial expired. Please subscribe to continue.', level: 'WARNING');
+        requestSubscription();
+        notifyListeners();
+        return false;
+      }
+      addLog('Failed to start: ${data['error'] ?? r.body}', level: 'ERROR');
+      notifyListeners();
+      return false;
+    } catch (e) {
+      addLog('Failed to start bot: $e', level: 'ERROR');
+      notifyListeners();
+      return false;
     }
-    await _device.markBotStarted();
-    notifyListeners();
-    return true;
   }
 
   Future<bool> stopBot() async {

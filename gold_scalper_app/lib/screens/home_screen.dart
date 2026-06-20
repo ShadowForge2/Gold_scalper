@@ -11,6 +11,7 @@ import 'live_feed_screen.dart';
 import 'performance_screen.dart';
 import 'controls_screen.dart';
 import 'settings_screen.dart';
+import 'subscription_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -61,6 +62,18 @@ class _HomeScreenState extends State<HomeScreen> {
             navTab,
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeOutCubic,
+          );
+        }
+      });
+    }
+
+    if (bp.navigateToSubscription) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        bp.clearSubscriptionNavigation();
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const SubscriptionScreen()),
           );
         }
       });

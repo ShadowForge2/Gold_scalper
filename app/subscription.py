@@ -261,6 +261,7 @@ async def get_subscription(identifier: str, current_balance: float = 0.0) -> Dic
         "monthly_periods": [],
         "current_month_profit": 0.0,
         "current_month_fee": 0.0,
+        "demo": False,
     }
 
     if record is None:
@@ -299,6 +300,7 @@ async def get_subscription(identifier: str, current_balance: float = 0.0) -> Dic
                 "monthly_periods": periods,
                 "current_month_profit": current.get("cumulative_profit", 0.0),
                 "current_month_fee": current.get("fee_15pct", 0.0),
+                "demo": False,
             }
 
     trial_end_str = record.get("trial_end")
@@ -319,6 +321,7 @@ async def get_subscription(identifier: str, current_balance: float = 0.0) -> Dic
                 "monthly_periods": periods,
                 "current_month_profit": current.get("cumulative_profit", 0.0),
                 "current_month_fee": current.get("fee_15pct", 0.0),
+                "demo": False,
             }
 
     return {
@@ -334,6 +337,7 @@ async def get_subscription(identifier: str, current_balance: float = 0.0) -> Dic
         "monthly_periods": periods,
         "current_month_profit": current.get("cumulative_profit", 0.0),
         "current_month_fee": current.get("fee_15pct", 0.0),
+        "demo": False,
     }
 
 

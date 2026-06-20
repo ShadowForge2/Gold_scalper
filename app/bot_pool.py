@@ -24,6 +24,7 @@ class BotPool:
         self._loops: Dict[str, asyncio.AbstractEventLoop] = {}
         self._device_logs: Dict[str, List[Dict]] = {}
         self._lock = threading.Lock()
+        self._last_sub_warning: Dict[str, str] = {}
         os.makedirs(STATE_DIR, exist_ok=True)
 
     def start(self, identifier: str, api_key: str, password: str, demo: bool = True) -> Dict:
@@ -74,6 +75,17 @@ class BotPool:
                 return json.load(f)
         except (json.JSONDecodeError, IOError):
             return None
+
+    def add_log_once(self, identifier: str, message: str, level: str = "INFO") -> bool:
+        ident = _fmt_id(identifier)
+        with self._lock:
+            key = f"{ident}|{level}|{message}"
+            last = self._last_sub_warning.get(ident)
+            if last == key:
+                return False
+            self._last_sub_warning[ident] = key
+        self.add_log(identifier, message, level)
+        return True
 
     def add_log(self, identifier: str, message: str, level: str = "INFO"):
         ident = _fmt_id(identifier)

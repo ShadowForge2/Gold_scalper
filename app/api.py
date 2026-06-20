@@ -20,11 +20,18 @@ from app.subscription import (
     _get_sub_record, _save_sub_record,
     _cryptomus_register_order, _cryptomus_get_identifier,
 )
+from app.capital_client import CapitalClient
 import config as cfg
 
 
 
 class AddAccountRequest(BaseModel):
+    api_key: str
+    identifier: str
+    password: str
+    demo: bool = True
+
+class VerifyCredentialsRequest(BaseModel):
     api_key: str
     identifier: str
     password: str
@@ -519,14 +526,26 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         did = device_id or "unknown"
         dev = await get_device(did)
         if not dev or not dev.get("accounts"):
-            return {"error": "No accounts", "trial_active": False, "can_trade": False}
-        ident = dev["accounts"][0]["identifier"]
+            return {"error": "No accounts", "trial_active": False, "can_trade": False, "demo": False}
+        acct = dev["accounts"][0]
+        ident = acct["identifier"]
+        demo = acct.get("demo", True)
         bal = 0.0
         if bot_pool:
             state = bot_pool.get_state(ident)
             if state and state.get("account") and not state["account"].get("error"):
                 bal = state["account"].get("balance", 0)
         sub = await get_subscription(ident, bal)
+        sub["demo"] = bool(demo)
+        if bot_pool:
+            if not sub.get("can_trade") and sub.get("trial_end"):
+                bot_pool.add_log_once(ident, "Trial ended. Subscription required to continue trading.", "WARNING")
+            elif sub.get("trial_active"):
+                dr = sub.get("days_remaining", 0)
+                if dr == 1:
+                    bot_pool.add_log_once(ident, "Trial ends tomorrow! Subscribe to continue.", "WARNING")
+                elif 2 <= dr <= 3:
+                    bot_pool.add_log_once(ident, f"Trial ending in {dr} day(s). Please subscribe.", "WARNING")
         return sub
 
     @app.post("/api/device/subscription/check")
@@ -536,25 +555,26 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         did = device_id or "unknown"
         dev = await get_device(did)
         if not dev or not dev.get("accounts"):
-            return {"error": "No accounts", "trial_active": False, "can_trade": False}
-        ident = dev["accounts"][0]["identifier"]
+            return {"error": "No accounts", "trial_active": False, "can_trade": False, "demo": False}
+        acct = dev["accounts"][0]
+        ident = acct["identifier"]
+        demo = acct.get("demo", True)
         bal = 0.0
         if bot_pool:
             state = bot_pool.get_state(ident)
             if state and state.get("account") and not state["account"].get("error"):
                 bal = state["account"].get("balance", 0)
         sub = await get_subscription(ident, bal)
-        if not sub.get("can_trade") and sub.get("trial_end"):
-            if bot_pool:
-                bot_pool.add_log(ident, "Trial ended. Subscription required to continue trading.", "WARNING")
-        elif sub.get("trial_active"):
-            dr = sub.get("days_remaining", 0)
-            if dr == 1:
-                if bot_pool:
-                    bot_pool.add_log(ident, "Trial ends tomorrow! Subscribe to continue.", "WARNING")
-            elif 2 <= dr <= 3:
-                if bot_pool:
-                    bot_pool.add_log(ident, f"Trial ending in {dr} day(s). Please subscribe.", "WARNING")
+        sub["demo"] = bool(demo)
+        if bot_pool:
+            if not sub.get("can_trade") and sub.get("trial_end"):
+                bot_pool.add_log_once(ident, "Trial ended. Subscription required to continue trading.", "WARNING")
+            elif sub.get("trial_active"):
+                dr = sub.get("days_remaining", 0)
+                if dr == 1:
+                    bot_pool.add_log_once(ident, "Trial ends tomorrow! Subscribe to continue.", "WARNING")
+                elif 2 <= dr <= 3:
+                    bot_pool.add_log_once(ident, f"Trial ending in {dr} day(s). Please subscribe.", "WARNING")
         return sub
 
     # ── Paystack Payment ─────────────────────────────────────────

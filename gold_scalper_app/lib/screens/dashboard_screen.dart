@@ -21,6 +21,8 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   bool _isYearlyView = true;
   bool _dismissedWithdrawNotice = false;
+  bool _dismissedSubscriptionNotice = false;
+  bool _dismissedDemoNotice = false;
 
   @override
   Widget build(BuildContext context) {
@@ -41,6 +43,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               if (bp.botRunning && !_dismissedWithdrawNotice)
                 _buildWithdrawNotice(),
+              if (!bp.canTrade && !bp.isDemo && !bp.botRunning && !_dismissedSubscriptionNotice)
+                _buildSubscriptionBanner(context),
+              if (bp.isDemo && !_dismissedDemoNotice)
+                _buildDemoNotice(),
               const SizedBox(height: 16),
               FadeInScale(
                 delay: const Duration(milliseconds: 100),
@@ -464,6 +470,86 @@ class _DashboardScreenState extends State<DashboardScreen> {
               child: Padding(
                 padding: const EdgeInsets.only(left: 8),
                 child: Icon(Icons.close_rounded, color: Colors.amber.shade400, size: 18),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSubscriptionBanner(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: GestureDetector(
+        onTap: hapt(() {
+          _dismissedSubscriptionNotice = true;
+          Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscriptionScreen()));
+        }),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.orange.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.orange.withValues(alpha: 0.2)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Your free instance has been exhausted. Subscribe to continue using the service.',
+                  style: TextStyle(
+                    color: Colors.orange.shade200,
+                    fontSize: 12,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: hapt(() => setState(() => _dismissedSubscriptionNotice = true)),
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Icon(Icons.close_rounded, color: Colors.orange.shade400, size: 18),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDemoNotice() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.blue.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline_rounded, color: Colors.blue, size: 18),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Demo account connection is always free. Live accounts have a monthly quota with subscription.',
+                style: TextStyle(
+                  color: Colors.blue.shade200,
+                  fontSize: 12,
+                  height: 1.3,
+                ),
+              ),
+            ),
+            GestureDetector(
+              onTap: hapt(() => setState(() => _dismissedDemoNotice = true)),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Icon(Icons.close_rounded, color: Colors.blue.shade400, size: 18),
               ),
             ),
           ],

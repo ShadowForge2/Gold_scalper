@@ -5,6 +5,7 @@ import '../widgets/status_indicator.dart';
 import '../widgets/fade_in_scale.dart';
 import '../widgets/ui/haptic.dart';
 import '../theme.dart';
+import 'subscription_screen.dart';
 
 class ControlsScreen extends StatefulWidget {
   const ControlsScreen({super.key});
@@ -49,18 +50,37 @@ class _ControlsScreenState extends State<ControlsScreen> {
   Future<void> _startBot(BuildContext context, BotProvider bp) async {
     final ok = await bp.startBot();
     if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Connect a demo or live account first'),
-          backgroundColor: Colors.red.shade700,
-          behavior: SnackBarBehavior.floating,
-          action: SnackBarAction(
-            label: 'SETTINGS',
-            textColor: Colors.white,
-            onPressed: hapt(() => bp.requestCredentialsSetup()),
+      if (bp.subscriptionBlocked) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Please subscribe to continue using the service'),
+            backgroundColor: Colors.orange.shade700,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'SUBSCRIBE',
+              textColor: Colors.white,
+              onPressed: hapt(() => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SubscriptionScreen()),
+              )),
+            ),
           ),
-        ),
-      );
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Connect a demo or live account first'),
+            backgroundColor: Colors.red.shade700,
+            behavior: SnackBarBehavior.floating,
+            action: SnackBarAction(
+              label: 'SETTINGS',
+              textColor: Colors.white,
+              onPressed: hapt(() => bp.requestCredentialsSetup()),
+            ),
+          ),
+        );
+      }
     }
   }
 
