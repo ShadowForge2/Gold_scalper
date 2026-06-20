@@ -63,7 +63,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: _buildStatsGrid(s, bp),
               ),
               const SizedBox(height: 20),
-              if (bp.equityCurve.isNotEmpty) ...[
+              if (bp.equityCurve.isNotEmpty || bp.yearlyCurve.isNotEmpty || bp.monthlyCurve.isNotEmpty) ...[
                 FadeInScale(
                   delay: const Duration(milliseconds: 350),
                   child: Row(
@@ -568,8 +568,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildChartCard(BotProvider bp) {
     final displayData = _isYearlyView 
-        ? bp.equityCurve 
-        : bp.equityCurve.reversed.take(30).toList().reversed.toList();
+        ? bp.yearlyCurve 
+        : bp.monthlyCurve;
 
     return Container(
       padding: const EdgeInsets.all(20),

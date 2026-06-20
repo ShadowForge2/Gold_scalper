@@ -24,6 +24,8 @@ class BotProvider extends ChangeNotifier {
   Performance? _performance;
   BotConfig _config = BotConfig();
   List<EquityPoint> _equityCurve = [];
+  List<EquityPoint> _yearlyCurve = [];
+  List<EquityPoint> _monthlyCurve = [];
   List<LogEntry> _logs = [];
   bool _loading = true;
   bool _botRunning = false;
@@ -55,6 +57,8 @@ class BotProvider extends ChangeNotifier {
   Performance? get performance => _performance;
   BotConfig get config => _config;
   List<EquityPoint> get equityCurve => _equityCurve;
+  List<EquityPoint> get yearlyCurve => _yearlyCurve;
+  List<EquityPoint> get monthlyCurve => _monthlyCurve;
   List<LogEntry> get logs => _logs;
   bool get loading => _loading;
   bool get botRunning => _botRunning;
@@ -430,9 +434,25 @@ class BotProvider extends ChangeNotifier {
 
   Future<void> _fetchEquityCurve() async {
     try {
-      final data = await _get('/api/device/bot/equity_curve');
+      final data = await _get('/api/device/bot/equity_curve?period=all');
       final points = data['points'] as List? ?? [];
       _equityCurve = points.map((p) => EquityPoint(
+        time: DateTime.tryParse(p['time'] ?? '') ?? DateTime.now(),
+        balance: (p['balance'] ?? 0).toDouble(),
+      )).toList();
+    } catch (_) {}
+    try {
+      final data = await _get('/api/device/bot/equity_curve?period=yearly');
+      final points = data['points'] as List? ?? [];
+      _yearlyCurve = points.map((p) => EquityPoint(
+        time: DateTime.tryParse(p['time'] ?? '') ?? DateTime.now(),
+        balance: (p['balance'] ?? 0).toDouble(),
+      )).toList();
+    } catch (_) {}
+    try {
+      final data = await _get('/api/device/bot/equity_curve?period=monthly');
+      final points = data['points'] as List? ?? [];
+      _monthlyCurve = points.map((p) => EquityPoint(
         time: DateTime.tryParse(p['time'] ?? '') ?? DateTime.now(),
         balance: (p['balance'] ?? 0).toDouble(),
       )).toList();

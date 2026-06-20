@@ -466,7 +466,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
 
     # ── Device Bot Equity Curve ─────────────────────────────────
     @app.get("/api/device/bot/equity_curve")
-    async def device_equity_curve(device_id: str = Header(None, alias="X-Device-Id")):
+    async def device_equity_curve(period: str = "all", device_id: str = Header(None, alias="X-Device-Id")):
         if not _db_ok():
             return _no_db()
         did = device_id or "unknown"
@@ -489,18 +489,64 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         sorted_closed = sorted(closed, key=lambda t: t.get("closed_at", ""))
         points = []
         running = starting
-        points.append({"time": sorted_closed[0].get("closed_at", ""), "balance": round(starting, 2)})
-        for t in sorted_closed:
-            running += t.get("profit", 0)
-            points.append({
-                "time": t.get("closed_at", ""),
-                "balance": round(running, 2),
-            })
+        now = datetime.utcnow()
 
-        account = state.get("account") or {}
-        balance = account.get("balance", 0) or 0
-        if balance > 0:
-            points.append({"time": datetime.utcnow().isoformat(), "balance": round(balance, 2)})
+        if period == "yearly":
+            year_start = datetime(now.year, 1, 1)
+            running = starting
+            points.append({"time": year_start.isoformat(), "balance": round(starting, 2)})
+            monthly = {}
+            for t in sorted_closed:
+                closed_at = t.get("closed_at", "")
+                if not closed_at:
+                    continue
+                running += t.get("profit", 0)
+                month_key = closed_at[:7]
+                monthly[month_key] = round(running, 2)
+            for m in sorted(monthly.keys()):
+                dt = datetime.fromisoformat(m + "-01")
+                if dt >= year_start:
+                    points.append({"time": dt.isoformat(), "balance": monthly[m]})
+            account = state.get("account") or {}
+            balance = account.get("balance", 0) or 0
+            if balance > 0:
+                points.append({"time": now.isoformat(), "balance": round(balance, 2)})
+
+        elif period == "monthly":
+            month_start = datetime(now.year, now.month, 1)
+            running = starting
+            daily = {}
+            for t in sorted_closed:
+                closed_at = t.get("closed_at", "")
+                if not closed_at:
+                    continue
+                running += t.get("profit", 0)
+                day_key = closed_at[:10]
+                if day_key >= month_start.strftime("%Y-%m-%d"):
+                    daily[day_key] = round(running, 2)
+            if daily:
+                first_day = min(daily.keys())
+                if first_day > month_start.strftime("%Y-%m-%d"):
+                    points.append({"time": month_start.isoformat(), "balance": round(starting, 2)})
+            for d in sorted(daily.keys()):
+                points.append({"time": d + "T00:00:00", "balance": daily[d]})
+            account = state.get("account") or {}
+            balance = account.get("balance", 0) or 0
+            if balance > 0:
+                points.append({"time": now.isoformat(), "balance": round(balance, 2)})
+
+        else:
+            points.append({"time": sorted_closed[0].get("closed_at", ""), "balance": round(starting, 2)})
+            for t in sorted_closed:
+                running += t.get("profit", 0)
+                points.append({
+                    "time": t.get("closed_at", ""),
+                    "balance": round(running, 2),
+                })
+            account = state.get("account") or {}
+            balance = account.get("balance", 0) or 0
+            if balance > 0:
+                points.append({"time": now.isoformat(), "balance": round(balance, 2)})
 
         return {"points": points}
 
