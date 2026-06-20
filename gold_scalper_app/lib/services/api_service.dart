@@ -16,11 +16,13 @@ class ApiService {
     required this.authHeaders,
   });
 
+  static const _timeout = Duration(seconds: 10);
+
   Future<Map<String, dynamic>> _get(String path) async {
     final r = await _client.get(
       Uri.parse('$baseUrl$path'),
       headers: authHeaders(),
-    );
+    ).timeout(_timeout);
     if (r.statusCode == 200) return jsonDecode(r.body);
     throw Exception('GET $path: ${r.statusCode} ${r.body}');
   }
@@ -33,10 +35,16 @@ class ApiService {
       Uri.parse('$baseUrl$path'),
       headers: headers,
       body: jsonEncode(body),
-    );
-    final data = jsonDecode(r.body);
-    if (r.statusCode == 200) return data;
-    throw Exception('POST $path: ${r.statusCode} ${data['error'] ?? r.body}');
+    ).timeout(_timeout);
+    if (r.statusCode != 200) {
+      try {
+        final data = jsonDecode(r.body);
+        throw Exception('POST $path: ${r.statusCode} ${data['error'] ?? r.body}');
+      } catch (_) {
+        throw Exception('POST $path: ${r.statusCode} ${r.body}');
+      }
+    }
+    return jsonDecode(r.body);
   }
 
   Future<BotState> getState() async {

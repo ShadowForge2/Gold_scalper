@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:js' as js;
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -96,16 +96,14 @@ class DeviceProvider extends ChangeNotifier {
   String _generateFingerprint() {
     final buf = StringBuffer();
     try {
-      final navigator = js.context['navigator'];
-      buf.write(navigator['userAgent'] ?? '');
-      buf.write(navigator['language'] ?? '');
-      buf.write(navigator['platform'] ?? '');
-      final screen = js.context['screen'];
-      buf.write(screen['width'] ?? '');
-      buf.write(screen['height'] ?? '');
-      buf.write(screen['colorDepth'] ?? '');
+      buf.write(Platform.operatingSystem);
+      buf.write(Platform.operatingSystemVersion);
+      buf.write(Platform.localHostname);
+      buf.write(Platform.numberOfProcessors);
       buf.write(DateTime.now().timeZoneOffset.inMinutes);
-    } catch (_) {}
+    } catch (_) {
+      debugPrint('Fingerprint error: $_');
+    }
 
     final raw = buf.toString();
     if (raw.isEmpty) return _fallbackUuid();

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/bot_provider.dart';
 import '../widgets/status_indicator.dart';
 import '../widgets/metric_card.dart';
@@ -23,6 +24,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _dismissedWithdrawNotice = false;
   bool _dismissedSubscriptionNotice = false;
   bool _dismissedDemoNotice = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDismissedDemoNotice();
+  }
+
+  Future<void> _loadDismissedDemoNotice() async {
+    final prefs = await SharedPreferences.getInstance();
+    final ts = prefs.getInt('_dismissedDemoNotice');
+    if (ts != null && DateTime.now().millisecondsSinceEpoch - ts < 86400000) {
+      if (mounted) setState(() => _dismissedDemoNotice = true);
+    }
+  }
+
+  Future<void> _dismissDemoNotice() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('_dismissedDemoNotice', DateTime.now().millisecondsSinceEpoch);
+    if (mounted) setState(() => _dismissedDemoNotice = true);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -554,7 +575,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
             GestureDetector(
-              onTap: hapt(() => setState(() => _dismissedDemoNotice = true)),
+              onTap: hapt(() => _dismissDemoNotice()),
               child: Padding(
                 padding: const EdgeInsets.only(left: 8),
                 child: Icon(Icons.close_rounded, color: Colors.blue.shade400, size: 18),

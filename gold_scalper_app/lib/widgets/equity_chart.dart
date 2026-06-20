@@ -12,8 +12,12 @@ class EquityChart extends StatelessWidget {
   Widget build(BuildContext context) {
     if (data.isEmpty) return const SizedBox();
 
-    final spots = data.asMap().entries.map((e) {
-      return FlSpot(e.key.toDouble(), e.value.balance);
+    final minTime = data.first.time.millisecondsSinceEpoch.toDouble();
+    final spots = data.map((p) {
+      return FlSpot(
+        (p.time.millisecondsSinceEpoch.toDouble() - minTime) / 1000,
+        p.balance,
+      );
     }).toList();
 
     return SizedBox(

@@ -4,6 +4,7 @@ class Trade {
   final DateTime? exitTime;
   final String direction;
   final double entryPrice;
+  final double? currentPrice;
   final double? exitPrice;
   final double pnl;
   final double lot;
@@ -18,6 +19,7 @@ class Trade {
     this.exitTime,
     required this.direction,
     required this.entryPrice,
+    this.currentPrice,
     this.exitPrice,
     required this.pnl,
     required this.lot,
@@ -41,10 +43,11 @@ class Trade {
 
     return Trade(
       id: json['id']?.toString() ?? json['ticket']?.toString() ?? '',
-      entryTime: parseTime(json['entry_time']) ?? DateTime.now(),
+      entryTime: parseTime(json['entry_time']) ?? DateTime.utc(1970),
       exitTime: parseTime(json['exit_time']),
       direction: json['direction'] ?? 'BUY',
       entryPrice: (json['entry_price'] ?? 0).toDouble(),
+      currentPrice: json['current_price']?.toDouble(),
       exitPrice: json['exit_price']?.toDouble(),
       pnl: (json['pnl'] ?? 0).toDouble(),
       lot: (json['lot'] ?? 0).toDouble(),

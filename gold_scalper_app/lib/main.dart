@@ -15,7 +15,14 @@ void main() {
       statusBarIconBrightness: Brightness.light,
     ),
   );
-  runApp(const GoldScalperApp());
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    debugPrint('FATAL: ${details.exception}\n${details.stack}');
+  };
+  runZonedGuarded(
+    () => runApp(const GoldScalperApp()),
+    (error, stack) => debugPrint('UNCAUGHT: $error\n$stack'),
+  );
 }
 
 class GoldScalperApp extends StatelessWidget {
@@ -32,7 +39,7 @@ class GoldScalperApp extends StatelessWidget {
         ),
       ],
       child: MaterialApp(
-        title: 'HIDE',
+        title: 'Gold Scalper',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           brightness: Brightness.dark,

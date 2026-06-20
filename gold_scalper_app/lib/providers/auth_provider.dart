@@ -31,7 +31,9 @@ class AuthProvider extends ChangeNotifier {
         await http.get(Uri.parse('$url/health')).timeout(const Duration(seconds: 3));
         _activeUrl = url;
         return url;
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('auth resolveUrl failed: $url -> $e');
+      }
     }
     _activeUrl = _baseUrls.first;
     return _activeUrl!;
@@ -66,7 +68,8 @@ class AuthProvider extends ChangeNotifier {
         _email = data['email'];
         return true;
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('_validateToken failed: $e');
       _activeUrl = null;
       await _resolveUrl();
     }

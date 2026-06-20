@@ -1,7 +1,7 @@
-import 'dart:js' as js;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../providers/bot_provider.dart';
 import '../widgets/ui/haptic.dart';
 import '../theme.dart';
@@ -15,6 +15,8 @@ class SubscriptionScreen extends StatefulWidget {
 
 class _SubscriptionScreenState extends State<SubscriptionScreen> {
   String _selectedMethod = 'card';
+  bool _showAllPeriods = false;
+  static const int _maxVisiblePeriods = 6;
   final _emailCtrl = TextEditingController();
   final _refCtrl = TextEditingController();
 
@@ -44,8 +46,6 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
               const SizedBox(height: 16),
               _buildProfitCard(bp),
               const SizedBox(height: 16),
-              _buildPeriodsCard(bp),
-              const SizedBox(height: 16),
               _buildMethodCards(bp),
               if (_selectedMethod == 'card') ...[
                 const SizedBox(height: 12),
@@ -60,6 +60,8 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 const SizedBox(height: 12),
                 _buildCryptoInfo(),
               ],
+              const SizedBox(height: 16),
+              _buildPeriodsCard(bp),
               const SizedBox(height: 24),
             ],
           ),
@@ -203,6 +205,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
 
   Widget _buildPeriodsCard(BotProvider bp) {
     final periods = bp.monthlyPeriods;
+    final visible = _showAllPeriods || periods.length <= _maxVisiblePeriods
+        ? periods
+        : periods.sublist(periods.length - _maxVisiblePeriods);
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -213,12 +218,25 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Billing History', style: TextStyle(color: const Color(0xFF3A3A3A), fontSize: 15, fontWeight: FontWeight.bold)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Billing History', style: TextStyle(color: const Color(0xFF3A3A3A), fontSize: 15, fontWeight: FontWeight.bold)),
+              if (periods.length > _maxVisiblePeriods)
+                GestureDetector(
+                  onTap: hapt(() => setState(() => _showAllPeriods = !_showAllPeriods)),
+                  child: Text(
+                    _showAllPeriods ? 'Show less' : 'Show all (${periods.length})',
+                    style: const TextStyle(color: kGold, fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(height: 16),
           if (periods.isEmpty)
             Text('No billing periods yet.', style: TextStyle(color: Colors.grey.shade600, fontSize: 13))
           else
-            ...periods.map((p) => _periodTile(p)),
+            ...visible.map((p) => _periodTile(p)),
         ],
       ),
     );
@@ -414,31 +432,16 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 }
                 final result = await bp.initializePayment(email, channels: channels);
                 if (result != null && context.mounted) {
-                  final accessCode = result['access_code'] as String?;
-                  if (accessCode != null) {
-                    js.context.callMethod('paystackInline', [
-                      accessCode,
-                      (ref) {
-                        bp.verifyPayment(ref as String);
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Payment successful!')),
-                          );
-                        }
-                      },
-                      () {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Payment cancelled')),
-                          );
-                        }
-                      },
-                    ]);
+                  final url = result['authorization_url'] as String?;
+                  if (url != null) {
+                    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Payment page opened')),
+                    );
                   } else {
-                    final url = result['authorization_url'] as String?;
-                    if (url != null) {
-                      js.context.callMethod('open', [url, '_blank']);
-                    }
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Payment URL not available')),
+                    );
                   }
                 }
               }),
@@ -525,7 +528,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 if (result != null && context.mounted) {
                   final payUrl = result['payment_url'] as String?;
                   if (payUrl != null) {
-                    js.context.callMethod('open', [payUrl, '_blank']);
+                    await launchUrl(Uri.parse(payUrl), mode: LaunchMode.externalApplication);
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('Cryptomus payment page opened')),
                     );

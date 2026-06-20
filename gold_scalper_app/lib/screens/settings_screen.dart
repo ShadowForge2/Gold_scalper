@@ -44,7 +44,9 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
         _hasSavedCredentials = true;
         setState(() {});
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('_loadSavedAccounts failed: $e');
+    }
   }
 
   @override

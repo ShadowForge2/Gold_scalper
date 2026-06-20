@@ -78,7 +78,7 @@ class BiasIndicator extends StatelessWidget {
           if (strength > 0) ...[
             const SizedBox(width: 4),
             Text(
-              '(${(strength * 100).toInt()}%)',
+              '(${strength.toInt()}%)',
               style: TextStyle(color: color.withValues(alpha: 0.7), fontSize: 12),
             ),
           ],

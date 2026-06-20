@@ -18,6 +18,7 @@ class BotProvider extends ChangeNotifier {
   final _rand = Random(42);
 
   bool _useMockData = false;
+  bool _initialized = false;
 
   BotState? _state;
   List<Trade> _recentTrades = [];
@@ -87,7 +88,9 @@ class BotProvider extends ChangeNotifier {
             .timeout(const Duration(seconds: 3));
         _activeUrl = url;
         return;
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('resolveUrl failed: $url -> $e');
+      }
     }
     _activeUrl = _baseUrls.first;
   }
@@ -102,6 +105,8 @@ class BotProvider extends ChangeNotifier {
     return h;
   }
 
+  static const _timeout = Duration(seconds: 10);
+
   Future<Map<String, dynamic>> _get(String path, {bool retried = false}) async {
     if (_useMockData) return _mockResponse(path);
     final url = baseUrl;
@@ -109,10 +114,11 @@ class BotProvider extends ChangeNotifier {
       final r = await _client.get(
         Uri.parse('$url$path'),
         headers: _getHeaders,
-      );
+      ).timeout(_timeout);
       if (r.statusCode == 200) return jsonDecode(r.body);
       throw Exception('GET $path: ${r.statusCode}');
-    } catch (_) {
+    } catch (e) {
+      debugPrint('_get $path failed: $e');
       if (!retried) {
         _activeUrl = null;
         await _resolveUrl();
@@ -131,11 +137,12 @@ class BotProvider extends ChangeNotifier {
         Uri.parse('$url$path'),
         headers: _device.headers,
         body: jsonEncode(body),
-      );
+      ).timeout(_timeout);
       final data = jsonDecode(r.body);
       if (r.statusCode == 200) return data;
       throw Exception('POST $path: ${data['error'] ?? r.body}');
-    } catch (_) {
+    } catch (e) {
+      debugPrint('_post $path failed: $e');
       if (!retried) {
         _activeUrl = null;
         await _resolveUrl();
@@ -361,6 +368,8 @@ class BotProvider extends ChangeNotifier {
   }
 
   Future<void> init() async {
+    if (_initialized) return;
+    _initialized = true;
     _loading = true;
     await _loadConfig();
     notifyListeners();
@@ -393,7 +402,9 @@ class BotProvider extends ChangeNotifier {
       final stateData = await _get('/api/device/bot/state');
       _state = BotState.fromApiResponse(stateData);
       _botRunning = stateData['running'] == true;
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('_fetchAll state failed: $e');
+    }
 
     try {
       final logData = await _get('/api/device/bot/logs');
@@ -407,27 +418,37 @@ class BotProvider extends ChangeNotifier {
         }
         if (_logs.length > 200) _logs.removeRange(0, _logs.length - 200);
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('_fetchAll logs failed: $e');
+    }
 
     try {
       _subscription = await _get('/api/device/subscription');
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('_fetchAll subscription failed: $e');
+    }
 
     try {
       final cfgData = await _get('/api/device/bot/config');
       _config = BotConfig.fromJson(cfgData);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('_fetchAll config failed: $e');
+    }
 
     try {
       final perfData = await _get('/api/device/bot/performance');
       _performance = Performance.fromJson(perfData);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('_fetchAll performance failed: $e');
+    }
 
     try {
       final tradeData = await _get('/api/device/bot/trades');
       final tradesList = tradeData['trades'] as List? ?? [];
       _recentTrades = tradesList.map((t) => Trade.fromJson(t)).toList();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('_fetchAll trades failed: $e');
+    }
 
     await _fetchEquityCurve();
   }
@@ -440,7 +461,9 @@ class BotProvider extends ChangeNotifier {
         time: DateTime.tryParse(p['time'] ?? '') ?? DateTime.now(),
         balance: (p['balance'] ?? 0).toDouble(),
       )).toList();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('_fetchEquityCurve all failed: $e');
+    }
     try {
       final data = await _get('/api/device/bot/equity_curve?period=yearly');
       final points = data['points'] as List? ?? [];
@@ -448,7 +471,9 @@ class BotProvider extends ChangeNotifier {
         time: DateTime.tryParse(p['time'] ?? '') ?? DateTime.now(),
         balance: (p['balance'] ?? 0).toDouble(),
       )).toList();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('_fetchEquityCurve yearly failed: $e');
+    }
     try {
       final data = await _get('/api/device/bot/equity_curve?period=monthly');
       final points = data['points'] as List? ?? [];
@@ -456,16 +481,46 @@ class BotProvider extends ChangeNotifier {
         time: DateTime.tryParse(p['time'] ?? '') ?? DateTime.now(),
         balance: (p['balance'] ?? 0).toDouble(),
       )).toList();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('_fetchEquityCurve monthly failed: $e');
+    }
   }
 
   Future<void> _tickLive() async {
+    await Future.wait([
+      _fetchStateAndLogs(),
+      _get('/api/device/subscription').then((d) => _subscription = d).catchError((e) => debugPrint('_tickLive subscription: $e')),
+      _get('/api/device/bot/performance').then((d) => _performance = Performance.fromJson(d)).catchError((e) => debugPrint('_tickLive perf: $e')),
+      _fetchEquityCurve(),
+    ]);
+
+    if (_botRunning && !isDemo && !hasNoAccounts && !canTrade && !_subscriptionBlocked) {
+      _subscriptionBlocked = true;
+      addLog('Your free trial has ended. Please subscribe to continue trading.', level: 'WARNING');
+      requestSubscription();
+      _post('/api/device/bot/stop', {}).then((_) {
+        _botRunning = false;
+        addLog('Bot stopped automatically due to expired trial/subscription.', level: 'WARNING');
+      }).catchError((e) => debugPrint('_tickLive stop: $e'));
+    }
+    if (_subscriptionBlocked && (isDemo || canTrade)) {
+      _subscriptionBlocked = false;
+    }
+
+    notifyListeners();
+  }
+
+  Future<void> _fetchStateAndLogs() async {
     try {
-      final stateData = await _get('/api/device/bot/state');
+      final results = await Future.wait([
+        _get('/api/device/bot/state'),
+        _get('/api/device/bot/logs'),
+      ]);
+      final stateData = results[0];
       _state = BotState.fromApiResponse(stateData);
       _botRunning = stateData['running'] == true;
 
-      final logData = await _get('/api/device/bot/logs');
+      final logData = results[1];
       final backendLogs = (logData['logs'] as List).map((l) => LogEntry.fromJson(l)).toList();
       if (backendLogs.isNotEmpty) {
         final existingMsgs = _logs.map((e) => e.message).toSet();
@@ -476,31 +531,9 @@ class BotProvider extends ChangeNotifier {
         }
         if (_logs.length > 200) _logs.removeRange(0, _logs.length - 200);
       }
-      _subscription = await _get('/api/device/subscription');
-    } catch (_) {}
-
-    if (_botRunning && !isDemo && !hasNoAccounts && !canTrade && !_subscriptionBlocked) {
-      _subscriptionBlocked = true;
-      addLog('Your free trial has ended. Please subscribe to continue trading.', level: 'WARNING');
-      requestSubscription();
-      try {
-        await _post('/api/device/bot/stop', {});
-        _botRunning = false;
-        addLog('Bot stopped automatically due to expired trial/subscription.', level: 'WARNING');
-      } catch (_) {}
+    } catch (e) {
+      debugPrint('_fetchStateAndLogs failed: $e');
     }
-    if (_subscriptionBlocked && (isDemo || canTrade)) {
-      _subscriptionBlocked = false;
-    }
-
-    try {
-      final perfData = await _get('/api/device/bot/performance');
-      _performance = Performance.fromJson(perfData);
-    } catch (_) {}
-
-    await _fetchEquityCurve();
-
-    notifyListeners();
   }
 
   void _tickMock() {
@@ -717,8 +750,25 @@ class BotProvider extends ChangeNotifier {
   }
 
   Future<bool> removeAccount(String identifier) async {
-    addLog('Removed: $identifier', level: 'WARNING');
-    return true;
+    if (_useMockData) {
+      addLog('Removed: $identifier', level: 'WARNING');
+      return true;
+    }
+    try {
+      final r = await _client.delete(
+        Uri.parse('$baseUrl/api/device/accounts/$identifier'),
+        headers: _device.headers,
+      );
+      if (r.statusCode == 200) {
+        addLog('Removed: $identifier', level: 'WARNING');
+        return true;
+      }
+      addLog('Failed to remove account: ${r.statusCode}', level: 'ERROR');
+      return false;
+    } catch (e) {
+      addLog('Failed to remove account: $e', level: 'ERROR');
+      return false;
+    }
   }
 
   Future<Map<String, dynamic>?> initializePayment(String email, {List<String>? channels}) async {
@@ -767,7 +817,9 @@ class BotProvider extends ChangeNotifier {
         final json = Map<String, dynamic>.from(jsonDecode(raw));
         _config = BotConfig.fromJson(json);
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('_loadConfig failed: $e');
+    }
   }
 
   void updateConfig(BotConfig config) {
