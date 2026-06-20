@@ -398,14 +398,28 @@ class BotProvider extends ChangeNotifier {
   }
 
   Future<void> _fetchAll() async {
+    await Future.wait([
+      _fetchState(),
+      _fetchLogs(),
+      _fetchSubscription(),
+      _fetchConfig(),
+      _fetchPerformance(),
+      _fetchTrades(),
+      _fetchEquityCurve(),
+    ]);
+  }
+
+  Future<void> _fetchState() async {
     try {
       final stateData = await _get('/api/device/bot/state');
       _state = BotState.fromApiResponse(stateData);
       _botRunning = stateData['running'] == true;
     } catch (e) {
-      debugPrint('_fetchAll state failed: $e');
+      debugPrint('_fetchState failed: $e');
     }
+  }
 
+  Future<void> _fetchLogs() async {
     try {
       final logData = await _get('/api/device/bot/logs');
       final backendLogs = (logData['logs'] as List).map((l) => LogEntry.fromJson(l)).toList();
@@ -419,78 +433,72 @@ class BotProvider extends ChangeNotifier {
         if (_logs.length > 200) _logs.removeRange(0, _logs.length - 200);
       }
     } catch (e) {
-      debugPrint('_fetchAll logs failed: $e');
+      debugPrint('_fetchLogs failed: $e');
     }
+  }
 
+  Future<void> _fetchSubscription() async {
     try {
       _subscription = await _get('/api/device/subscription');
     } catch (e) {
-      debugPrint('_fetchAll subscription failed: $e');
+      debugPrint('_fetchSubscription failed: $e');
     }
+  }
 
+  Future<void> _fetchConfig() async {
     try {
       final cfgData = await _get('/api/device/bot/config');
       _config = BotConfig.fromJson(cfgData);
     } catch (e) {
-      debugPrint('_fetchAll config failed: $e');
+      debugPrint('_fetchConfig failed: $e');
     }
+  }
 
+  Future<void> _fetchPerformance() async {
     try {
       final perfData = await _get('/api/device/bot/performance');
       _performance = Performance.fromJson(perfData);
     } catch (e) {
-      debugPrint('_fetchAll performance failed: $e');
+      debugPrint('_fetchPerformance failed: $e');
     }
+  }
 
+  Future<void> _fetchTrades() async {
     try {
       final tradeData = await _get('/api/device/bot/trades');
       final tradesList = tradeData['trades'] as List? ?? [];
       _recentTrades = tradesList.map((t) => Trade.fromJson(t)).toList();
     } catch (e) {
-      debugPrint('_fetchAll trades failed: $e');
+      debugPrint('_fetchTrades failed: $e');
     }
-
-    await _fetchEquityCurve();
   }
 
   Future<void> _fetchEquityCurve() async {
+    await Future.wait([
+      _fetchEquityCurvePeriod('all', (points) => _equityCurve = points),
+      _fetchEquityCurvePeriod('yearly', (points) => _yearlyCurve = points),
+      _fetchEquityCurvePeriod('monthly', (points) => _monthlyCurve = points),
+    ]);
+  }
+
+  Future<void> _fetchEquityCurvePeriod(String period, void Function(List<EquityPoint>) setter) async {
     try {
-      final data = await _get('/api/device/bot/equity_curve?period=all');
-      final points = data['points'] as List? ?? [];
-      _equityCurve = points.map((p) => EquityPoint(
+      final data = await _get('/api/device/bot/equity_curve?period=$period');
+      final points = (data['points'] as List? ?? []).map((p) => EquityPoint(
         time: DateTime.tryParse(p['time'] ?? '') ?? DateTime.now(),
         balance: (p['balance'] ?? 0).toDouble(),
       )).toList();
+      setter(points);
     } catch (e) {
-      debugPrint('_fetchEquityCurve all failed: $e');
-    }
-    try {
-      final data = await _get('/api/device/bot/equity_curve?period=yearly');
-      final points = data['points'] as List? ?? [];
-      _yearlyCurve = points.map((p) => EquityPoint(
-        time: DateTime.tryParse(p['time'] ?? '') ?? DateTime.now(),
-        balance: (p['balance'] ?? 0).toDouble(),
-      )).toList();
-    } catch (e) {
-      debugPrint('_fetchEquityCurve yearly failed: $e');
-    }
-    try {
-      final data = await _get('/api/device/bot/equity_curve?period=monthly');
-      final points = data['points'] as List? ?? [];
-      _monthlyCurve = points.map((p) => EquityPoint(
-        time: DateTime.tryParse(p['time'] ?? '') ?? DateTime.now(),
-        balance: (p['balance'] ?? 0).toDouble(),
-      )).toList();
-    } catch (e) {
-      debugPrint('_fetchEquityCurve monthly failed: $e');
+      debugPrint('_fetchEquityCurve $period failed: $e');
     }
   }
 
   Future<void> _tickLive() async {
     await Future.wait([
       _fetchStateAndLogs(),
-      _get('/api/device/subscription').then((d) => _subscription = d).catchError((e) => debugPrint('_tickLive subscription: $e')),
-      _get('/api/device/bot/performance').then((d) => _performance = Performance.fromJson(d)).catchError((e) => debugPrint('_tickLive perf: $e')),
+      _get('/api/device/subscription').then((d) => _subscription = d).catchError((e) { debugPrint('_tickLive subscription: $e'); return <String, dynamic>{}; }),
+      _get('/api/device/bot/performance').then((d) { _performance = Performance.fromJson(d); }).catchError((e) { debugPrint('_tickLive perf: $e'); }),
       _fetchEquityCurve(),
     ]);
 
@@ -501,7 +509,7 @@ class BotProvider extends ChangeNotifier {
       _post('/api/device/bot/stop', {}).then((_) {
         _botRunning = false;
         addLog('Bot stopped automatically due to expired trial/subscription.', level: 'WARNING');
-      }).catchError((e) => debugPrint('_tickLive stop: $e'));
+      }).catchError((e) { debugPrint('_tickLive stop: $e'); });
     }
     if (_subscriptionBlocked && (isDemo || canTrade)) {
       _subscriptionBlocked = false;

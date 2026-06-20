@@ -2,7 +2,8 @@
     <application
         android:label="Gold Scalper Pro"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_foreground">
         <activity
             android:name=".MainActivity"
             android:exported="true"

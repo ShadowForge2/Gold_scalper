@@ -184,12 +184,12 @@ class _HoloPainter extends CustomPainter {
         continue;
       }
 
-      final opacity = lerpDouble(0.0, 0.08 + sin(t * obj.opacitySpeed * 2 * pi + obj.opacityPhase) * 0.04, obj._life)!;
+      final opacity = lerpDouble(0.0, 0.15 + sin(t * obj.opacitySpeed * 2 * pi + obj.opacityPhase) * 0.12, obj._life)!;
       if (opacity <= 0) continue;
 
       final scale = 0.95 + sin(t * obj.scaleSpeed * 2 * pi + obj.scalePhase) * 0.05;
       final rot = t * obj.rotationSpeed * 2 * pi;
-      final color = Colors.cyan.withValues(alpha: opacity);
+      final color = const Color(0xFF00FF88).withValues(alpha: opacity);
       final paint = Paint()
         ..color = color
         ..strokeWidth = 1.0
@@ -199,6 +199,11 @@ class _HoloPainter extends CustomPainter {
       canvas.translate(px, py);
       canvas.scale(scale);
       canvas.rotate(rot);
+
+      final glowPaint = Paint()
+        ..color = const Color(0xFF00FF88).withValues(alpha: opacity * 0.15)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+      canvas.drawCircle(Offset.zero, 12, glowPaint);
 
       _drawObject(canvas, obj, color, paint, size);
 

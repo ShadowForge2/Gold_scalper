@@ -42,3 +42,10 @@ backend_error.txt
 backend_output.txt
 flutter_web_error.txt
 flutter_web_output.txt
+
+# Flutter build artifacts
+*.apk
+*.aab
+gold_scalper_app/build/
+gold_scalper_app/android/app/build/
+gold_scalper_app/android/build/

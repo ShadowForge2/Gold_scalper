@@ -191,21 +191,26 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
   }
 
   Widget _buildSummaryGrid(Performance p) {
-    return GridView.count(
-      crossAxisCount: 3,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisSpacing: 10,
-      mainAxisSpacing: 10,
-      childAspectRatio: 1.1,
-      children: [
-        MetricCard(title: 'TRADES', value: '${p.totalTrades}', valueColor: kInfo, icon: Icons.swap_horiz_rounded),
-        MetricCard(title: 'WIN RATE', value: '${p.winRate}%', valueColor: kSuccess, icon: Icons.check_circle_rounded),
-        MetricCard(title: 'PF', value: '${p.profitFactor}', valueColor: kGold, icon: Icons.trending_up_rounded),
-        MetricCard(title: 'NET P&L', value: '\$${p.netPnl.toStringAsFixed(0)}', valueColor: kSuccess, icon: Icons.payments_rounded),
-        MetricCard(title: 'MAX DD', value: '\$${p.maxDrawdown.toStringAsFixed(0)}', valueColor: kDanger, icon: Icons.arrow_downward_rounded),
-        MetricCard(title: 'RETURN', value: '${(p.returnPct / 100).toStringAsFixed(0)}x', valueColor: kGold, icon: Icons.auto_graph_rounded),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final crossAxisCount = constraints.maxWidth >= 500 ? 3 : 2;
+        return GridView.count(
+          crossAxisCount: crossAxisCount,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
+          childAspectRatio: 1.1,
+          children: [
+            MetricCard(title: 'TRADES', value: '${p.totalTrades}', valueColor: kInfo, icon: Icons.swap_horiz_rounded),
+            MetricCard(title: 'WIN RATE', value: '${p.winRate}%', valueColor: kSuccess, icon: Icons.check_circle_rounded),
+            MetricCard(title: 'PF', value: '${p.profitFactor}', valueColor: kGold, icon: Icons.trending_up_rounded),
+            MetricCard(title: 'NET P&L', value: '\$${p.netPnl.toStringAsFixed(0)}', valueColor: kSuccess, icon: Icons.payments_rounded),
+            MetricCard(title: 'MAX DD', value: '\$${p.maxDrawdown.toStringAsFixed(0)}', valueColor: kDanger, icon: Icons.arrow_downward_rounded),
+            MetricCard(title: 'RETURN', value: '${(p.returnPct / 100).toStringAsFixed(0)}x', valueColor: kGold, icon: Icons.auto_graph_rounded),
+          ],
+        );
+      },
     );
   }
 

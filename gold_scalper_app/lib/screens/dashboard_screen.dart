@@ -162,119 +162,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       child: Column(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [kGold.withValues(alpha: 0.3), kGold.withValues(alpha: 0.05)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: kGold.withValues(alpha: 0.2)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: kGold.withValues(alpha: 0.1),
-                      blurRadius: 10,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.asset(
-                    'assets/images/logo.png',
-                    width: 56,
-                    height: 56,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    ShaderMask(
-                      shaderCallback: (bounds) => const LinearGradient(
-                        colors: [kGold, Color(0xFFD4AF37), kGold],
-                        stops: [0.0, 0.5, 1.0],
-                      ).createShader(bounds),
-                      blendMode: BlendMode.srcIn,
-                      child: const Text(
-                        'HIDE',
-                        style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
-                          letterSpacing: 6,
-                          height: 1.1,
-                        ),
-                      ),
-                    ),
-                    const Text(
-                      'Gold Scalper Pro',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w400,
-                        color: kTextSecondary,
-                        letterSpacing: 3,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    StatusIndicator(active: s.connected, label: s.broker),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  color: _stateColor(s.state).withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: _stateColor(s.state).withValues(alpha: 0.2)),
-                ),
-                child: Text(
-                  s.state.replaceAll('_', ' '),
-                  style: TextStyle(
-                    color: _stateColor(s.state),
-                    fontWeight: FontWeight.w700,
-                    fontSize: 10,
-                    letterSpacing: 0.8,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: hapt(() => Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscriptionScreen()))),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: kGold.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: kGold.withValues(alpha: 0.2)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.credit_card_rounded, color: kGold, size: 14),
-                      const SizedBox(width: 6),
-                      Text(
-                        'subscription',
-                        style: TextStyle(
-                          color: kGold.withValues(alpha: 0.7),
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isNarrow = constraints.maxWidth < 460;
+              return isNarrow ? _buildNarrowHeader(s, bp) : _buildWideHeader(s, bp);
+            },
           ),
           const SizedBox(height: 24),
           Container(height: 1, color: Colors.white.withValues(alpha: 0.04)),
@@ -376,6 +268,111 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildLogo() {
+    return Container(
+      width: 56, height: 56,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [kGold.withValues(alpha: 0.3), kGold.withValues(alpha: 0.05)],
+          begin: Alignment.topLeft, end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: kGold.withValues(alpha: 0.2)),
+        boxShadow: [BoxShadow(color: kGold.withValues(alpha: 0.1), blurRadius: 10, spreadRadius: 2)],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.asset('assets/images/logo.png', width: 56, height: 56, fit: BoxFit.cover),
+      ),
+    );
+  }
+
+  Widget _buildTitleColumn(s) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ShaderMask(
+          shaderCallback: (bounds) => const LinearGradient(
+            colors: [kGold, Color(0xFFD4AF37), kGold],
+            stops: [0.0, 0.5, 1.0],
+          ).createShader(bounds),
+          blendMode: BlendMode.srcIn,
+          child: const Text('HIDE', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 6, height: 1.1)),
+        ),
+        const Text('Gold Scalper Pro', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: kTextSecondary, letterSpacing: 3)),
+        const SizedBox(height: 6),
+        StatusIndicator(active: s.connected, label: s.broker),
+      ],
+    );
+  }
+
+  Widget _buildStateBadge(s) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: _stateColor(s.state).withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _stateColor(s.state).withValues(alpha: 0.2)),
+      ),
+      child: Text(
+        s.state.replaceAll('_', ' '),
+        style: TextStyle(color: _stateColor(s.state), fontWeight: FontWeight.w700, fontSize: 10, letterSpacing: 0.8),
+      ),
+    );
+  }
+
+  Widget _buildSubscriptionBtn() {
+    return GestureDetector(
+      onTap: hapt(() => Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscriptionScreen()))),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: kGold.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: kGold.withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.credit_card_rounded, color: kGold, size: 14),
+            const SizedBox(width: 6),
+            Text('subscription', style: TextStyle(color: kGold.withValues(alpha: 0.7), fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNarrowHeader(s, BotProvider bp) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            _buildLogo(),
+            const SizedBox(width: 12),
+            Expanded(child: _buildTitleColumn(s)),
+            _buildStateBadge(s),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Align(alignment: Alignment.centerRight, child: _buildSubscriptionBtn()),
+      ],
+    );
+  }
+
+  Widget _buildWideHeader(s, BotProvider bp) {
+    return Row(
+      children: [
+        _buildLogo(),
+        const SizedBox(width: 16),
+        Expanded(child: _buildTitleColumn(s)),
+        _buildStateBadge(s),
+        const SizedBox(width: 8),
+        _buildSubscriptionBtn(),
+      ],
     );
   }
 

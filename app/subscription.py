@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import os
+import time
 import uuid
 from base64 import b64encode
 from datetime import datetime, timedelta
@@ -18,6 +19,34 @@ CRYPTOMUS_BASE = "https://api.cryptomus.com/v1"
 
 
 # ── Device tracking (async DB) ──────────────────────────────────
+
+_device_cache: Dict[str, Dict] = {}
+_device_cache_ts: Dict[str, float] = {}
+_DEVICE_CACHE_TTL = 5.0
+
+
+async def _cached_device(device_id: str, force: bool = False) -> Optional[Dict]:
+    now = time.time()
+    if not force:
+        cached = _device_cache.get(device_id)
+        ts = _device_cache_ts.get(device_id, 0)
+        if cached is not None and now - ts < _DEVICE_CACHE_TTL:
+            return cached
+    row = await db_mod.database.fetch_one(
+        "SELECT * FROM devices WHERE device_id = :did", {"did": device_id}
+    )
+    if row is None:
+        _device_cache[device_id] = None
+        _device_cache_ts[device_id] = now
+        return None
+    rows = await db_mod.database.fetch_all(
+        "SELECT * FROM accounts WHERE device_id = :did", {"did": device_id}
+    )
+    data = dict(row) | {"accounts": [dict(a) for a in rows]}
+    _device_cache[device_id] = data
+    _device_cache_ts[device_id] = now
+    return data
+
 
 async def ensure_device(device_id: str) -> Dict:
     row = await db_mod.database.fetch_one(
@@ -37,16 +66,8 @@ async def ensure_device(device_id: str) -> Dict:
     return {"device_id": device_id, "first_seen": now, "accounts": []}
 
 
-async def get_device(device_id: str) -> Optional[Dict]:
-    row = await db_mod.database.fetch_one(
-        "SELECT * FROM devices WHERE device_id = :did", {"did": device_id}
-    )
-    if row is None:
-        return None
-    rows = await db_mod.database.fetch_all(
-        "SELECT * FROM accounts WHERE device_id = :did", {"did": device_id}
-    )
-    return dict(row) | {"accounts": [dict(a) for a in rows]}
+async def get_device(device_id: str, force: bool = False) -> Optional[Dict]:
+    return await _cached_device(device_id, force=force)
 
 
 async def get_accounts(device_id: str) -> List[Dict]:
@@ -57,6 +78,7 @@ async def get_accounts(device_id: str) -> List[Dict]:
 
 
 async def add_account(device_id: str, api_key: str, identifier: str, password: str, demo: bool = True) -> bool:
+    _device_cache.pop(device_id, None)
     await ensure_device(device_id)
     await db_mod.database.execute(
         """INSERT INTO accounts (device_id, api_key, identifier, password, demo)
@@ -70,6 +92,7 @@ async def add_account(device_id: str, api_key: str, identifier: str, password: s
 
 
 async def remove_account(device_id: str, identifier: str) -> bool:
+    _device_cache.pop(device_id, None)
     result = await db_mod.database.execute(
         "DELETE FROM accounts WHERE device_id = :did AND identifier = :id",
         {"did": device_id, "id": identifier},
@@ -78,6 +101,7 @@ async def remove_account(device_id: str, identifier: str) -> bool:
 
 
 async def restore_device_by_capital_id(identifier: str, new_device_id: str) -> Optional[Dict]:
+    _device_cache.pop(new_device_id, None)
     old_device = await db_mod.database.fetch_one(
         """SELECT DISTINCT a.device_id FROM accounts a
            WHERE a.identifier = :id AND a.device_id != :ndid""",
@@ -87,6 +111,7 @@ async def restore_device_by_capital_id(identifier: str, new_device_id: str) -> O
         return None
 
     old_did = old_device["device_id"]
+    _device_cache.pop(old_did, None)
 
     existing = await db_mod.database.fetch_one(
         "SELECT 1 FROM devices WHERE device_id = :did", {"did": new_device_id}

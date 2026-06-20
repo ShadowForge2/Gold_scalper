@@ -11,11 +11,20 @@ class WelcomeScreen extends StatefulWidget {
 }
 
 class _WelcomeScreenState extends State<WelcomeScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final AnimationController _c = AnimationController(
     vsync: this,
     duration: const Duration(seconds: 6),
   )..repeat(reverse: true);
+
+  late final AnimationController _taglineCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 800),
+  );
+  late final Animation<double> _taglineFade = CurvedAnimation(
+    parent: _taglineCtrl,
+    curve: Curves.easeIn,
+  );
 
   static const _title = 'HIDE AI TRADING CORE';
   int _typewriterChars = 0;
@@ -29,6 +38,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
         setState(() => _typewriterChars++);
       } else {
         _twTimer?.cancel();
+        _taglineCtrl.forward();
       }
     });
   }
@@ -37,6 +47,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
   void dispose() {
     _twTimer?.cancel();
     _c.dispose();
+    _taglineCtrl.dispose();
     super.dispose();
   }
 
@@ -63,11 +74,23 @@ class _WelcomeScreenState extends State<WelcomeScreen>
               child: Transform.translate(
                 offset: Offset(0, dy),
                 child: Opacity(
-                  opacity: 0.18,
-                  child: Image.asset(
-                    'assets/images/robot.png',
-                    fit: BoxFit.contain,
-                    width: MediaQuery.of(context).size.width * 0.9,
+                  opacity: 0.18 + glowOpacity * 0.12,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF00FF88).withValues(alpha: glowOpacity * 0.25),
+                          blurRadius: 20 + glowOpacity * 60,
+                          spreadRadius: 10 + glowOpacity * 30,
+                        ),
+                      ],
+                    ),
+                    child: Image.asset(
+                      'assets/images/robot.png',
+                      fit: BoxFit.contain,
+                      width: MediaQuery.of(context).size.width * 0.9,
+                    ),
                   ),
                 ),
               ),
@@ -88,10 +111,22 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                         letterSpacing: 3,
                       ),
                     ),
-                    if (_typewriterChars < _title.length)
-                      const SizedBox(height: 12)
-                    else
+                    if (_typewriterChars == _title.length) ...[
+                      const SizedBox(height: 8),
+                      FadeTransition(
+                        opacity: _taglineFade,
+                        child: const Text(
+                          'Autonomous  •  Intelligent  •  Profitable',
+                          style: TextStyle(
+                            color: Colors.white54,
+                            fontSize: 10,
+                            letterSpacing: 2,
+                          ),
+                        ),
+                      ),
                       const SizedBox(height: 24),
+                    ] else
+                      const SizedBox(height: 12),
                     if (_typewriterChars == _title.length)
                       DecoratedBox(
                         decoration: BoxDecoration(

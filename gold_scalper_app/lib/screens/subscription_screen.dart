@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../providers/bot_provider.dart';
 import '../widgets/ui/haptic.dart';
 import '../theme.dart';
+import 'payment_webview.dart';
 
 class SubscriptionScreen extends StatefulWidget {
   const SubscriptionScreen({super.key});
@@ -19,6 +18,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   static const int _maxVisiblePeriods = 6;
   final _emailCtrl = TextEditingController();
   final _refCtrl = TextEditingController();
+
+  double _amountDue(BotProvider bp) =>
+      bp.unpaidFees > 0 ? bp.unpaidFees : bp.currentMonthFee;
 
   @override
   void dispose() {
@@ -45,20 +47,47 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
               _buildStatusCard(bp),
               const SizedBox(height: 16),
               _buildProfitCard(bp),
-              const SizedBox(height: 16),
-              _buildMethodCards(bp),
-              if (_selectedMethod == 'card') ...[
-                const SizedBox(height: 12),
-                _buildPaymentForm(bp, channel: 'card'),
-              ] else if (_selectedMethod == 'bank_transfer') ...[
-                const SizedBox(height: 12),
-                _buildPaymentForm(bp, channel: 'bank_transfer'),
-              ] else if (_selectedMethod == 'cryptomus') ...[
-                const SizedBox(height: 12),
-                _buildCryptomusForm(bp),
+              if (_amountDue(bp) > 0) ...[
+                const SizedBox(height: 16),
+                _buildMethodCards(bp),
+                if (_selectedMethod == 'card') ...[
+                  const SizedBox(height: 12),
+                  _buildPaymentForm(bp, channel: 'card'),
+                ] else if (_selectedMethod == 'bank_transfer') ...[
+                  const SizedBox(height: 12),
+                  _buildPaymentForm(bp, channel: 'bank_transfer'),
+                ] else if (_selectedMethod == 'cryptomus') ...[
+                  const SizedBox(height: 12),
+                  _buildCryptomusForm(bp),
+              ],
               ] else ...[
-                const SizedBox(height: 12),
-                _buildCryptoInfo(),
+                const SizedBox(height: 24),
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF4F2EE),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0xFFDEDAD5)),
+                  ),
+                  child: Column(
+                    children: [
+                      Icon(Icons.check_circle_outline, color: Colors.green.shade600, size: 48),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'No pending charges',
+                        style: TextStyle(color: Color(0xFF3A3A3A), fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        bp.subscription['subscribed'] == true
+                            ? 'Your subscription is active. No fees due at this time.'
+                            : 'You are on trial. No fees due yet.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
               ],
               const SizedBox(height: 16),
               _buildPeriodsCard(bp),
@@ -289,38 +318,30 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
       children: [
         const Text('Payment Method', style: TextStyle(color: const Color(0xFF3A3A3A), fontSize: 15, fontWeight: FontWeight.bold)),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _methodCard(
-                icon: Icons.credit_card_rounded,
-                label: 'Card',
-                desc: 'Pay with debit\nor credit card',
-                selected: _selectedMethod == 'card',
-                onTap: hapt(() => setState(() => _selectedMethod = 'card')),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _methodCard(
-                icon: Icons.account_balance_rounded,
-                label: 'Bank Transfer',
-                desc: 'Pay via bank\ntransfer',
-                selected: _selectedMethod == 'bank_transfer',
-                onTap: hapt(() => setState(() => _selectedMethod = 'bank_transfer')),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _methodCard(
-                icon: Icons.currency_bitcoin_rounded,
-                label: 'Cryptomus',
-                desc: 'Pay with USDT\nvia Cryptomus',
-                selected: _selectedMethod == 'cryptomus',
-                onTap: hapt(() => setState(() => _selectedMethod = 'cryptomus')),
-              ),
-            ),
-          ],
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth >= 500;
+            if (isWide) {
+              return Row(
+                children: [
+                  Expanded(child: _methodCard(icon: Icons.credit_card_rounded, label: 'Card', desc: 'Pay with debit\nor credit card', selected: _selectedMethod == 'card', onTap: hapt(() => setState(() => _selectedMethod = 'card')))),
+                  const SizedBox(width: 12),
+                  Expanded(child: _methodCard(icon: Icons.account_balance_rounded, label: 'Bank Transfer', desc: 'Pay via bank\ntransfer', selected: _selectedMethod == 'bank_transfer', onTap: hapt(() => setState(() => _selectedMethod = 'bank_transfer')))),
+                  const SizedBox(width: 12),
+                  Expanded(child: _methodCard(icon: Icons.currency_bitcoin_rounded, label: 'Cryptomus', desc: 'Pay with USDT\nvia Cryptomus', selected: _selectedMethod == 'cryptomus', onTap: hapt(() => setState(() => _selectedMethod = 'cryptomus')))),
+                ],
+              );
+            }
+            return Column(
+              children: [
+                _methodCard(icon: Icons.credit_card_rounded, label: 'Card', desc: 'Pay with debit\nor credit card', selected: _selectedMethod == 'card', onTap: hapt(() => setState(() => _selectedMethod = 'card'))),
+                const SizedBox(height: 8),
+                _methodCard(icon: Icons.account_balance_rounded, label: 'Bank Transfer', desc: 'Pay via bank\ntransfer', selected: _selectedMethod == 'bank_transfer', onTap: hapt(() => setState(() => _selectedMethod = 'bank_transfer'))),
+                const SizedBox(height: 8),
+                _methodCard(icon: Icons.currency_bitcoin_rounded, label: 'Cryptomus', desc: 'Pay with USDT\nvia Cryptomus', selected: _selectedMethod == 'cryptomus', onTap: hapt(() => setState(() => _selectedMethod = 'cryptomus'))),
+              ],
+            );
+          },
         ),
       ],
     );
@@ -434,10 +455,20 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 if (result != null && context.mounted) {
                   final url = result['authorization_url'] as String?;
                   if (url != null) {
-                    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Payment page opened')),
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PaymentWebView(
+                          url: url,
+                          title: isCard ? 'Card Payment' : 'Bank Transfer',
+                        ),
+                      ),
                     );
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Payment completed. Check subscription status.')),
+                      );
+                    }
                   } else {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('Payment URL not available')),
@@ -528,10 +559,20 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 if (result != null && context.mounted) {
                   final payUrl = result['payment_url'] as String?;
                   if (payUrl != null) {
-                    await launchUrl(Uri.parse(payUrl), mode: LaunchMode.externalApplication);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Cryptomus payment page opened')),
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PaymentWebView(
+                          url: payUrl,
+                          title: 'Cryptomus Payment',
+                        ),
+                      ),
                     );
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Payment completed. Check subscription status.')),
+                      );
+                    }
                   }
                 } else if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -575,94 +616,4 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     );
   }
 
-  Widget _buildCryptoInfo() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF4F2EE),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFDEDAD5)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.currency_bitcoin_rounded, color: kGold, size: 18),
-              const SizedBox(width: 8),
-              const Text('Crypto Payment', style: TextStyle(color: const Color(0xFF3A3A3A), fontSize: 15, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _cryptoWallet('USDT (TRC-20)', 'TXx5RqaPzG8o1z9yL3...'),
-          const SizedBox(height: 12),
-          _cryptoWallet('BTC', 'bc1q5v8z2r9x...'),
-          const SizedBox(height: 12),
-          _cryptoWallet('ETH (ERC-20)', '0x742d35Cc6634C0...'),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: kGold.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: kGold.withValues(alpha: 0.1)),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.info_outline_rounded, color: kGold, size: 14),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'After sending crypto, contact support with transaction ID for verification.',
-                    style: TextStyle(color: const Color(0xFF3A3A3A), fontSize: 12, height: 1.3),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _cryptoWallet(String network, String address) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFDEDAD5)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(network, style: const TextStyle(color: const Color(0xFF3A3A3A), fontSize: 12, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 4),
-                Text(address, style: TextStyle(color: Colors.grey.shade700, fontSize: 11)),
-              ],
-            ),
-          ),
-          GestureDetector(
-            onTap: hapt(() {
-              Clipboard.setData(ClipboardData(text: address));
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('$network address copied')),
-              );
-            }),
-            child: Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: kGold.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: const Icon(Icons.copy_rounded, color: kGold, size: 14),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }

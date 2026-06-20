@@ -25,6 +25,8 @@ class BotPool:
         self._device_logs: Dict[str, List[Dict]] = {}
         self._lock = threading.Lock()
         self._last_sub_warning: Dict[str, str] = {}
+        self._state_cache: Dict[str, Dict] = {}
+        self._state_cache_ts: Dict[str, float] = {}
         os.makedirs(STATE_DIR, exist_ok=True)
 
     def start(self, identifier: str, api_key: str, password: str, demo: bool = True) -> Dict:
@@ -67,12 +69,22 @@ class BotPool:
 
     def get_state(self, identifier: str) -> Optional[Dict]:
         ident = _fmt_id(identifier)
+        now = time.time()
+        with self._lock:
+            cached = self._state_cache.get(ident)
+            ts = self._state_cache_ts.get(ident, 0)
+            if cached is not None and now - ts < 2.0:
+                return cached
         state_file = os.path.join(STATE_DIR, f"{ident}.json")
         if not os.path.exists(state_file):
             return None
         try:
             with open(state_file) as f:
-                return json.load(f)
+                data = json.load(f)
+            with self._lock:
+                self._state_cache[ident] = data
+                self._state_cache_ts[ident] = now
+            return data
         except (json.JSONDecodeError, IOError):
             return None
 
@@ -192,27 +204,29 @@ class BotPool:
         self._remove_bot(ident)
 
     def _write_state(self, ident: str, extra: Optional[Dict] = None):
+        bot = self._bots.get(ident)
+        if bot is None:
+            return
+        account = bot.client.get_account_info() or {"error": "No connection"}
+        symbol_info = bot.client.get_symbol_info(bot.symbol) if bot.client else {}
+        if symbol_info:
+            account["bid"] = symbol_info.get("bid", 0)
+            account["ask"] = symbol_info.get("ask", 0)
+        state = bot.get_state_summary() if hasattr(bot, 'get_state_summary') else {}
+        payload = {
+            "account": account,
+            "bot": state,
+            "logs": bot.logger.logs[-50:],
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        if extra:
+            payload.update(extra)
+        state_file = os.path.join(STATE_DIR, f"{ident}.json")
+        try:
+            with open(state_file, "w") as f:
+                json.dump(payload, f, indent=2, default=str)
+        except IOError:
+            pass
         with self._lock:
-            bot = self._bots.get(ident)
-            if bot is None:
-                return
-            account = bot.client.get_account_info() or {"error": "No connection"}
-            symbol_info = bot.client.get_symbol_info(bot.symbol) if bot.client else {}
-            if symbol_info:
-                account["bid"] = symbol_info.get("bid", 0)
-                account["ask"] = symbol_info.get("ask", 0)
-            state = bot.get_state_summary() if hasattr(bot, 'get_state_summary') else {}
-            payload = {
-                "account": account,
-                "bot": state,
-                "logs": bot.logger.logs[-50:],
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-            if extra:
-                payload.update(extra)
-            state_file = os.path.join(STATE_DIR, f"{ident}.json")
-            try:
-                with open(state_file, "w") as f:
-                    json.dump(payload, f, indent=2, default=str)
-            except IOError:
-                pass
+            self._state_cache[ident] = payload
+            self._state_cache_ts[ident] = time.time()
