@@ -690,6 +690,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
         "return_pct": round((total_pnl / INITIAL_BALANCE) * 100, 2),
         "avg_bars_held": round(df["bars_held"].mean(), 1),
         "monthly": monthly_breakdown,
+        "trades_df": df,
     }
     if verbose:
         print(f"  => ${total_pnl:.2f} WR={wr:.1f}% PF={pf:.2f} DD=${max_dd:.2f} "

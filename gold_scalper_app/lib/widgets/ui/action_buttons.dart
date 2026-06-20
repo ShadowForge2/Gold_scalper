@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../utils/app_colors.dart';
+import 'haptic.dart';
 
 class ActionButtons extends StatelessWidget {
   final VoidCallback? onExplore;
@@ -20,7 +21,7 @@ class ActionButtons extends StatelessWidget {
       width: 260,
       height: 50,
       child: OutlinedButton(
-        onPressed: onPressed,
+        onPressed: hapt(onPressed),
         style: OutlinedButton.styleFrom(
           foregroundColor: color,
           side: BorderSide(color: color.withValues(alpha: 0.6), width: 1.5),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme.dart';
+import '../widgets/ui/haptic.dart';
 
 class OnboardingTutorial extends StatefulWidget {
   final VoidCallback onDismiss;
@@ -72,7 +73,7 @@ class _OnboardingTutorialState extends State<OnboardingTutorial> {
             top: MediaQuery.of(context).padding.top + 16,
             right: 16,
             child: TextButton(
-              onPressed: widget.onDismiss,
+              onPressed: hapt(widget.onDismiss),
               child: const Text('Skip', style: TextStyle(color: Colors.white54, fontSize: 14)),
             ),
           ),
@@ -89,7 +90,7 @@ class _OnboardingTutorialState extends State<OnboardingTutorial> {
                   child: SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: () {
+                      onPressed: hapt(() {
                         if (_page < _pages.length - 1) {
                           _ctrl.nextPage(
                             duration: const Duration(milliseconds: 300),
@@ -98,7 +99,7 @@ class _OnboardingTutorialState extends State<OnboardingTutorial> {
                         } else {
                           widget.onDismiss();
                         }
-                      },
+                      }),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: kGold,
                         foregroundColor: Colors.black,

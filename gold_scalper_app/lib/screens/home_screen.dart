@@ -4,6 +4,7 @@ import '../providers/bot_provider.dart';
 import '../providers/device_provider.dart';
 import '../widgets/fade_in_scale.dart';
 import '../widgets/onboarding_tutorial.dart';
+import '../widgets/ui/haptic.dart';
 import '../theme.dart';
 import 'dashboard_screen.dart';
 import 'live_feed_screen.dart';
@@ -105,7 +106,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           IconButton(
             icon: Icon(Icons.refresh_rounded, color: Colors.grey[500], size: 20),
-            onPressed: () => bp.init(),
+            onPressed: hapt(() => bp.init()),
           ),
           const SizedBox(width: 4),
         ],
@@ -134,14 +135,14 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: BottomNavigationBar(
         currentIndex: _currentIndex,
-        onTap: (i) {
+        onTap: haptInt((i) {
           setState(() => _currentIndex = i);
           _pageController.animateToPage(
             i,
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeOutCubic,
           );
-        },
+        }),
         backgroundColor: kDarkSurface,
         selectedItemColor: kGold,
         unselectedItemColor: Colors.grey[600],

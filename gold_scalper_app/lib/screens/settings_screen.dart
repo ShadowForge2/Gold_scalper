@@ -4,6 +4,7 @@ import '../providers/device_provider.dart';
 import '../providers/bot_provider.dart';
 import '../widgets/status_indicator.dart';
 import '../widgets/fade_in_scale.dart';
+import '../widgets/ui/haptic.dart';
 import '../theme.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -18,6 +19,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
   final _identifierCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _isDemo = true;
+  bool _isEditing = false;
   late AnimationController _pulseCtrl;
   late Animation<double> _pulseAnim;
 
@@ -28,16 +30,26 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
     _pulseAnim = Tween<double>(begin: 1.0, end: 0.0).animate(
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadSavedAccounts());
+  }
+
+  Future<void> _loadSavedAccounts() async {
+    final bp = context.read<BotProvider>();
+    try {
+      final accts = await bp.getAccounts();
+      if (accts.isNotEmpty && mounted) {
+        final acct = accts.first;
+        _savedApiKey = acct['api_key'] as String?;
+        _savedIdentifier = acct['identifier'] as String?;
+        _hasSavedCredentials = true;
+        setState(() {});
+      }
+    } catch (_) {}
   }
 
   @override
   void dispose() {
     _pulseCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  void dispose() {
     _apiKeyCtrl.dispose();
     _identifierCtrl.dispose();
     _passwordCtrl.dispose();
@@ -51,6 +63,10 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
     return '${h}h ${m}m';
   }
 
+  String? _savedApiKey;
+  String? _savedIdentifier;
+  bool _hasSavedCredentials = false;
+
   Future<void> _save() async {
     final apiKey = _apiKeyCtrl.text.trim();
     final identifier = _identifierCtrl.text.trim();
@@ -63,11 +79,31 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
     final bp = context.read<BotProvider>();
     final ok = await bp.addAccount(apiKey, identifier, password, _isDemo);
     if (ok && mounted) {
+      _savedApiKey = apiKey;
+      _savedIdentifier = identifier;
+      _hasSavedCredentials = true;
+      _isEditing = false;
       _apiKeyCtrl.clear();
       _identifierCtrl.clear();
       _passwordCtrl.clear();
       _snack('Account saved');
+      setState(() {});
     }
+  }
+
+  void _startEditing() {
+    final device = context.read<DeviceProvider>();
+    if (device.accountTied) {
+      _snack('This account is tied and cannot be changed.');
+      return;
+    }
+    if (device.credentialsSavedAt != null && !device.canEditCredentials) {
+      _snack('Edit available in ${_formatDuration(device.cooldownRemaining)}');
+      return;
+    }
+    _apiKeyCtrl.text = _savedApiKey ?? '';
+    _identifierCtrl.text = _savedIdentifier ?? '';
+    setState(() => _isEditing = true);
   }
 
   void _snack(String msg) {
@@ -103,80 +139,6 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
         FadeInScale(
           delay: const Duration(milliseconds: 100),
           child: _buildCredentialsSection(bp, device),
-            _field('API Key', _apiKeyCtrl),
-            const SizedBox(height: 8),
-            _field('Identifier (Email)', _identifierCtrl,
-                keyboardType: TextInputType.emailAddress),
-            const SizedBox(height: 8),
-            _field('Password', _passwordCtrl, obscure: true),
-            const SizedBox(height: 12),
-            _demoToggle(),
-            if (!device.canEditCredentials) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: device.accountTied
-                      ? Colors.red.withValues(alpha: 0.1)
-                      : kGold.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: device.accountTied
-                        ? Colors.red.withValues(alpha: 0.3)
-                        : kGold.withValues(alpha: 0.2),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      device.accountTied
-                          ? Icons.lock_rounded
-                          : Icons.timer_outlined,
-                      size: 14,
-                      color: device.accountTied ? Colors.redAccent : kGold,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        device.accountTied
-                            ? 'This account is tied to this device and cannot be changed.'
-                            : 'Credentials can only be edited once every 24 hours.',
-                        style: TextStyle(
-                          color:
-                              device.accountTied ? Colors.redAccent : kGold,
-                          fontSize: 11,
-                          height: 1.3,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: device.canEditCredentials ? _save : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                      device.canEditCredentials ? kGold : kDarkBorder,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                ),
-                child: Text(
-                  device.accountTied
-                      ? 'Account Locked'
-                      : device.credentialsSavedAt != null && !device.canEditCredentials
-                          ? 'Cooldown — ${_formatDuration(device.cooldownRemaining)}'
-                          : 'Save Credentials',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-          ]),
         ),
         const SizedBox(height: 16),
         FadeInScale(
@@ -217,6 +179,8 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
   }
 
   Widget _buildCredentialsSection(BotProvider bp, DeviceProvider device) {
+    final hasSaved = _hasSavedCredentials || device.credentialsSavedAt != null;
+
     return AnimatedBuilder(
       animation: _pulseAnim,
       builder: (context, child) {
@@ -236,78 +200,147 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
       child: _buildSection('Capital.com Credentials', [
         _apiHelpTile(),
         const SizedBox(height: 8),
-        _field('API Key', _apiKeyCtrl),
-        const SizedBox(height: 8),
-        _field('Identifier (Email)', _identifierCtrl,
-            keyboardType: TextInputType.emailAddress),
-        const SizedBox(height: 8),
-        _field('Password', _passwordCtrl, obscure: true),
-        const SizedBox(height: 12),
-        _demoToggle(),
-        if (!device.canEditCredentials) ...[
+        if (hasSaved && !_isEditing) ...[
+          _readOnlyField('API Key', _masked(_savedApiKey ?? '')),
           const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: device.accountTied
-                  ? Colors.red.withValues(alpha: 0.1)
-                  : kGold.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: device.accountTied
-                    ? Colors.red.withValues(alpha: 0.3)
-                    : kGold.withValues(alpha: 0.2),
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  device.accountTied
-                      ? Icons.lock_rounded
-                      : Icons.timer_outlined,
-                  size: 14,
-                  color: device.accountTied ? Colors.redAccent : kGold,
+          _readOnlyField('Identifier (Email)', _savedIdentifier ?? ''),
+          const SizedBox(height: 8),
+          _readOnlyField('Password', '••••••••'),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _statusBadge(Icons.check_circle_rounded, 'Saved', Colors.green),
+              const Spacer(),
+              if (!device.accountTied)
+                TextButton.icon(
+                  onPressed: hapt(_startEditing),
+                  icon: Icon(Icons.edit_rounded, size: 14, color: kGold),
+                  label: Text('Edit',
+                      style: TextStyle(color: kGold, fontWeight: FontWeight.bold, fontSize: 13)),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
+            ],
+          ),
+        ] else ...[
+          _field('API Key', _apiKeyCtrl),
+          const SizedBox(height: 8),
+          _field('Identifier (Email)', _identifierCtrl,
+              keyboardType: TextInputType.emailAddress),
+          const SizedBox(height: 8),
+          _field('Password', _passwordCtrl, obscure: true),
+          const SizedBox(height: 12),
+          _demoToggle(),
+          if (!device.canEditCredentials && _isEditing) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: device.accountTied
+                    ? Colors.red.withValues(alpha: 0.1)
+                    : kGold.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: device.accountTied
+                      ? Colors.red.withValues(alpha: 0.3)
+                      : kGold.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
                     device.accountTied
-                        ? 'This account is tied to this device and cannot be changed.'
-                        : 'Credentials can only be edited once every 24 hours.',
-                    style: TextStyle(
-                      color: device.accountTied ? Colors.redAccent : kGold,
-                      fontSize: 11,
-                      height: 1.3,
+                        ? Icons.lock_rounded
+                        : Icons.timer_outlined,
+                    size: 14,
+                    color: device.accountTied ? Colors.redAccent : kGold,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      device.accountTied
+                          ? 'This account is tied to this device and cannot be changed.'
+                          : 'Edit available in ${_formatDuration(device.cooldownRemaining)}',
+                      style: TextStyle(
+                        color: device.accountTied ? Colors.redAccent : kGold,
+                        fontSize: 11,
+                        height: 1.3,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: device.canEditCredentials ? hapt(_save) : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: device.canEditCredentials ? kGold : kDarkBorder,
+                foregroundColor: Colors.black,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: Text(
+                device.accountTied
+                    ? 'Account Locked'
+                    : _isEditing
+                        ? 'Save Changes'
+                        : 'Save Credentials',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
             ),
           ),
         ],
-        const SizedBox(height: 12),
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: device.canEditCredentials ? _save : null,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: device.canEditCredentials ? kGold : kDarkBorder,
-              foregroundColor: Colors.black,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            child: Text(
-              device.accountTied
-                  ? 'Account Locked'
-                  : device.credentialsSavedAt != null && !device.canEditCredentials
-                      ? 'Cooldown — ${_formatDuration(device.cooldownRemaining)}'
-                      : 'Save Credentials',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
-        ),
       ]),
     );
+  }
+
+  Widget _readOnlyField(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: kTextSecondary, fontSize: 13)),
+        const SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: kDarkBg,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: kDarkBorder),
+          ),
+          child: Text(value,
+              style: const TextStyle(color: Colors.white54, fontSize: 14)),
+        ),
+      ],
+    );
+  }
+
+  Widget _statusBadge(IconData icon, String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 4),
+          Text(label,
+              style: TextStyle(
+                  color: color, fontSize: 12, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  String _masked(String value) {
+    if (value.length <= 6) return '••••••';
+    return '${value.substring(0, 3)}••••${value.substring(value.length - 3)}';
   }
 
   Widget _buildSection(String title, List<Widget> children) {
@@ -391,7 +424,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
               mainAxisSize: MainAxisSize.min,
               children: [
                 GestureDetector(
-                  onTap: () => _switchMode(true),
+                  onTap: hapt(() => _switchMode(true)),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 14, vertical: 6),
@@ -411,7 +444,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
                   ),
                 ),
                 GestureDetector(
-                  onTap: () => _switchMode(false),
+                  onTap: hapt(() => _switchMode(false)),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 14, vertical: 6),
@@ -508,7 +541,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
+            onPressed: hapt(() => Navigator.of(ctx).pop()),
             child: const Text('Got it', style: TextStyle(color: kGold, fontWeight: FontWeight.bold)),
           ),
         ],
@@ -542,7 +575,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
 
   Widget _apiHelpTile() {
     return GestureDetector(
-      onTap: _showApiHelp,
+      onTap: hapt(_showApiHelp),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
         decoration: BoxDecoration(

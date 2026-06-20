@@ -7,6 +7,7 @@ import '../widgets/equity_chart.dart';
 import '../widgets/skeletons/dashboard_skeleton.dart';
 import '../widgets/fade_in_scale.dart';
 import '../widgets/terminal_log.dart';
+import '../widgets/ui/haptic.dart';
 import 'subscription_screen.dart';
 import '../theme.dart';
 
@@ -19,6 +20,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   bool _isYearlyView = true;
+  bool _dismissedWithdrawNotice = false;
 
   @override
   Widget build(BuildContext context) {
@@ -37,6 +39,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               FadeInScale(
                 child: _buildHeader(s, bp),
               ),
+              if (bp.botRunning && !_dismissedWithdrawNotice)
+                _buildWithdrawNotice(),
               const SizedBox(height: 16),
               FadeInScale(
                 delay: const Duration(milliseconds: 100),
@@ -190,19 +194,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
               ),
-              GestureDetector(
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscriptionScreen())),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: kGold.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: kGold.withValues(alpha: 0.2)),
-                  ),
-                  child: const Icon(Icons.credit_card_rounded, color: kGold, size: 18),
-                ),
-              ),
-              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(
@@ -217,6 +208,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     fontWeight: FontWeight.w700,
                     fontSize: 10,
                     letterSpacing: 0.8,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: hapt(() => Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscriptionScreen()))),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: kGold.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: kGold.withValues(alpha: 0.2)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.credit_card_rounded, color: kGold, size: 14),
+                      const SizedBox(width: 6),
+                      Text(
+                        'subscription',
+                        style: TextStyle(
+                          color: kGold.withValues(alpha: 0.7),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -416,6 +435,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return v.toStringAsFixed(0);
   }
 
+  Widget _buildWithdrawNotice() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.amber.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.amber.withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline_rounded, color: Colors.amber, size: 18),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'For optimal performance, avoid withdrawing from your broker account until the next subscription cycle.',
+                style: TextStyle(
+                  color: Colors.amber.shade200,
+                  fontSize: 12,
+                  height: 1.3,
+                ),
+              ),
+            ),
+            GestureDetector(
+              onTap: hapt(() => setState(() => _dismissedWithdrawNotice = true)),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Icon(Icons.close_rounded, color: Colors.amber.shade400, size: 18),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildChartCard(BotProvider bp) {
     final displayData = _isYearlyView 
         ? bp.equityCurve 
@@ -462,7 +518,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _toggleItem(String label, bool active, VoidCallback onTap) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: hapt(onTap),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(

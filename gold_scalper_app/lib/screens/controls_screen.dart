@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/bot_provider.dart';
 import '../widgets/status_indicator.dart';
 import '../widgets/fade_in_scale.dart';
+import '../widgets/ui/haptic.dart';
 import '../theme.dart';
 
 class ControlsScreen extends StatefulWidget {
@@ -56,7 +57,7 @@ class _ControlsScreenState extends State<ControlsScreen> {
           action: SnackBarAction(
             label: 'SETTINGS',
             textColor: Colors.white,
-            onPressed: () => bp.requestCredentialsSetup(),
+            onPressed: hapt(() => bp.requestCredentialsSetup()),
           ),
         ),
       );
@@ -93,7 +94,7 @@ class _ControlsScreenState extends State<ControlsScreen> {
             children: [
               if (!isRunning)
                 ElevatedButton.icon(
-                  onPressed: () => _startBot(context, bp),
+                  onPressed: hapt(() => _startBot(context, bp)),
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('Start Bot'),
                   style: ElevatedButton.styleFrom(
@@ -105,7 +106,7 @@ class _ControlsScreenState extends State<ControlsScreen> {
                 )
               else
                 OutlinedButton.icon(
-                  onPressed: () => _confirmStopBot(context, bp),
+                  onPressed: hapt(() => _confirmStopBot(context, bp)),
                   icon: const Icon(Icons.stop),
                   label: const Text('Stop Bot'),
                   style: OutlinedButton.styleFrom(
@@ -180,7 +181,7 @@ class _ControlsScreenState extends State<ControlsScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: () => bp.saveConfig(),
+              onPressed: hapt(() => bp.saveConfig()),
               icon: const Icon(Icons.save_rounded, size: 16),
               label: const Text('Save Settings'),
               style: ElevatedButton.styleFrom(
@@ -293,11 +294,11 @@ class _ControlsScreenState extends State<ControlsScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
+            onPressed: hapt(() => Navigator.of(ctx).pop(false)),
             child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
           ),
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
+            onPressed: hapt(() => Navigator.of(ctx).pop(true)),
             child: const Text('Stop', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
           ),
         ],
@@ -328,11 +329,11 @@ class _ControlsScreenState extends State<ControlsScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
+            onPressed: hapt(() => Navigator.of(ctx).pop(false)),
             child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
           ),
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
+            onPressed: hapt(() => Navigator.of(ctx).pop(true)),
             child: const Text('Close All', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
           ),
         ],
@@ -359,7 +360,7 @@ class _ControlsScreenState extends State<ControlsScreen> {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => _confirmCloseAll(context, bp),
+              onPressed: hapt(() => _confirmCloseAll(context, bp)),
               icon: const Icon(Icons.close),
               label: const Text('Close All Positions'),
               style: OutlinedButton.styleFrom(

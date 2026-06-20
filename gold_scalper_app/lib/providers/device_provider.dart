@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:js' as js;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -43,10 +45,10 @@ class DeviceProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     _deviceId = prefs.getString(_deviceIdKey);
     if (_deviceId == null) {
-      _deviceId = _generateUuid();
+      _deviceId = _generateFingerprint();
       await prefs.setString(_deviceIdKey, _deviceId!);
     }
-    _firstLaunch = (prefs.getInt(_launchCountKey) ?? 0) == 0;
+    _firstLaunch = true; // (prefs.getInt(_launchCountKey) ?? 0) == 0;
     await prefs.setInt(_launchCountKey, (prefs.getInt(_launchCountKey) ?? 0) + 1);
 
     final savedTs = prefs.getString(_credsSavedAtKey);
@@ -91,17 +93,39 @@ class DeviceProvider extends ChangeNotifier {
         'Content-Type': 'application/json',
       };
 
-  String _generateUuid() {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final r = (now * 123456 + now % 98765) % 0xFFFFFFFF;
-    return '${now.toString()}-${r.toString()}-${_randomHex(12)}';
+  String _generateFingerprint() {
+    final buf = StringBuffer();
+    try {
+      final navigator = js.context['navigator'];
+      buf.write(navigator['userAgent'] ?? '');
+      buf.write(navigator['language'] ?? '');
+      buf.write(navigator['platform'] ?? '');
+      final screen = js.context['screen'];
+      buf.write(screen['width'] ?? '');
+      buf.write(screen['height'] ?? '');
+      buf.write(screen['colorDepth'] ?? '');
+      buf.write(DateTime.now().timeZoneOffset.inMinutes);
+    } catch (_) {}
+
+    final raw = buf.toString();
+    if (raw.isEmpty) return _fallbackUuid();
+    return 'fp_${_fnv1a(raw)}';
   }
 
-  String _randomHex(int len) {
-    final buf = <int>[];
-    for (int i = 0; i < len; i++) {
-      buf.add((DateTime.now().microsecondsSinceEpoch % 16).toInt());
+  String _fnv1a(String input) {
+    final bytes = utf8.encode(input);
+    int hash = 0x811C9DC5;
+    const prime = 0x01000193;
+    for (final byte in bytes) {
+      hash ^= byte;
+      hash = (hash * prime) & 0xFFFFFFFF;
     }
-    return buf.map((n) => n.toRadixString(16)).join();
+    return hash.toRadixString(16).padLeft(8, '0');
+  }
+
+  String _fallbackUuid() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final r = (now * 123456 + now % 98765) % 0xFFFFFFFF;
+    return '${now.toString()}-${r.toString()}-${(now % 65536).toRadixString(16)}';
   }
 }

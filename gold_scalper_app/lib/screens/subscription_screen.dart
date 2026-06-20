@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/bot_provider.dart';
+import '../widgets/ui/haptic.dart';
 import '../theme.dart';
 
 class SubscriptionScreen extends StatefulWidget {
@@ -278,7 +279,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 label: 'Card',
                 desc: 'Pay with debit\nor credit card',
                 selected: _selectedMethod == 'card',
-                onTap: () => setState(() => _selectedMethod = 'card'),
+                onTap: hapt(() => setState(() => _selectedMethod = 'card')),
               ),
             ),
             const SizedBox(width: 12),
@@ -288,7 +289,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 label: 'Bank Transfer',
                 desc: 'Pay via bank\ntransfer',
                 selected: _selectedMethod == 'bank_transfer',
-                onTap: () => setState(() => _selectedMethod = 'bank_transfer'),
+                onTap: hapt(() => setState(() => _selectedMethod = 'bank_transfer')),
               ),
             ),
             const SizedBox(width: 12),
@@ -298,7 +299,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 label: 'Cryptomus',
                 desc: 'Pay with USDT\nvia Cryptomus',
                 selected: _selectedMethod == 'cryptomus',
-                onTap: () => setState(() => _selectedMethod = 'cryptomus'),
+                onTap: hapt(() => setState(() => _selectedMethod = 'cryptomus')),
               ),
             ),
           ],
@@ -315,7 +316,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     required VoidCallback onTap,
   }) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: hapt(onTap),
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -403,7 +404,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: () async {
+              onPressed: hapt(() async {
                 final email = _emailCtrl.text.trim();
                 if (email.isEmpty) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -440,7 +441,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                     }
                   }
                 }
-              },
+              }),
               icon: const Icon(Icons.payment_rounded),
               label: Text(buttonLabel),
               style: ElevatedButton.styleFrom(
@@ -518,7 +519,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: () async {
+              onPressed: hapt(() async {
                 final email = _emailCtrl.text.trim();
                 final result = await bp.initCryptomusPayment(amount, email);
                 if (result != null && context.mounted) {
@@ -534,7 +535,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                     const SnackBar(content: Text('Failed to create payment')),
                   );
                 }
-              },
+              }),
               icon: const Icon(Icons.payment_rounded),
               label: Text('Pay \$${amount.toStringAsFixed(2)} with Crypto'),
               style: ElevatedButton.styleFrom(
@@ -642,12 +643,12 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             ),
           ),
           GestureDetector(
-            onTap: () {
+            onTap: hapt(() {
               Clipboard.setData(ClipboardData(text: address));
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text('$network address copied')),
               );
-            },
+            }),
             child: Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(

@@ -118,6 +118,14 @@ class BotPool:
     def is_running(self, identifier: str) -> bool:
         return _fmt_id(identifier) in self._bots
 
+    async def emergency_close(self, identifier: str) -> int:
+        ident = _fmt_id(identifier)
+        with self._lock:
+            bot = self._bots.get(ident)
+            if bot is None:
+                return 0
+        return await bot.emergency_close()
+
     def update_settings(self, identifier: str, settings: Dict) -> Dict:
         ident = _fmt_id(identifier)
         with self._lock:
@@ -176,10 +184,14 @@ class BotPool:
             bot = self._bots.get(ident)
             if bot is None:
                 return
-            account = bot.client.get_account_info()
+            account = bot.client.get_account_info() or {"error": "No connection"}
+            symbol_info = bot.client.get_symbol_info(bot.symbol) if bot.client else {}
+            if symbol_info:
+                account["bid"] = symbol_info.get("bid", 0)
+                account["ask"] = symbol_info.get("ask", 0)
             state = bot.get_state_summary() if hasattr(bot, 'get_state_summary') else {}
             payload = {
-                "account": account or {"error": "No connection"},
+                "account": account,
                 "bot": state,
                 "logs": bot.logger.logs[-50:],
                 "timestamp": datetime.utcnow().isoformat(),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/ui/haptic.dart';
 import '../theme.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -105,7 +106,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: auth.loading ? null : _submit,
+                      onPressed: auth.loading ? null : hapt(_submit),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: kGold,
                         foregroundColor: Colors.black,
@@ -130,8 +131,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 16),
                   TextButton(
-                    onPressed: () =>
-                        setState(() => _isRegister = !_isRegister),
+                    onPressed: hapt(() =>
+                        setState(() => _isRegister = !_isRegister)),
                     child: Text(
                       _isRegister
                           ? 'Already have an account? Sign In'

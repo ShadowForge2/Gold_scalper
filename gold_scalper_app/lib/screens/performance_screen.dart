@@ -5,6 +5,7 @@ import '../models/performance.dart';
 import '../widgets/metric_card.dart';
 import '../widgets/equity_chart.dart';
 import '../widgets/fade_in_scale.dart';
+import '../widgets/ui/haptic.dart';
 import '../theme.dart';
 
 class PerformanceScreen extends StatefulWidget {
@@ -111,7 +112,7 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
 
   Widget _toggleItem(String label, bool active, VoidCallback onTap) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: hapt(onTap),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(

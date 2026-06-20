@@ -14,9 +14,24 @@ class PositionManager:
         self.in_event: bool = False
         self.open_count: int = 0
         self._closed_tickets: Dict[str, float] = {}
+        self.closed_history: List[Dict] = []
 
-    def note_closed(self, ticket) -> None:
+    def note_closed(self, pos_data: Dict) -> None:
+        ticket = pos_data["ticket"]
         self._closed_tickets[str(ticket)] = time.time()
+        self.closed_history.append({
+            "ticket": ticket,
+            "type": pos_data.get("type", "UNKNOWN"),
+            "volume": pos_data.get("volume", 0),
+            "entry_price": pos_data.get("price_open", 0),
+            "exit_price": pos_data.get("price_current", 0),
+            "profit": pos_data.get("profit", 0),
+            "swap": pos_data.get("swap", 0),
+            "symbol": pos_data.get("symbol", ""),
+            "closed_at": datetime.utcnow().isoformat(),
+        })
+        if len(self.closed_history) > 500:
+            self.closed_history[:100] = []
 
     def refresh(self) -> Dict:
         raw_positions = self.mt5.get_positions(magic=self.magic)

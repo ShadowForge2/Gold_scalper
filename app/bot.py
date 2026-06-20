@@ -154,8 +154,8 @@ class Bot:
 
     async def shutdown(self):
         self._running = False
-        for ticket in self.trade_executor.close_all_bot_positions():
-            self.position_manager.note_closed(ticket)
+        for pos_data in self.trade_executor.close_all_bot_positions():
+            self.position_manager.note_closed(pos_data)
         self.client.shutdown()
         self.logger.info("Bot shutdown complete")
 
@@ -216,8 +216,8 @@ class Bot:
         )
         if not daily_ok:
             self.logger.warning(f"Stopping bot: {daily_msg}")
-            for ticket in self.trade_executor.close_all_bot_positions():
-                self.position_manager.note_closed(ticket)
+            for pos_data in self.trade_executor.close_all_bot_positions():
+                self.position_manager.note_closed(pos_data)
             self.state = self.STATES["STOPPED"]
             return
 
@@ -427,8 +427,8 @@ class Bot:
         )
         if not event_ok:
             self.logger.warning(f"Event stop: {event_msg}")
-            for ticket in self.trade_executor.close_all_bot_positions():
-                self.position_manager.note_closed(ticket)
+            for pos_data in self.trade_executor.close_all_bot_positions():
+                self.position_manager.note_closed(pos_data)
             self.risk_manager.record_exit(pnl_data["event_pnl"])
             self._enter_cooldown()
             return
@@ -459,8 +459,8 @@ class Bot:
             self.logger.signal(
                 f"Exit signal: score={exit_score:.2f} reason={reason}"
             )
-            for ticket in self.trade_executor.close_all_bot_positions():
-                self.position_manager.note_closed(ticket)
+            for pos_data in self.trade_executor.close_all_bot_positions():
+                self.position_manager.note_closed(pos_data)
             self.risk_manager.record_exit(pnl_data["event_pnl"])
             self._enter_cooldown()
             return
@@ -631,10 +631,14 @@ class Bot:
         if now - self._last_state_write < 1.0:
             return
         self._last_state_write = now
-        account = self.client.get_account_info()
+        account = self.client.get_account_info() or {"error": "No connection"}
+        symbol_info = self.client.get_symbol_info(self.symbol) if self.client else {}
+        if symbol_info:
+            account["bid"] = symbol_info.get("bid", 0)
+            account["ask"] = symbol_info.get("ask", 0)
         state = self.get_state_summary()
         payload = {
-            "account": account or {"error": "No connection"},
+            "account": account,
             "bot": state,
             "logs": self.logger.logs[-50:],
             "timestamp": datetime.now().isoformat(),
@@ -685,6 +689,7 @@ class Bot:
             "scaler": self.scaler.summary(current_balance) if self.scaler.starting_balance else None,
             "cooldown_active": self.state == self.STATES["COOLDOWN"],
             "last_logs": self.logger.logs[-50:],
+            "closed_trades": self.position_manager.closed_history[-100:],
         }
 
     def start(self):
@@ -699,13 +704,13 @@ class Bot:
 
     async def emergency_close(self):
         self.logger.warning("Emergency close triggered")
-        closed_tickets = self.trade_executor.close_all_bot_positions()
-        for ticket in closed_tickets:
-            self.position_manager.note_closed(ticket)
+        closed = self.trade_executor.close_all_bot_positions()
+        for pos_data in closed:
+            self.position_manager.note_closed(pos_data)
         self.position_manager.refresh()
         self.state = self.STATES["COOLDOWN"]
         self._enter_cooldown()
-        return len(closed_tickets)
+        return len(closed)
 
     def update_settings(self, settings: Dict):
         if "max_daily_loss" in settings:
