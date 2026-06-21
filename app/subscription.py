@@ -105,7 +105,36 @@ async def restore_device_by_capital_id(identifier: str, new_device_id: str) -> O
     if old_device is None:
         return None
 
-    return {"locked": True, "old_device_id": old_device["device_id"]}
+    old_did = old_device["device_id"]
+    _device_cache.pop(old_did, None)
+
+    existing = await db_mod.database.fetch_one(
+        "SELECT 1 FROM devices WHERE device_id = :did", {"did": new_device_id}
+    )
+
+    if existing is None:
+        now = datetime.utcnow().isoformat()
+        await db_mod.database.execute(
+            "UPDATE devices SET device_id = :ndid, restored_from = :old WHERE device_id = :odid",
+            {"ndid": new_device_id, "old": old_did, "odid": old_did},
+        )
+        await db_mod.database.execute(
+            "UPDATE accounts SET device_id = :ndid WHERE device_id = :odid",
+            {"ndid": new_device_id, "odid": old_did},
+        )
+    else:
+        await db_mod.database.execute(
+            """INSERT INTO accounts (device_id, api_key, identifier, password, demo)
+               SELECT :ndid, api_key, identifier, password, demo FROM accounts
+               WHERE device_id = :odid AND identifier NOT IN (
+                   SELECT identifier FROM accounts WHERE device_id = :ndid2
+               )""",
+            {"ndid": new_device_id, "odid": old_did, "ndid2": new_device_id},
+        )
+        await db_mod.database.execute("DELETE FROM devices WHERE device_id = :odid", {"odid": old_did})
+        await db_mod.database.execute("DELETE FROM accounts WHERE device_id = :odid", {"odid": old_did})
+
+    return await get_device(new_device_id)
 
 
 # ── Subscription / Trial / 30-Day Profit Tracking ─────────────────

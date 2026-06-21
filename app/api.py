@@ -177,13 +177,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         if not _db_ok():
             return _no_db()
         did = device_id or "unknown"
-        restored = await restore_device_by_capital_id(data.identifier, did)
-        if restored and restored.get("locked"):
-            return JSONResponse(status_code=403, content={
-                "error": "This email is already registered to another device. "
-                         "To reclaim it, revoke your Capital.com API key and change your password, "
-                         "then add the account again with the new credentials."
-            })
+        await restore_device_by_capital_id(data.identifier, did)
         await ensure_device(did)
         await add_account(did, data.api_key, data.identifier, data.password, data.demo)
         dev = await get_device(did)
