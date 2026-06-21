@@ -1,10 +1,6 @@
-import hashlib
-import hmac
-import json
 import os
 import time
 import uuid
-from base64 import b64encode
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 
@@ -13,9 +9,8 @@ import requests as http_requests
 from app import database as db_mod
 
 PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "")
-CRYPTOMUS_MERCHANT_ID = os.getenv("CRYPTOMUS_MERCHANT_ID", "")
-CRYPTOMUS_API_KEY = os.getenv("CRYPTOMUS_API_KEY", "")
-CRYPTOMUS_BASE = "https://api.cryptomus.com/v1"
+MAXELPAY_API_KEY = os.getenv("MAXELPAY_API_KEY", "")
+MAXELPAY_BASE = "https://api.maxelpay.com/api/v1"
 
 
 # ── Device tracking (async DB) ──────────────────────────────────
@@ -383,11 +378,11 @@ def _paystack_headers() -> Dict:
     }
 
 
-def initialize_payment(email: str, amount_kobo: int, metadata: Dict = None, channels: List[str] = None) -> Optional[Dict]:
+def initialize_payment(email: str, amount_kobo: int, metadata: Dict = None, channels: List[str] = None, currency: str = "NGN") -> Optional[Dict]:
     if not PAYSTACK_SECRET:
         return None
     try:
-        body = {"email": email, "amount": amount_kobo}
+        body = {"email": email, "amount": amount_kobo, "currency": currency}
         if metadata:
             body["metadata"] = metadata
         if channels:
@@ -435,72 +430,45 @@ async def verify_payment(reference: str) -> Optional[Dict]:
     return None
 
 
-# ── Cryptomus ──────────────────────────────────────────────────────
+# ── MaxelPay ─────────────────────────────────────────────────────
 
-_cryptomus_orders: dict = {}
-
-
-def _cryptomus_register_order(order_id: str, identifier: str):
-    _cryptomus_orders[order_id] = identifier
+_maxelpay_orders: dict = {}
 
 
-def _cryptomus_get_identifier(order_id: str) -> str:
-    return _cryptomus_orders.pop(order_id, "")
+def _maxelpay_register_order(order_id: str, identifier: str):
+    _maxelpay_orders[order_id] = identifier
 
 
-def _cryptomus_sign(payload: dict) -> tuple:
-    json_str = json.dumps(payload, separators=(",", ":"))
-    encoded = b64encode(json_str.encode()).decode()
-    sign = hmac.new(CRYPTOMUS_API_KEY.encode(), encoded.encode(), hashlib.sha256).hexdigest()
-    return encoded, sign
+def _maxelpay_get_identifier(order_id: str) -> str:
+    return _maxelpay_orders.pop(order_id, "")
 
 
-def _cryptomus_headers() -> Dict:
+def _maxelpay_headers() -> Dict:
     return {
-        "merchant": CRYPTOMUS_MERCHANT_ID,
+        "X-API-KEY": MAXELPAY_API_KEY,
         "Content-Type": "application/json",
     }
 
 
-def create_cryptomus_payment(amount_usd: float, order_id: str, email: str = "",
-                              url_return: str = "", url_callback: str = "") -> Optional[Dict]:
-    if not CRYPTOMUS_MERCHANT_ID or not CRYPTOMUS_API_KEY:
+def create_maxelpay_payment(amount_usd: float, order_id: str, description: str = "",
+                             success_url: str = "", cancel_url: str = "",
+                             callback_url: str = "") -> Optional[Dict]:
+    if not MAXELPAY_API_KEY:
         return None
     try:
         payload = {
-            "amount": f"{amount_usd:.2f}",
-            "currency": "USDT",
-            "order_id": order_id,
-            "url_return": url_return or "https://gold-scalper-qyhg.onrender.com",
-            "url_callback": url_callback or "https://gold-scalper-qyhg.onrender.com/api/payment/cryptomus/callback",
-            "is_payment_multiple": False,
+            "orderId": order_id,
+            "amount": amount_usd,
+            "currency": "USD",
+            "description": description or f"Gold Scalper subscription payment",
+            "successUrl": success_url or "https://gold-scalper-qyhg.onrender.com/api/payment/maxelpay/success",
+            "cancelUrl": cancel_url or "https://gold-scalper-qyhg.onrender.com/api/payment/maxelpay/cancel",
+            "callbackUrl": callback_url or "https://gold-scalper-qyhg.onrender.com/api/payment/maxelpay/callback",
         }
-        if email:
-            payload["email"] = email
-        encoded, sign = _cryptomus_sign(payload)
-        headers = _cryptomus_headers()
-        headers["sign"] = sign
-        r = http_requests.post(f"{CRYPTOMUS_BASE}/payment", headers=headers, json=payload, timeout=15)
+        headers = _maxelpay_headers()
+        r = http_requests.post(f"{MAXELPAY_BASE}/payments/sessions", headers=headers, json=payload, timeout=15)
         if r.ok:
-            data = r.json()
-            if data.get("state") == 0:
-                return data.get("result")
-    except Exception:
-        pass
-    return None
-
-
-def get_cryptomus_payment(order_id: str) -> Optional[Dict]:
-    if not CRYPTOMUS_MERCHANT_ID or not CRYPTOMUS_API_KEY:
-        return None
-    try:
-        payload = {"order_id": order_id}
-        encoded, sign = _cryptomus_sign(payload)
-        headers = _cryptomus_headers()
-        headers["sign"] = sign
-        r = http_requests.post(f"{CRYPTOMUS_BASE}/payment/info", headers=headers, json=payload, timeout=15)
-        if r.ok:
-            return r.json().get("result")
+            return r.json()
     except Exception:
         pass
     return None

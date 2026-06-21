@@ -56,9 +56,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 ] else if (_selectedMethod == 'bank_transfer') ...[
                   const SizedBox(height: 12),
                   _buildPaymentForm(bp, channel: 'bank_transfer'),
-                ] else if (_selectedMethod == 'cryptomus') ...[
+                ] else if (_selectedMethod == 'maxelpay') ...[
                   const SizedBox(height: 12),
-                  _buildCryptomusForm(bp),
+                  _buildMaxelpayForm(bp),
               ],
               ] else ...[
                 const SizedBox(height: 24),
@@ -328,7 +328,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                   const SizedBox(width: 12),
                   Expanded(child: _methodCard(icon: Icons.account_balance_rounded, label: 'Bank Transfer', desc: 'Pay via bank\ntransfer', selected: _selectedMethod == 'bank_transfer', onTap: hapt(() => setState(() => _selectedMethod = 'bank_transfer')))),
                   const SizedBox(width: 12),
-                  Expanded(child: _methodCard(icon: Icons.currency_bitcoin_rounded, label: 'Cryptomus', desc: 'Pay with USDT\nvia Cryptomus', selected: _selectedMethod == 'cryptomus', onTap: hapt(() => setState(() => _selectedMethod = 'cryptomus')))),
+                  Expanded(child: _methodCard(icon: Icons.currency_bitcoin_rounded, label: 'MaxelPay', desc: 'Pay with USDT,\nBTC, ETH & more', selected: _selectedMethod == 'maxelpay', onTap: hapt(() => setState(() => _selectedMethod = 'maxelpay')))),
                 ],
               );
             }
@@ -338,7 +338,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 const SizedBox(height: 8),
                 _methodCard(icon: Icons.account_balance_rounded, label: 'Bank Transfer', desc: 'Pay via bank\ntransfer', selected: _selectedMethod == 'bank_transfer', onTap: hapt(() => setState(() => _selectedMethod = 'bank_transfer'))),
                 const SizedBox(height: 8),
-                _methodCard(icon: Icons.currency_bitcoin_rounded, label: 'Cryptomus', desc: 'Pay with USDT\nvia Cryptomus', selected: _selectedMethod == 'cryptomus', onTap: hapt(() => setState(() => _selectedMethod = 'cryptomus'))),
+                _methodCard(icon: Icons.currency_bitcoin_rounded, label: 'MaxelPay', desc: 'Pay with USDT,\nBTC, ETH & more', selected: _selectedMethod == 'maxelpay', onTap: hapt(() => setState(() => _selectedMethod = 'maxelpay'))),
               ],
             );
           },
@@ -491,7 +491,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     );
   }
 
-  Widget _buildCryptomusForm(BotProvider bp) {
+  Widget _buildMaxelpayForm(BotProvider bp) {
     final amount = bp.unpaidFees > 0 ? bp.unpaidFees : bp.currentMonthFee;
     return Container(
       padding: const EdgeInsets.all(20),
@@ -507,34 +507,15 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             children: [
               const Icon(Icons.currency_bitcoin_rounded, color: kGold, size: 18),
               const SizedBox(width: 8),
-              const Text('Cryptomus Crypto Payment', style: TextStyle(color: const Color(0xFF3A3A3A), fontSize: 15, fontWeight: FontWeight.bold)),
+              const Text('MaxelPay Crypto Payment', style: TextStyle(color: const Color(0xFF3A3A3A), fontSize: 15, fontWeight: FontWeight.bold)),
             ],
           ),
           const SizedBox(height: 16),
           const Text(
-            'Pay with USDT, BTC, ETH or other crypto via Cryptomus.',
+            'Pay with USDT, BTC, ETH or other crypto via MaxelPay.',
             style: TextStyle(color: const Color(0xFF3A3A3A), fontSize: 13),
           ),
           const SizedBox(height: 16),
-          TextField(
-            controller: _emailCtrl,
-            style: const TextStyle(color: const Color(0xFF3A3A3A)),
-            decoration: InputDecoration(
-              labelText: 'Email (optional)',
-              labelStyle: TextStyle(color: Colors.grey.shade700),
-              hintText: 'you@email.com',
-              hintStyle: TextStyle(color: Colors.grey.shade500),
-              filled: true,
-              fillColor: Colors.grey.shade100,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: kGold),
-              ),
-            ),
-            keyboardType: TextInputType.emailAddress,
-          ),
-          const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -554,17 +535,16 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             width: double.infinity,
             child: ElevatedButton.icon(
               onPressed: hapt(() async {
-                final email = _emailCtrl.text.trim();
-                final result = await bp.initCryptomusPayment(amount, email);
+                final result = await bp.initMaxelpayPayment(amount);
                 if (result != null && context.mounted) {
                   final payUrl = result['payment_url'] as String?;
-                  if (payUrl != null) {
+                  if (payUrl != null && payUrl.isNotEmpty) {
                     await Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (_) => PaymentWebView(
                           url: payUrl,
-                          title: 'Cryptomus Payment',
+                          title: 'MaxelPay Payment',
                         ),
                       ),
                     );

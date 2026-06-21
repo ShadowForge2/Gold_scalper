@@ -105,9 +105,11 @@ MARKET_OPEN_SUNDAY_UTC = _env_int("MARKET_OPEN_SUNDAY_UTC", 23)
 MARKET_CLOSE_FRIDAY_UTC = _env_int("MARKET_CLOSE_FRIDAY_UTC", 22)
 
 
-# Cryptomus
-CRYPTOMUS_MERCHANT_ID = _env_str("CRYPTOMUS_MERCHANT_ID", "")
-CRYPTOMUS_API_KEY = _env_str("CRYPTOMUS_API_KEY", "")
+# MaxelPay
+MAXELPAY_API_KEY = _env_str("MAXELPAY_API_KEY", "")
+
+# USD to NGN exchange rate for Paystack payments
+USD_TO_NGN_RATE = _env_float("USD_TO_NGN_RATE", 1500.0)
 
 
 def is_market_open() -> bool:

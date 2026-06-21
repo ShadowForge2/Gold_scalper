@@ -16,9 +16,9 @@ from app.subscription import (
     add_account, remove_account, restore_device_by_capital_id,
     start_trial, get_subscription,
     can_start_live, initialize_payment, verify_payment,
-    create_cryptomus_payment, get_cryptomus_payment,
+    create_maxelpay_payment,
     _get_sub_record, _save_sub_record,
-    _cryptomus_register_order, _cryptomus_get_identifier,
+    _maxelpay_register_order, _maxelpay_get_identifier,
 )
 from app.capital_client import CapitalClient
 import config as cfg
@@ -728,11 +728,11 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                 bal = state["account"].get("balance", 0)
         sub = await get_subscription(ident, bal)
         due = sub.get("unpaid_fees", sub.get("due_amount", 0))
-        due_kobo = int(due * 100)
-        if due_kobo < 100:
+        due_kobo = int(due * cfg.USD_TO_NGN_RATE * 100)
+        if due_kobo < 5000:
             due_kobo = 5000  # Min 50 NGN
         if bot_pool:
-            bot_pool.add_log(ident, f"Initializing payment of ${due_kobo/100:.2f}...", "INFO")
+            bot_pool.add_log(ident, f"Initializing payment of ₦{due_kobo/100:.2f}...", "INFO")
         result = initialize_payment(data.email, due_kobo, metadata={"identifier": ident}, channels=data.channels)
         if result is None:
             if bot_pool:
@@ -755,12 +755,12 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         ident = result.get("identifier", "")
         amount = result.get("amount", 0)
         if bot_pool:
-            bot_pool.add_log(ident, f"Payment of ${amount:.2f} verified. Subscription active for 30 more days.", "INFO")
+            bot_pool.add_log(ident, f"Payment of ₦{amount:.2f} verified. Subscription active for 30 more days.", "INFO")
         return {"message": "Payment verified", "data": result}
 
-    # ── Cryptomus ──────────────────────────────────────────────────
-    @app.post("/api/payment/cryptomus/init")
-    async def cryptomus_init(data: dict, device_id: str = Header(None, alias="X-Device-Id")):
+    # ── MaxelPay ──────────────────────────────────────────────────
+    @app.post("/api/payment/maxelpay/init")
+    async def maxelpay_init(data: dict, device_id: str = Header(None, alias="X-Device-Id")):
         if not _db_ok():
             return _no_db()
         did = device_id or "unknown"
@@ -780,44 +780,39 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             amount = due
         if amount <= 0:
             amount = 1.0
-        email = data.get("email", "")
-        order_id = f"crypt_{uuid.uuid4().hex[:16]}"
-        _cryptomus_register_order(order_id, ident)
-        result = create_cryptomus_payment(
-            amount_usd=amount, order_id=order_id, email=email,
-            url_return=data.get("url_return", ""),
-            url_callback=data.get("url_callback", ""),
+        order_id = f"maxel_{uuid.uuid4().hex[:16]}"
+        _maxelpay_register_order(order_id, ident)
+        result = create_maxelpay_payment(
+            amount_usd=amount, order_id=order_id,
+            description=f"Gold Scalper subscription payment - {ident}",
         )
         if result is None:
-            return JSONResponse(status_code=500, content={"error": "Cryptomus payment gateway error"})
+            return JSONResponse(status_code=500, content={"error": "MaxelPay payment gateway error"})
         if bot_pool:
-            bot_pool.add_log(ident, f"Cryptomus payment of ${amount:.2f} created", "INFO")
+            bot_pool.add_log(ident, f"MaxelPay payment of ${amount:.2f} created", "INFO")
+        checkout_url = (
+            result.get("data", {}).get("checkoutUrl") or
+            result.get("checkoutUrl") or
+            result.get("url") or
+            ""
+        )
         return {
             "order_id": order_id,
             "amount": amount,
-            "payment_url": result.get("url"),
-            "uuid": result.get("uuid"),
+            "payment_url": checkout_url,
         }
 
-    @app.post("/api/payment/cryptomus/status")
-    async def cryptomus_status(data: dict):
-        order_id = data.get("order_id", "")
-        if not order_id:
-            return JSONResponse(status_code=400, content={"error": "order_id required"})
-        result = get_cryptomus_payment(order_id)
-        if result is None:
-            return JSONResponse(status_code=404, content={"error": "Payment not found"})
-        return result
-
-    @app.post("/api/payment/cryptomus/callback")
-    async def cryptomus_callback(data: dict):
-        order_id = data.get("order_id", "")
-        status = data.get("status", "")
-        if not order_id or not status:
+    @app.post("/api/payment/maxelpay/callback")
+    async def maxelpay_callback(data: dict):
+        event = data.get("event", "")
+        payload = data.get("data", {})
+        order_id = payload.get("orderId", "")
+        status = payload.get("status", "")
+        if not order_id or not event:
             return {"ok": False}
-        ident = _cryptomus_get_identifier(order_id)
-        if status in ("paid", "paid_over"):
-            amount = float(data.get("amount", 0))
+        ident = _maxelpay_get_identifier(order_id)
+        if event == "payment.completed" and status == "paid":
+            amount = float(payload.get("totalPaidUsd", payload.get("amount", 0)))
             record = await _get_sub_record(ident) if ident else None
             if record:
                 record["paid_amount"] = record.get("paid_amount", 0) + amount
@@ -829,7 +824,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                         p["paid_at"] = datetime.utcnow().isoformat()
                 await _save_sub_record(record)
                 if bot_pool:
-                    bot_pool.add_log(ident, f"Cryptomus payment of ${amount:.2f} verified. Subscription active.", "INFO")
+                    bot_pool.add_log(ident, f"MaxelPay payment of ${amount:.2f} verified. Subscription active.", "INFO")
         return {"ok": True}
 
     return app

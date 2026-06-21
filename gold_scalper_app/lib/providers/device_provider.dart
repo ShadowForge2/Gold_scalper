@@ -48,7 +48,7 @@ class DeviceProvider extends ChangeNotifier {
       _deviceId = _generateFingerprint();
       await prefs.setString(_deviceIdKey, _deviceId!);
     }
-    _firstLaunch = true; // (prefs.getInt(_launchCountKey) ?? 0) == 0;
+    _firstLaunch = (prefs.getInt(_launchCountKey) ?? 0) == 0;
     await prefs.setInt(_launchCountKey, (prefs.getInt(_launchCountKey) ?? 0) + 1);
 
     final savedTs = prefs.getString(_credsSavedAtKey);

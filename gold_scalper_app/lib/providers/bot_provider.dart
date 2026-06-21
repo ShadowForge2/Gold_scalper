@@ -416,7 +416,26 @@ class BotProvider extends ChangeNotifier {
       _botRunning = stateData['running'] == true;
     } catch (e) {
       debugPrint('_fetchState failed: $e');
+      _state ??= _defaultState();
     }
+  }
+
+  BotState _defaultState() {
+    return BotState(
+      status: 'stopped',
+      state: 'IDLE',
+      connected: false,
+      broker: 'Capital.com',
+      symbol: 'XAUUSD',
+      balance: 0,
+      dailyPnl: 0,
+      bid: 0,
+      ask: 0,
+      bias: 'NEUTRAL',
+      biasStrength: 0,
+      openPositions: 0,
+      timestamp: DateTime.now(),
+    );
   }
 
   Future<void> _fetchLogs() async {
@@ -521,15 +540,25 @@ class BotProvider extends ChangeNotifier {
   Future<void> _fetchStateAndLogs() async {
     try {
       final results = await Future.wait([
-        _get('/api/device/bot/state'),
-        _get('/api/device/bot/logs'),
+        _get('/api/device/bot/state').catchError((e) {
+          debugPrint('_fetchStateAndLogs state: $e');
+          return <String, dynamic>{};
+        }),
+        _get('/api/device/bot/logs').catchError((e) {
+          debugPrint('_fetchStateAndLogs logs: $e');
+          return <String, dynamic>{};
+        }),
       ]);
       final stateData = results[0];
-      _state = BotState.fromApiResponse(stateData);
-      _botRunning = stateData['running'] == true;
+      if (stateData.isNotEmpty) {
+        _state = BotState.fromApiResponse(stateData);
+        _botRunning = stateData['running'] == true;
+      } else {
+        _state ??= _defaultState();
+      }
 
       final logData = results[1];
-      final backendLogs = (logData['logs'] as List).map((l) => LogEntry.fromJson(l)).toList();
+      final backendLogs = (logData['logs'] as List?)?.map((l) => LogEntry.fromJson(l)).toList() ?? [];
       if (backendLogs.isNotEmpty) {
         final existingMsgs = _logs.map((e) => e.message).toSet();
         for (final entry in backendLogs) {
@@ -541,6 +570,7 @@ class BotProvider extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint('_fetchStateAndLogs failed: $e');
+      _state ??= _defaultState();
     }
   }
 
@@ -792,16 +822,14 @@ class BotProvider extends ChangeNotifier {
     return data;
   }
 
-  Future<Map<String, dynamic>?> initCryptomusPayment(double amount, String email) async {
-    if (_useMockData) return {'payment_url': 'https://pay.cryptomus.com/mock'};
+  Future<Map<String, dynamic>?> initMaxelpayPayment(double amount) async {
+    if (_useMockData) return {'payment_url': 'https://checkout.maxelpay.com/mock'};
     try {
-      return await _post('/api/payment/cryptomus/init', {
+      return await _post('/api/payment/maxelpay/init', {
         'amount': amount,
-        'email': email,
-        'url_return': 'https://gold-scalper-qyhg.onrender.com',
       });
     } catch (e) {
-      addLog('Failed to create Cryptomus payment: $e', level: 'ERROR');
+      addLog('Failed to create MaxelPay payment: $e', level: 'ERROR');
       return null;
     }
   }
