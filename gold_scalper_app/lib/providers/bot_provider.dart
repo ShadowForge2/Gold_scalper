@@ -766,7 +766,7 @@ class BotProvider extends ChangeNotifier {
     return List<Map<String, dynamic>>.from(data['accounts'] ?? []);
   }
 
-  Future<bool> addAccount(
+  Future<String?> addAccount(
       String apiKey, String identifier, String password, bool demo) async {
     addLog('Saving account: $identifier');
     if (!_useMockData) {
@@ -778,13 +778,16 @@ class BotProvider extends ChangeNotifier {
           'demo': demo,
         });
       } catch (e) {
-        addLog('Failed to save account: $e', level: 'ERROR');
-        return false;
+        final msg = e.toString();
+        addLog('Failed to save account: $msg', level: 'ERROR');
+        return msg.contains('already registered')
+            ? 'This email is already linked to another device. Revoke your Capital.com API key and change your password to reclaim it.'
+            : 'Failed to save account. Check your credentials and try again.';
       }
     }
     await _device.saveCredentialsTimestamp();
     addLog('Account saved: $identifier', level: 'TRADE');
-    return true;
+    return null;
   }
 
   Future<bool> removeAccount(String identifier) async {

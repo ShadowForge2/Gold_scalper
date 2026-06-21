@@ -78,9 +78,45 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
       return;
     }
 
+    if (!_hasSavedCredentials) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.amberAccent, size: 22),
+              const SizedBox(width: 10),
+              const Text('Permanent Link',
+                  style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: const Text(
+            'This email will be permanently linked to this device. '
+            'To transfer it to another device, you must revoke your Capital.com API key '
+            'and change your password first.\n\n'
+            'Do you want to continue?',
+            style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Continue', style: TextStyle(color: Color(0xFFD4AF37), fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+
     final bp = context.read<BotProvider>();
-    final ok = await bp.addAccount(apiKey, identifier, password, _isDemo);
-    if (ok && mounted) {
+    final error = await bp.addAccount(apiKey, identifier, password, _isDemo);
+    if (error == null && mounted) {
       _savedApiKey = apiKey;
       _savedIdentifier = identifier;
       _hasSavedCredentials = true;
@@ -91,7 +127,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
       _snack('Account saved');
       setState(() {});
     } else if (mounted) {
-      _snack('Failed to save account. Check your credentials and try again.');
+      _snack(error ?? 'Failed to save account. Check your credentials and try again.');
     }
   }
 
