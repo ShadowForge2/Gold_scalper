@@ -644,8 +644,10 @@ class Bot:
             "timestamp": datetime.now().isoformat(),
         }
         try:
-            with open(self._state_file, "w") as f:
+            tmp = self._state_file + ".tmp"
+            with open(tmp, "w") as f:
                 json.dump(payload, f, indent=2, default=str)
+            os.replace(tmp, self._state_file)
         except IOError:
             pass
 

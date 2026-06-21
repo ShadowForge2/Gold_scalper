@@ -109,7 +109,7 @@ class BotPool:
                 if ident not in self._device_logs:
                     self._device_logs[ident] = []
                 self._device_logs[ident].append({
-                    "time": datetime.utcnow().strftime("%H:%M:%S"),
+                    "time": datetime.now().strftime("%H:%M:%S"),
                     "message": message,
                     "level": level,
                 })
@@ -124,7 +124,7 @@ class BotPool:
             if bot:
                 bot_logs = bot.logger.logs[-count:]
             dev_logs = self._device_logs.get(ident, [])
-            merged = dev_logs + bot_logs
+            merged = sorted(dev_logs + bot_logs, key=lambda e: e.get("time", ""))
             return merged[-count:]
 
     def list(self) -> List[Dict]:
@@ -223,8 +223,10 @@ class BotPool:
             payload.update(extra)
         state_file = os.path.join(STATE_DIR, f"{ident}.json")
         try:
-            with open(state_file, "w") as f:
+            tmp = state_file + ".tmp"
+            with open(tmp, "w") as f:
                 json.dump(payload, f, indent=2, default=str)
+            os.replace(tmp, state_file)
         except IOError:
             pass
         with self._lock:
