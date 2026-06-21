@@ -64,7 +64,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               if (bp.botRunning && !_dismissedWithdrawNotice)
                 _buildWithdrawNotice(),
-              if (!bp.canTrade && !bp.isDemo && !bp.hasNoAccounts && !bp.botRunning && !_dismissedSubscriptionNotice)
+              if (!bp.canTrade && !bp.isDemo && !bp.hasNoAccounts && !bp.botRunning && !_dismissedSubscriptionNotice && bp.subscription.isNotEmpty)
                 _buildSubscriptionBanner(context),
               if (bp.isDemo && !_dismissedDemoNotice)
                 _buildDemoNotice(),
