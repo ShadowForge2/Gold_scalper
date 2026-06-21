@@ -502,8 +502,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         avg_loss = round(gross_loss / losses, 2) if losses > 0 else 0
 
         max_dd = 0.0
+        sorted_closed = sorted(closed, key=lambda t: t.get("closed_at", "")) if closed else []
         if closed:
-            sorted_closed = sorted(closed, key=lambda t: t.get("closed_at", ""))
             running = starting
             peak = starting
             for t in sorted_closed:

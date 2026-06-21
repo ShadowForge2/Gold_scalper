@@ -92,7 +92,14 @@ async def remove_account(device_id: str, identifier: str) -> bool:
         "DELETE FROM accounts WHERE device_id = :did AND identifier = :id",
         {"did": device_id, "id": identifier},
     )
-    return result > 0
+    # asyncpg returns status string "DELETE N", aiosqlite returns int or None
+    if isinstance(result, int):
+        return result > 0
+    # asyncpg: parse "DELETE N"
+    if isinstance(result, str) and result.startswith("DELETE"):
+        parts = result.split()
+        return len(parts) == 2 and parts[1].isdigit() and int(parts[1]) > 0
+    return bool(result)
 
 
 async def restore_device_by_capital_id(identifier: str, new_device_id: str) -> Optional[Dict]:
