@@ -191,6 +191,17 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                         "error": "Stop the bot before changing account type or credentials.",
                         "action_required": "stop_bot",
                     })
+
+        temp = CapitalClient()
+        ok = temp.initialize(api_key=data.api_key, identifier=ident, password=data.password, demo=data.demo)
+        err_msg = temp.last_error()[1] if not ok else ""
+        temp.shutdown()
+        if not ok:
+            return JSONResponse(status_code=401, content={
+                "error": f"Broker authentication failed: {err_msg}",
+                "action_required": "check_credentials",
+            })
+
         await restore_device_by_capital_id(ident, did)
         await ensure_device(did)
         await add_account(did, data.api_key, ident, data.password, data.demo)

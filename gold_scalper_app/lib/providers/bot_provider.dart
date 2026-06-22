@@ -781,10 +781,9 @@ class BotProvider extends ChangeNotifier {
         });
       } catch (e) {
         final msg = e.toString();
-        addLog('Failed to save account: $msg', level: 'ERROR');
-        return msg.contains('Stop the bot') || msg.contains('close all')
-            ? msg.replaceAll(RegExp(r'^Exception: POST [^:]+: '), '')
-            : 'Failed to save account. Check your credentials and try again.';
+        final clean = msg.replaceAll(RegExp(r'^Exception: POST [^:]+: '), '');
+        addLog('Failed to save account: $clean', level: 'ERROR');
+        return clean;
       }
     }
     await _device.saveCredentialsTimestamp();
