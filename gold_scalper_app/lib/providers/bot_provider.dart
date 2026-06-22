@@ -716,25 +716,27 @@ class BotProvider extends ChangeNotifier {
     }
   }
 
-  Future<bool> stopBot() async {
+  Future<String?> stopBot() async {
     addLog('Stopping bot...', level: 'WARNING');
     if (_useMockData) {
       _botRunning = false;
       _state = _state?.copyWith(status: 'stopped', state: 'IDLE');
       addLog('Bot stopped successfully', level: 'WARNING');
-    } else {
-      try {
-        await _post('/api/device/bot/stop', {});
-        _botRunning = false;
-        addLog('Bot stopped successfully', level: 'WARNING');
-      } catch (e) {
-        addLog('Failed to stop bot: $e', level: 'ERROR');
-        notifyListeners();
-        return false;
-      }
+      notifyListeners();
+      return null;
     }
-    notifyListeners();
-    return true;
+    try {
+      await _post('/api/device/bot/stop', {});
+      _botRunning = false;
+      addLog('Bot stopped successfully', level: 'WARNING');
+      notifyListeners();
+      return null;
+    } catch (e) {
+      final msg = e.toString();
+      addLog('Failed to stop bot: $msg', level: 'ERROR');
+      notifyListeners();
+      return msg;
+    }
   }
 
   Future<Map<String, dynamic>> closeAllPositions() async {
@@ -778,8 +780,11 @@ class BotProvider extends ChangeNotifier {
           'demo': demo,
         });
       } catch (e) {
-        addLog('Failed to save account: $e', level: 'ERROR');
-        return 'Failed to save account. Check your credentials and try again.';
+        final msg = e.toString();
+        addLog('Failed to save account: $msg', level: 'ERROR');
+        return msg.contains('Stop the bot') || msg.contains('close all')
+            ? msg.replaceAll(RegExp(r'^Exception: POST [^:]+: '), '')
+            : 'Failed to save account. Check your credentials and try again.';
       }
     }
     await _device.saveCredentialsTimestamp();

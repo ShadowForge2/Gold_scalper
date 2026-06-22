@@ -308,8 +308,7 @@ class _ControlsScreenState extends State<ControlsScreen> {
           ],
         ),
         content: const Text(
-          'Are you sure you want to stop the bot?\n\n'
-          'Active positions will remain open.',
+          'Are you sure you want to stop the bot?',
           style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
         ),
         actions: [
@@ -325,7 +324,16 @@ class _ControlsScreenState extends State<ControlsScreen> {
       ),
     );
     if (confirmed == true) {
-      await bp.stopBot();
+      final error = await bp.stopBot();
+      if (error != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error, style: const TextStyle(color: Colors.white)),
+            backgroundColor: const Color(0xFF2A2A2A),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
     }
   }
 
