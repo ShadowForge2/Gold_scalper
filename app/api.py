@@ -19,6 +19,7 @@ from app.subscription import (
     can_start_live, initialize_payment, verify_payment,
     verify_paystack_webhook, process_paystack_webhook,
     create_maxelpay_payment, process_maxelpay_callback,
+    verify_maxelpay_webhook,
     _maxelpay_register_order, _maxelpay_get_identifier,
 )
 from app.capital_client import CapitalClient
@@ -830,7 +831,12 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         }
 
     @app.post("/api/payment/maxelpay/callback")
-    async def maxelpay_callback(data: dict):
+    async def maxelpay_callback(request: Request):
+        body = await request.body()
+        signature = request.headers.get("X-MaxelPay-Signature", "")
+        if not verify_maxelpay_webhook(body, signature):
+            return JSONResponse(status_code=401, content={"ok": False, "error": "invalid signature"})
+        data = json.loads(body)
         event = data.get("event", "")
         payload = data.get("data", {})
         order_id = payload.get("orderId", "")

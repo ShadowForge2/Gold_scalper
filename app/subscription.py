@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 import os
 import time
 import uuid
@@ -431,7 +432,11 @@ async def verify_payment(reference: str) -> Optional[Dict]:
         if record:
             record["paid_amount"] = record.get("paid_amount", 0) + amount_paid
             record["subscribed"] = True
-            record["subscription_end"] = (datetime.utcnow() + timedelta(days=30)).isoformat()
+            existing_end = record.get("subscription_end")
+            if existing_end and datetime.fromisoformat(existing_end) > datetime.utcnow():
+                record["subscription_end"] = (datetime.fromisoformat(existing_end) + timedelta(days=30)).isoformat()
+            else:
+                record["subscription_end"] = (datetime.utcnow() + timedelta(days=30)).isoformat()
             for p in record.get("monthly_periods", []):
                 if not p.get("fee_paid") and p.get("fee_15pct", 0) > 0:
                     p["fee_paid"] = True
@@ -468,8 +473,9 @@ async def _maxelpay_register_order(order_id: str, identifier: str):
     _maxelpay_orders[order_id] = identifier
     try:
         await db_mod.database.execute(
-            "INSERT OR IGNORE INTO pending_orders (order_id, identifier, gateway, created_at) "
-            "VALUES (:oid, :ident, 'maxelpay', :ca)",
+            "INSERT INTO pending_orders (order_id, identifier, gateway, created_at) "
+            "VALUES (:oid, :ident, 'maxelpay', :ca) "
+            "ON CONFLICT (order_id) DO NOTHING",
             {"oid": order_id, "ident": identifier, "ca": datetime.utcnow().isoformat()},
         )
     except Exception:
@@ -504,8 +510,9 @@ async def _is_payment_processed(ref_key: str) -> bool:
 async def _mark_payment_processed(ref_key: str, identifier: str, gateway: str, amount: float):
     try:
         await db_mod.database.execute(
-            "INSERT OR IGNORE INTO processed_payments (ref_key, identifier, gateway, amount, processed_at) "
-            "VALUES (:rk, :ident, :gw, :amt, :pa)",
+            "INSERT INTO processed_payments (ref_key, identifier, gateway, amount, processed_at) "
+            "VALUES (:rk, :ident, :gw, :amt, :pa) "
+            "ON CONFLICT (ref_key) DO NOTHING",
             {"rk": ref_key, "ident": identifier, "gw": gateway, "amt": amount, "pa": datetime.utcnow().isoformat()},
         )
     except Exception:
@@ -517,6 +524,18 @@ def _maxelpay_headers() -> Dict:
         "X-API-KEY": MAXELPAY_API_KEY,
         "Content-Type": "application/json",
     }
+
+
+def verify_maxelpay_webhook(body: bytes, signature: str) -> bool:
+    if not MAXELPAY_API_KEY or not signature:
+        return False
+    # Normalize: parse then re-stringify compact to match Node.js JSON.stringify()
+    try:
+        normalized = json.dumps(json.loads(body), separators=(',', ':'), ensure_ascii=True)
+    except Exception:
+        return False
+    expected = hmac.new(MAXELPAY_API_KEY.encode(), normalized.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
 
 
 def create_maxelpay_payment(amount_usd: float, order_id: str, description: str = "",
@@ -557,7 +576,11 @@ async def process_maxelpay_callback(order_id: str, status: str, amount: float) -
         return False
     record["paid_amount"] = record.get("paid_amount", 0) + amount
     record["subscribed"] = True
-    record["subscription_end"] = (datetime.utcnow() + timedelta(days=30)).isoformat()
+    existing_end = record.get("subscription_end")
+    if existing_end and datetime.fromisoformat(existing_end) > datetime.utcnow():
+        record["subscription_end"] = (datetime.fromisoformat(existing_end) + timedelta(days=30)).isoformat()
+    else:
+        record["subscription_end"] = (datetime.utcnow() + timedelta(days=30)).isoformat()
     for p in record.get("monthly_periods", []):
         if not p.get("fee_paid") and p.get("fee_15pct", 0) > 0:
             p["fee_paid"] = True
