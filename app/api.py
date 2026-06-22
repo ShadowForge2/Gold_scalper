@@ -179,9 +179,26 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         if not _db_ok():
             return _no_db()
         did = device_id or "unknown"
-        await restore_device_by_capital_id(data.identifier, did)
+        ident = data.identifier
+        dev = await get_device(did)
+        if dev:
+            existing = next((a for a in dev.get("accounts", []) if a["identifier"] == ident), None)
+            if existing:
+                type_changed = bool(existing.get("demo", True)) != data.demo
+                creds_changed = existing.get("api_key") != data.api_key or existing.get("password") != data.password
+                if bot_pool and (type_changed or creds_changed) and bot_pool.is_running(ident):
+                    return JSONResponse(status_code=409, content={
+                        "error": "Stop the bot before changing account type or credentials.",
+                        "action_required": "stop_bot",
+                    })
+        await restore_device_by_capital_id(ident, did)
         await ensure_device(did)
-        await add_account(did, data.api_key, data.identifier, data.password, data.demo)
+        await add_account(did, data.api_key, ident, data.password, data.demo)
+        if bot_pool and existing:
+            prev_type = "demo" if existing.get("demo", True) else "live"
+            new_type = "demo" if data.demo else "live"
+            if prev_type != new_type:
+                bot_pool.add_log(ident, f"Account switched from {prev_type} to {new_type}.", "INFO")
         dev = await get_device(did)
         return {"success": True, "accounts": [sanitize_account(a) for a in (dev.get("accounts") or [])]}
 
@@ -279,6 +296,13 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         if not accounts:
             return {"message": "No accounts to stop"}
         ident = accounts[0]["identifier"]
+        open_positions = bot_pool.open_count(ident)
+        if open_positions > 0:
+            return JSONResponse(status_code=409, content={
+                "error": f"Close all {open_positions} open position(s) before stopping the bot.",
+                "open_count": open_positions,
+                "action_required": "close_all",
+            })
         result = bot_pool.stop(ident)
         if result["success"]:
             bot_pool.add_log(ident, "Bot stopped.", "WARNING")

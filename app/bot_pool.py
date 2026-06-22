@@ -8,6 +8,7 @@ from typing import Optional, Dict, List
 
 from app.bot import Bot
 from app.logger import BotLogger
+from app.subscription import can_start_live
 
 
 STATE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot_states")
@@ -66,6 +67,14 @@ class BotPool:
         ident = _fmt_id(identifier)
         with self._lock:
             return ident in self._bots
+
+    def open_count(self, identifier: str) -> int:
+        ident = _fmt_id(identifier)
+        with self._lock:
+            bot = self._bots.get(ident)
+            if bot is None:
+                return 0
+            return getattr(bot.position_manager, "open_count", 0)
 
     def get_state(self, identifier: str) -> Optional[Dict]:
         ident = _fmt_id(identifier)
@@ -193,6 +202,15 @@ class BotPool:
             self._write_state(ident, {"state": "STOPPED", "error": "init_failed"})
             self._remove_bot(ident)
             return
+
+        if not creds.get("demo", True):
+            orig_ident = creds.get("identifier", ident)
+            async def _sub_check():
+                try:
+                    return await can_start_live(orig_ident, 0.0)
+                except Exception:
+                    return True
+            bot.set_can_trade_callback(_sub_check)
 
         self._write_state(ident, {
             "state": bot.state,

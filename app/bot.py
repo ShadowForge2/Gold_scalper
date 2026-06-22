@@ -58,6 +58,10 @@ class Bot:
         self._last_reconnect_time = 0.0
         self._reconnect_backoff_max = 60.0
 
+        self._can_trade_cb = None
+        self._winding_down = False
+        self._last_sub_check = 0.0
+
 
     async def initialize(self) -> bool:
         self.logger.info(f"Initializing {self.symbol} scalping bot...")
@@ -159,6 +163,9 @@ class Bot:
         self.client.shutdown()
         self.logger.info("Bot shutdown complete")
 
+    def set_can_trade_callback(self, cb):
+        self._can_trade_cb = cb
+
     async def run(self):
         self._running = True
         self.logger.info("Bot loop started")
@@ -191,6 +198,19 @@ class Bot:
 
         if self.state == self.STATES["STOPPED"]:
             return
+
+        now_t = time.time()
+        if self._can_trade_cb and now_t - self._last_sub_check >= 30.0:
+            self._last_sub_check = now_t
+            can_trade = await self._can_trade_cb()
+            if not can_trade and not self._winding_down:
+                self._winding_down = True
+                self.logger.warning("Subscription expired. Completing open trades, then stopping.")
+            if self._winding_down and pnl_data["open_count"] == 0:
+                self.logger.warning("All trades closed. Stopping bot due to expired subscription.")
+                self.state = self.STATES["STOPPED"]
+                self._running = False
+                return
 
         if not self.client.is_connected():
             now_t = time.time()
@@ -256,6 +276,8 @@ class Bot:
         self._write_state()
 
     async def _handle_search(self, pnl_data: Dict):
+        if self._winding_down:
+            return
         now = time.monotonic()
         if not hasattr(self, '_last_bias_time'):
             self._last_bias_time = 0.0
