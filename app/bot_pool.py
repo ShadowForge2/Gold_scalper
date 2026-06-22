@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional, Dict, List
 
 from app.bot import Bot
+from app.capital_client import CapitalClient
 from app.logger import BotLogger
 from app.subscription import can_start_live
 
@@ -32,6 +33,17 @@ class BotPool:
 
     def start(self, identifier: str, api_key: str, password: str, demo: bool = True) -> Dict:
         ident = _fmt_id(identifier)
+        with self._lock:
+            if ident in self._bots:
+                return {"success": False, "error": "Bot already running for this account"}
+
+        temp = CapitalClient()
+        ok = temp.initialize(api_key=api_key, identifier=identifier, password=password, demo=demo)
+        err_msg = temp.last_error()[1] if not ok else ""
+        temp.shutdown()
+        if not ok:
+            return {"success": False, "error": f"Broker authentication failed: {err_msg}"}
+
         with self._lock:
             if ident in self._bots:
                 return {"success": False, "error": "Bot already running for this account"}

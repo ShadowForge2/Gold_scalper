@@ -76,9 +76,11 @@ class CapitalClient:
                 self._last_activity = time.time()
                 data = r.json()
                 self._prev_balance = data.get("accountInfo", {}).get("balance", 0)
+                self._last_order_error = ""
                 return True
-        except Exception:
-            pass
+            self._last_order_error = f"HTTP {r.status_code}: {r.text[:500]}"
+        except Exception as exc:
+            self._last_order_error = f"{type(exc).__name__}: {exc}"
         self.connected = False
         return False
 
