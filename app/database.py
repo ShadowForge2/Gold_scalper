@@ -55,6 +55,25 @@ CREATE TABLE IF NOT EXISTS monthly_periods (
 )
 """
 
+CREATE_PENDING_ORDERS = """
+CREATE TABLE IF NOT EXISTS pending_orders (
+    order_id TEXT PRIMARY KEY,
+    identifier TEXT NOT NULL,
+    gateway TEXT NOT NULL,
+    created_at TEXT NOT NULL
+)
+"""
+
+CREATE_PROCESSED_PAYMENTS = """
+CREATE TABLE IF NOT EXISTS processed_payments (
+    ref_key TEXT PRIMARY KEY,
+    identifier TEXT NOT NULL,
+    gateway TEXT NOT NULL,
+    amount REAL NOT NULL,
+    processed_at TEXT NOT NULL
+)
+"""
+
 
 async def _try_pg() -> bool:
     try:
@@ -69,11 +88,14 @@ async def _try_pg() -> bool:
 async def _try_sqlite() -> bool:
     try:
         await database.connect()
-        for sql in [CREATE_DEVICES, CREATE_ACCOUNTS, CREATE_SUBSCRIPTIONS, CREATE_PERIODS]:
+        for sql in ALL_TABLES:
             await database.execute(sql)
         return True
     except Exception:
         return False
+
+
+ALL_TABLES = [CREATE_DEVICES, CREATE_ACCOUNTS, CREATE_SUBSCRIPTIONS, CREATE_PERIODS, CREATE_PENDING_ORDERS, CREATE_PROCESSED_PAYMENTS]
 
 
 async def init_db():
@@ -81,7 +103,7 @@ async def init_db():
     if _env_url:
         ok = await _try_pg()
         if ok:
-            for sql in [CREATE_DEVICES, CREATE_ACCOUNTS, CREATE_SUBSCRIPTIONS, CREATE_PERIODS]:
+            for sql in ALL_TABLES:
                 await database.execute(sql)
             return
     database = Database(SQLITE_URL)

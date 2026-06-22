@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import os
 import time
 import uuid
@@ -385,6 +387,13 @@ def _paystack_headers() -> Dict:
     }
 
 
+def verify_paystack_webhook(body: bytes, signature: str) -> bool:
+    if not PAYSTACK_SECRET or not signature:
+        return False
+    expected = hmac.new(PAYSTACK_SECRET.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
 def initialize_payment(email: str, amount_kobo: int, metadata: Dict = None, channels: List[str] = None, currency: str = "NGN") -> Optional[Dict]:
     if not PAYSTACK_SECRET:
         return None
@@ -405,6 +414,8 @@ def initialize_payment(email: str, amount_kobo: int, metadata: Dict = None, chan
 async def verify_payment(reference: str) -> Optional[Dict]:
     if not PAYSTACK_SECRET:
         return None
+    if await _is_payment_processed(reference):
+        return {"error": "already_processed"}
     try:
         r = http_requests.get(f"{PAYSTACK_BASE}/transaction/verify/{reference}", headers=_paystack_headers(), timeout=15)
         if not r.ok:
@@ -426,6 +437,7 @@ async def verify_payment(reference: str) -> Optional[Dict]:
                     p["fee_paid"] = True
                     p["paid_at"] = datetime.utcnow().isoformat()
             await _save_sub_record(record)
+            await _mark_payment_processed(reference, identifier, "paystack", amount_paid)
 
         return {
             "identifier": identifier,
@@ -437,17 +449,67 @@ async def verify_payment(reference: str) -> Optional[Dict]:
     return None
 
 
+async def process_paystack_webhook(event: str, data: dict) -> bool:
+    if event != "charge.success":
+        return False
+    reference = data.get("reference", "")
+    if not reference or await _is_payment_processed(reference):
+        return False
+    result = await verify_payment(reference)
+    return result is not None and "error" not in result
+
+
 # ── MaxelPay ─────────────────────────────────────────────────────
 
 _maxelpay_orders: dict = {}
 
 
-def _maxelpay_register_order(order_id: str, identifier: str):
+async def _maxelpay_register_order(order_id: str, identifier: str):
     _maxelpay_orders[order_id] = identifier
+    try:
+        await db_mod.database.execute(
+            "INSERT OR IGNORE INTO pending_orders (order_id, identifier, gateway, created_at) "
+            "VALUES (:oid, :ident, 'maxelpay', :ca)",
+            {"oid": order_id, "ident": identifier, "ca": datetime.utcnow().isoformat()},
+        )
+    except Exception:
+        pass
 
 
-def _maxelpay_get_identifier(order_id: str) -> str:
-    return _maxelpay_orders.pop(order_id, "")
+async def _maxelpay_get_identifier(order_id: str) -> str:
+    ident = _maxelpay_orders.get(order_id, "")
+    if not ident:
+        try:
+            row = await db_mod.database.fetch_one(
+                "SELECT identifier FROM pending_orders WHERE order_id = :oid",
+                {"oid": order_id},
+            )
+            if row:
+                ident = row["identifier"]
+        except Exception:
+            pass
+    return ident
+
+
+async def _is_payment_processed(ref_key: str) -> bool:
+    try:
+        row = await db_mod.database.fetch_one(
+            "SELECT 1 FROM processed_payments WHERE ref_key = :rk", {"rk": ref_key}
+        )
+        return row is not None
+    except Exception:
+        return False
+
+
+async def _mark_payment_processed(ref_key: str, identifier: str, gateway: str, amount: float):
+    try:
+        await db_mod.database.execute(
+            "INSERT OR IGNORE INTO processed_payments (ref_key, identifier, gateway, amount, processed_at) "
+            "VALUES (:rk, :ident, :gw, :amt, :pa)",
+            {"rk": ref_key, "ident": identifier, "gw": gateway, "amt": amount, "pa": datetime.utcnow().isoformat()},
+        )
+    except Exception:
+        pass
 
 
 def _maxelpay_headers() -> Dict:
@@ -479,3 +541,27 @@ def create_maxelpay_payment(amount_usd: float, order_id: str, description: str =
     except Exception:
         pass
     return None
+
+
+async def process_maxelpay_callback(order_id: str, status: str, amount: float) -> bool:
+    ref_key = f"maxelpay_{order_id}"
+    if await _is_payment_processed(ref_key):
+        return False
+    ident = await _maxelpay_get_identifier(order_id)
+    if not ident:
+        return False
+    if status != "paid":
+        return False
+    record = await _get_sub_record(ident)
+    if not record:
+        return False
+    record["paid_amount"] = record.get("paid_amount", 0) + amount
+    record["subscribed"] = True
+    record["subscription_end"] = (datetime.utcnow() + timedelta(days=30)).isoformat()
+    for p in record.get("monthly_periods", []):
+        if not p.get("fee_paid") and p.get("fee_15pct", 0) > 0:
+            p["fee_paid"] = True
+            p["paid_at"] = datetime.utcnow().isoformat()
+    await _save_sub_record(record)
+    await _mark_payment_processed(ref_key, ident, "maxelpay", amount)
+    return True

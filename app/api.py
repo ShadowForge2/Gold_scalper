@@ -1,9 +1,10 @@
+import json
 import os
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, Header
+from fastapi import FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -16,8 +17,8 @@ from app.subscription import (
     add_account, remove_account, restore_device_by_capital_id,
     start_trial, get_subscription,
     can_start_live, initialize_payment, verify_payment,
-    create_maxelpay_payment,
-    _get_sub_record, _save_sub_record,
+    verify_paystack_webhook, process_paystack_webhook,
+    create_maxelpay_payment, process_maxelpay_callback,
     _maxelpay_register_order, _maxelpay_get_identifier,
 )
 from app.capital_client import CapitalClient
@@ -760,11 +761,27 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         result = await verify_payment(ref)
         if result is None:
             return JSONResponse(status_code=400, content={"error": "Payment verification failed"})
+        if result.get("error") == "already_processed":
+            if bot_pool:
+                bot_pool.add_log(ref[:12], "Duplicate verify call ignored (already processed).", "INFO")
+            return {"message": "Already verified", "data": result}
         ident = result.get("identifier", "")
         amount = result.get("amount", 0)
         if bot_pool:
             bot_pool.add_log(ident, f"Payment of ₦{amount:.2f} verified. Subscription active for 30 more days.", "INFO")
         return {"message": "Payment verified", "data": result}
+
+    @app.post("/api/payment/paystack/webhook")
+    async def paystack_webhook(request: Request):
+        body = await request.body()
+        sig = request.headers.get("x-paystack-signature", "")
+        if not verify_paystack_webhook(body, sig):
+            return JSONResponse(status_code=401, content={"error": "Invalid signature"})
+        payload = json.loads(body)
+        event = payload.get("event", "")
+        data = payload.get("data", {})
+        ok = await process_paystack_webhook(event, data)
+        return {"ok": ok}
 
     # ── MaxelPay ──────────────────────────────────────────────────
     @app.post("/api/payment/maxelpay/init")
@@ -788,8 +805,10 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             amount = due
         if amount <= 0:
             amount = 1.0
+        if amount < 1.0:
+            amount = 1.0
         order_id = f"maxel_{uuid.uuid4().hex[:16]}"
-        _maxelpay_register_order(order_id, ident)
+        await _maxelpay_register_order(order_id, ident)
         result = create_maxelpay_payment(
             amount_usd=amount, order_id=order_id,
             description=f"Gold Scalper subscription payment - {ident}",
@@ -818,20 +837,12 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         status = payload.get("status", "")
         if not order_id or not event:
             return {"ok": False}
-        ident = _maxelpay_get_identifier(order_id)
-        if event == "payment.completed" and status == "paid":
+        if event == "payment.completed":
             amount = float(payload.get("totalPaidUsd", payload.get("amount", 0)))
-            record = await _get_sub_record(ident) if ident else None
-            if record:
-                record["paid_amount"] = record.get("paid_amount", 0) + amount
-                record["subscribed"] = True
-                record["subscription_end"] = (datetime.utcnow() + timedelta(days=30)).isoformat()
-                for p in record.get("monthly_periods", []):
-                    if not p.get("fee_paid") and p.get("fee_15pct", 0) > 0:
-                        p["fee_paid"] = True
-                        p["paid_at"] = datetime.utcnow().isoformat()
-                await _save_sub_record(record)
-                if bot_pool:
+            ok = await process_maxelpay_callback(order_id, status, amount)
+            if ok and bot_pool:
+                ident = await _maxelpay_get_identifier(order_id)
+                if ident:
                     bot_pool.add_log(ident, f"MaxelPay payment of ${amount:.2f} verified. Subscription active.", "INFO")
         return {"ok": True}
 

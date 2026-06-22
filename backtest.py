@@ -29,7 +29,7 @@ SPREAD_PER_LOT_USD = 25.0  # base spread per lot (varies by session)
 SLIPPAGE_PER_LOT_USD = 3.0 # avg slippage per lot per entry
 SPREAD_ROUND_TRIP = 2      # spread paid on both entry + exit
 LEVERAGE = 200              # Capital.com gold leverage (professional/offshore)
-MARGIN_MAX_PCT = 1.0        # match real bot — no internal margin check
+MARGIN_MAX_PCT = 1.0        # Capital.com real req: allows up to 100% equity as margin
 
 # Timeframe constants (same values as MT5 constants)
 TIMEFRAME_H1 = 16385
@@ -637,13 +637,16 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
                     total_lot = lot * num_tr
                 if total_lot > max_total_lot:
                     lot = max_total_lot / num_tr
-                # margin check
+                # margin check — Capital.com real requirement
                 margin_per_lot = (row["close"] * CONTRACT_SIZE) / LEVERAGE
-                margin_needed = total_lot * margin_per_lot
-                if margin_needed > balance * MARGIN_MAX_PCT:
-                    scale = (balance * MARGIN_MAX_PCT) / margin_needed
-                    lot *= scale
-                    total_lot = lot * num_tr
+                max_lot_by_margin = (balance * MARGIN_MAX_PCT) / margin_per_lot
+                if max_lot_by_margin < cfg.MIN_LOT:
+                    continue  # can't afford even 0.01 lot
+                lot = min(lot, max_lot_by_margin)
+                lot = round(lot / cfg.LOT_STEP) * cfg.LOT_STEP
+                lot = max(cfg.MIN_LOT, lot)
+                num_tr = max(1, min(num_tr, int(max_lot_by_margin / max(lot, 1e-9))))
+                total_lot = lot * num_tr
                 if total_lot <= 0:
                     continue
 
