@@ -235,10 +235,18 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         )
         if result["success"]:
             if not demo:
-                state_data = bot_pool.get_state(ident)
                 bal = 0.0
-                if state_data and state_data.get("account") and not state_data["account"].get("error"):
-                    bal = state_data["account"].get("balance", 0)
+                temp_client = CapitalClient()
+                if temp_client.initialize(
+                    api_key=acct["api_key"],
+                    identifier=acct["identifier"],
+                    password=acct["password"],
+                    demo=demo,
+                ):
+                    info = temp_client.get_account_info()
+                    if info:
+                        bal = info.get("balance", 0.0)
+                    temp_client.shutdown()
                 await start_trial(ident, bal)
                 sub = await get_subscription(ident, bal)
                 dr = sub.get("days_remaining", 30)
