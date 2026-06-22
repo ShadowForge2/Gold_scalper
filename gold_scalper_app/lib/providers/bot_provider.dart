@@ -19,6 +19,7 @@ class BotProvider extends ChangeNotifier {
 
   bool _useMockData = false;
   bool _initialized = false;
+  bool _backendReady = false;
 
   BotState? _state;
   List<Trade> _recentTrades = [];
@@ -83,16 +84,23 @@ class BotProvider extends ChangeNotifier {
   Future<void> _resolveUrl() async {
     for (final url in _baseUrls) {
       try {
-        await _client
+        final r = await _client
             .get(Uri.parse('$url/health'))
-            .timeout(const Duration(seconds: 3));
-        _activeUrl = url;
-        return;
+            .timeout(const Duration(seconds: 5));
+        final body = jsonDecode(r.body);
+        if (r.statusCode == 200 && body['status'] == 'healthy') {
+          _activeUrl = url;
+          _backendReady = true;
+          debugPrint('_resolveUrl: using $url');
+          return;
+        }
       } catch (e) {
-        debugPrint('resolveUrl failed: $url -> $e');
+        debugPrint('_resolveUrl failed: $url -> $e');
       }
     }
     _activeUrl = _baseUrls.first;
+    _backendReady = true;
+    debugPrint('_resolveUrl: fallback to ${_baseUrls.first}');
   }
 
   void toggleMockData() {
@@ -771,17 +779,31 @@ class BotProvider extends ChangeNotifier {
   Future<String?> addAccount(
       String apiKey, String identifier, String password, bool demo) async {
     addLog('Saving account: $identifier');
+    if (!_backendReady) {
+      await _resolveUrl();
+    }
     if (!_useMockData) {
       try {
-        await _post('/api/device/accounts', {
-          'api_key': apiKey,
-          'identifier': identifier,
-          'password': password,
-          'demo': demo,
-        });
+        final url = _activeUrl ?? _baseUrls.first;
+        addLog('Connecting to $url...');
+        final r = await _client.post(
+          Uri.parse('$url/api/device/accounts'),
+          headers: _device.headers,
+          body: jsonEncode({
+            'api_key': apiKey,
+            'identifier': identifier,
+            'password': password,
+            'demo': demo,
+          }),
+        ).timeout(const Duration(seconds: 15));
+        final data = jsonDecode(r.body);
+        if (r.statusCode != 200) {
+          final err = data['error'] ?? r.body;
+          addLog('Failed to save account: $err', level: 'ERROR');
+          return err.toString();
+        }
       } catch (e) {
-        final msg = e.toString();
-        final clean = msg.replaceAll(RegExp(r'^Exception: POST [^:]+: '), '');
+        final clean = e.toString().replaceAll(RegExp(r'^Exception: POST [^:]+: '), '');
         addLog('Failed to save account: $clean', level: 'ERROR');
         return clean;
       }
