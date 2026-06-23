@@ -20,6 +20,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
   final _passwordCtrl = TextEditingController();
   bool _isDemo = true;
   bool _isEditing = false;
+  bool _saving = false;
   late AnimationController _pulseCtrl;
   late Animation<double> _pulseAnim;
 
@@ -70,6 +71,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
   bool _hasSavedCredentials = false;
 
   Future<void> _save() async {
+    if (_saving) return;
     final apiKey = _apiKeyCtrl.text.trim();
     final identifier = _identifierCtrl.text.trim();
     final password = _passwordCtrl.text.trim();
@@ -115,7 +117,9 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
     }
 
     final bp = context.read<BotProvider>();
+    setState(() => _saving = true);
     final error = await bp.addAccount(apiKey, identifier, password, _isDemo);
+    if (mounted) setState(() => _saving = false);
     if (error == null && mounted) {
       _savedApiKey = apiKey;
       _savedIdentifier = identifier;
@@ -141,7 +145,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
       _snack('Edit available in ${_formatDuration(device.cooldownRemaining)}');
       return;
     }
-    _apiKeyCtrl.text = _savedApiKey ?? '';
+    _apiKeyCtrl.text = (_savedApiKey?.contains('*') ?? false) ? '' : (_savedApiKey ?? '');
     _identifierCtrl.text = _savedIdentifier ?? '';
     setState(() => _isEditing = true);
   }
@@ -266,7 +270,8 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
           _field('Identifier (Email)', _identifierCtrl,
               keyboardType: TextInputType.emailAddress),
           const SizedBox(height: 8),
-          _field('Password', _passwordCtrl, obscure: true),
+          _field('API Key Password', _passwordCtrl, obscure: true,
+              hint: 'Custom password set during API key generation (NOT account login)'),
           const SizedBox(height: 12),
           _demoToggle(),
           if (!device.canEditCredentials && _isEditing) ...[
@@ -314,21 +319,30 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: device.canEditCredentials ? hapt(_save) : null,
+              onPressed: device.canEditCredentials && !_saving ? hapt(_save) : null,
               style: ElevatedButton.styleFrom(
                 backgroundColor: device.canEditCredentials ? kGold : kDarkBorder,
                 foregroundColor: Colors.black,
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
-              child: Text(
-                device.accountTied
-                    ? 'Account Locked'
-                    : _isEditing
-                        ? 'Save Changes'
-                        : 'Save Credentials',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
+              child: _saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.black,
+                      ),
+                    )
+                  : Text(
+                      device.accountTied
+                          ? 'Account Locked'
+                          : _isEditing
+                              ? 'Save Changes'
+                              : 'Save Credentials',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
             ),
           ),
         ],
@@ -512,7 +526,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
   }
 
   Widget _field(String label, TextEditingController ctrl,
-      {bool obscure = false, TextInputType? keyboardType}) {
+      {bool obscure = false, TextInputType? keyboardType, String? hint}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -525,6 +539,8 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
           keyboardType: keyboardType,
           style: const TextStyle(color: Colors.white, fontSize: 14),
           decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: const TextStyle(color: Colors.white24, fontSize: 12),
             isDense: true,
             contentPadding:
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
