@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,9 +14,7 @@ class BotProvider extends ChangeNotifier {
   final DeviceProvider _device;
   final http.Client _client = http.Client();
   Timer? _timer;
-  final _rand = Random(42);
 
-  bool _useMockData = false;
   bool _initialized = false;
   bool _backendReady = false;
 
@@ -103,11 +100,6 @@ class BotProvider extends ChangeNotifier {
     debugPrint('_resolveUrl: fallback to ${_baseUrls.first}');
   }
 
-  void toggleMockData() {
-    _useMockData = !_useMockData;
-    notifyListeners();
-  }
-
   Map<String, String> get _getHeaders {
     final h = <String, String>{'X-Device-Id': _device.deviceId ?? ''};
     return h;
@@ -115,8 +107,37 @@ class BotProvider extends ChangeNotifier {
 
   static const _timeout = Duration(seconds: 10);
 
+  Map<String, dynamic> _decodeMap(String body) {
+    try {
+      return Map<String, dynamic>.from(jsonDecode(body));
+    } catch (_) {
+      return {'error': body};
+    }
+  }
+
+  String _networkError(Object error) {
+    final msg = error.toString();
+    if (msg.contains('Failed host lookup') ||
+        msg.contains('No address associated with hostname') ||
+        msg.contains('nodename nor servname') ||
+        msg.contains('SocketException')) {
+      return 'Network error: could not reach the server. Check internet connection or DNS.';
+    }
+    if (error is TimeoutException || msg.toLowerCase().contains('timed out')) {
+      return 'Network error: server took too long to respond.';
+    }
+    if (msg.contains('ClientException')) {
+      return 'Network error: connection to server failed.';
+    }
+    if (msg.contains('FormatException')) {
+      return 'Server returned an invalid response.';
+    }
+    return msg
+        .replaceFirst(RegExp(r'^Exception:\s*'), '')
+        .replaceFirst(RegExp(r'^(GET|POST|DELETE|PUT)\s+[^:]+:\s*'), '');
+  }
+
   Future<Map<String, dynamic>> _get(String path, {bool retried = false}) async {
-    if (_useMockData) return _mockResponse(path);
     final url = baseUrl;
     try {
       final r = await _client.get(
@@ -128,17 +149,15 @@ class BotProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint('_get $path failed: $e');
       if (!retried) {
-        _activeUrl = null;
         await _resolveUrl();
         return _get(path, retried: true);
       }
-      rethrow;
+      throw Exception(_networkError(e));
     }
   }
 
   Future<Map<String, dynamic>> _post(
       String path, Map<String, dynamic> body, {bool retried = false}) async {
-    if (_useMockData) return _mockPostResponse(path, body);
     final url = baseUrl;
     try {
       final r = await _client.post(
@@ -146,233 +165,37 @@ class BotProvider extends ChangeNotifier {
         headers: _device.headers,
         body: jsonEncode(body),
       ).timeout(_timeout);
-      final data = jsonDecode(r.body);
+      final data = _decodeMap(r.body);
       if (r.statusCode == 200) return data;
       throw Exception('POST $path: ${data['error'] ?? r.body}');
     } catch (e) {
       debugPrint('_post $path failed: $e');
       if (!retried) {
-        _activeUrl = null;
         await _resolveUrl();
         return _post(path, body, retried: true);
       }
-      rethrow;
+      throw Exception(_networkError(e));
     }
   }
 
-  Map<String, dynamic> _mockResponse(String path) {
-    if (path.contains('/bot/state')) {
-      return {
-        'running': _botRunning,
-        'bot': {
-          'state': _botRunning ? 'AWAITING_SIGNAL' : 'IDLE',
-          'symbol': 'XAUUSD',
-          'bias': {'bias': 'BULLISH', 'strength': 0.78},
-          'signal': {'momentum': 0.62, 'candle_strength': 0.45},
-          'positions': {
-            'daily_pnl': 12.35,
-            'event_pnl': 4.10,
-            'open_count': 0,
-          },
-          'risk': {
-            'consecutive_losses': 0,
-            'session_trades': 3,
-            'cooldown_active': false,
-            'max_daily_loss': 10.0,
-            'max_event_loss': 5.0,
-            'max_trades_per_event': 5,
-            'cooldown_seconds': 60,
-          },
-        },
-        'account': {
-          'balance': 1250.42,
-          'equity': 1262.77,
-          'profit': 12.35,
-          'bid': 2345.67,
-          'ask': 2345.89,
-          'free_margin': 1120.33,
-          'name': 'Demo Account',
-          'leverage': 30,
-        },
-      };
+  Future<Map<String, dynamic>> _delete(String path, {bool retried = false}) async {
+    final url = baseUrl;
+    try {
+      final r = await _client.delete(
+        Uri.parse('$url$path'),
+        headers: _device.headers,
+      ).timeout(_timeout);
+      final data = _decodeMap(r.body);
+      if (r.statusCode == 200) return data;
+      throw Exception('DELETE $path: ${data['error'] ?? r.body}');
+    } catch (e) {
+      debugPrint('_delete $path failed: $e');
+      if (!retried) {
+        await _resolveUrl();
+        return _delete(path, retried: true);
+      }
+      throw Exception(_networkError(e));
     }
-    if (path.contains('/bot/logs')) {
-      return {
-        'logs': _generateMockLogs(),
-      };
-    }
-    if (path.contains('/bot/performance')) {
-      return {
-        'trades': 385,
-        'wins': 266,
-        'losses': 119,
-        'win_rate': 69.1,
-        'gross_profit': 5842.0,
-        'gross_loss': 2190.0,
-        'net_pnl': 3652.0,
-        'profit_factor': 4.25,
-        'avg_win': 21.96,
-        'avg_loss': 18.40,
-        'max_dd': 2186.0,
-        'starting_balance': 500.0,
-        'ending_balance': 4152.0,
-        'return_pct': 730.4,
-        'monthly': [],
-        'daily': [],
-      };
-    }
-    if (path.contains('/equity_curve')) {
-      return {
-        'points': [
-          {'time': DateTime.now().subtract(const Duration(days: 60)).toIso8601String(), 'balance': 500.0},
-          {'time': DateTime.now().subtract(const Duration(days: 45)).toIso8601String(), 'balance': 680.0},
-          {'time': DateTime.now().subtract(const Duration(days: 30)).toIso8601String(), 'balance': 920.0},
-          {'time': DateTime.now().subtract(const Duration(days: 15)).toIso8601String(), 'balance': 1350.0},
-          {'time': DateTime.now().subtract(const Duration(days: 5)).toIso8601String(), 'balance': 2100.0},
-          {'time': DateTime.now().toIso8601String(), 'balance': 4152.0},
-        ],
-      };
-    }
-    if (path.contains('/subscription')) {
-      return {
-        'trial_active': true,
-        'trial_end': '2026-07-17T00:00:00',
-        'days_remaining': 24,
-        'subscribed': false,
-        'subscription_end': null,
-        'can_trade': true,
-        'due_amount': 0.0,
-        'unpaid_fees': 0.0,
-        'demo': true,
-        'current_month_profit': 250.42,
-        'current_month_fee': 37.56,
-        'monthly_periods': [
-          {
-            'period_start': '2026-06-01T00:00:00',
-            'period_end': null,
-            'starting_balance': 1000.0,
-            'cumulative_profit': 250.42,
-            'fee_15pct': 37.56,
-            'fee_paid': false,
-            'paid_at': null,
-          }
-        ],
-      };
-    }
-    if (path.contains('/accounts')) {
-      return {
-        'accounts': [
-          {
-            'api_key': 'demo****key',
-            'identifier': 'trader@email.com',
-            'password': '****',
-            'demo': true,
-          }
-        ],
-      };
-    }
-    return {'success': true};
-  }
-
-  Map<String, dynamic> _mockPostResponse(
-      String path, Map<String, dynamic> body) {
-    if (path.contains('/bot/start')) {
-      _botRunning = true;
-      _state = _state?.copyWith(state: 'AWAITING_SIGNAL') ?? _mockState();
-      return {'message': 'Bot started'};
-    }
-    if (path.contains('/bot/stop')) {
-      _botRunning = false;
-      _state = _state?.copyWith(state: 'IDLE') ?? _mockState();
-      return {'message': 'Bot stopped'};
-    }
-    if (path.contains('/payment/initialize')) {
-      return {
-        'authorization_url': 'https://paystack.com/pay/mock-ref-12345',
-        'reference': 'mock-ref-12345',
-        'access_code': 'mock-access-code-12345',
-      };
-    }
-    if (path.contains('/payment/verify')) {
-      return {'message': 'Payment verified', 'status': 'success'};
-    }
-    return {'success': true};
-  }
-
-  List<dynamic> _generateMockLogs() {
-    final levels = ['INFO', 'SIGNAL', 'TRADE', 'BIAS', 'WARNING'];
-    final msgs = [
-      'Bias updated: BULLISH (strength=0.78, H1=UPTREND) TRADEABLE',
-      'Signal check: momentum=0.62 threshold=0.50',
-      'No entry: score_below_entry_threshold score=0.48 threshold=0.50',
-      r'Daily P&L: +$12.35 | Event P&L: +$4.10',
-      'Trial active: 24 day(s) remaining.',
-      'Connection healthy. Latency: 45ms',
-      'Analyzing H1 structure...',
-      'Candle pattern: ENGULFING_BULLISH',
-      'Session: LONDON active (07:00-16:00 UTC)',
-      'Risk check: daily_loss_ok=true event_loss_ok=true',
-    ];
-    final now = DateTime.now();
-    return List.generate(30, (i) {
-      final t = now.subtract(Duration(seconds: (30 - i) * 12));
-      final lvl = levels[i % levels.length];
-      return {
-        'time': '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:${t.second.toString().padLeft(2, '0')}',
-        'message': msgs[i % msgs.length],
-        'level': lvl,
-      };
-    });
-  }
-
-  BotState _mockState() {
-    return BotState(
-      status: _botRunning ? 'running' : 'stopped',
-      state: _botRunning ? 'AWAITING_SIGNAL' : 'IDLE',
-      connected: true,
-      broker: 'Capital.com',
-      symbol: 'XAUUSD',
-      balance: 1250.42,
-      dailyPnl: 12.35,
-      bid: 2345.67,
-      ask: 2345.89,
-      bias: 'BULLISH',
-      biasStrength: 78.0,
-      openPositions: 0,
-      timestamp: DateTime.now(),
-    );
-  }
-
-  MockPerformance _mockPerformance() {
-    return MockPerformance(
-      totalTrades: 385,
-      wins: 266,
-      losses: 119,
-      winRate: 69.1,
-      grossProfit: 5842.0,
-      grossLoss: 2190.0,
-      netPnl: 3652.0,
-      profitFactor: 4.25,
-      avgWin: 21.96,
-      avgLoss: 18.40,
-      maxDrawdown: 2186.0,
-      startingBalance: 500.0,
-      endingBalance: 4152.0,
-      returnPct: 730.4,
-    );
-  }
-
-  List<EquityPoint> _mockEquityCurve() {
-    final now = DateTime.now();
-    var bal = 500.0;
-    return List.generate(60, (i) {
-      bal += _rand.nextDouble() * 30 - 8;
-      if (bal < 400) bal = 400;
-      return EquityPoint(
-        time: now.subtract(Duration(days: 60 - i)),
-        balance: bal,
-      );
-    });
   }
 
   Future<void> init() async {
@@ -382,26 +205,16 @@ class BotProvider extends ChangeNotifier {
     await _loadConfig();
     notifyListeners();
 
-    if (_useMockData) {
-      _state = _mockState();
-      _logs = _generateMockLogs().map((l) => LogEntry.fromJson(l)).toList();
-      _subscription = _mockResponse('/api/device/subscription');
-      _performance = _mockPerformance();
-      _equityCurve = _mockEquityCurve();
-      _botRunning = true;
-    } else {
-      await _fetchAll();
-    }
+    await _fetchAll();
 
     _loading = false;
     notifyListeners();
 
     _timer?.cancel();
-    final interval = _useMockData
-        ? const Duration(seconds: 4)
-        : const Duration(seconds: 5);
-    _timer = Timer.periodic(interval, (_) {
-      _useMockData ? _tickMock() : _tickLive();
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _tickLive().catchError((e) {
+        debugPrint('_tickLive unhandled: $e');
+      });
     });
   }
 
@@ -524,9 +337,10 @@ class BotProvider extends ChangeNotifier {
   Future<void> _tickLive() async {
     await Future.wait([
       _fetchStateAndLogs(),
+      _fetchTrades(),
       _get('/api/device/subscription').then((d) => _subscription = d).catchError((e) { debugPrint('_tickLive subscription: $e'); return <String, dynamic>{}; }),
-      _get('/api/device/bot/performance').then((d) { _performance = Performance.fromJson(d); }).catchError((e) { debugPrint('_tickLive perf: $e'); }),
-      _fetchEquityCurve(),
+      _get('/api/device/bot/performance').then((d) { _performance = Performance.fromJson(d); }).catchError((e) { debugPrint('_tickLive perf: $e'); return; }),
+      _fetchEquityCurve().catchError((e) { debugPrint('_tickLive equity: $e'); }),
     ]);
 
     if (_botRunning && !isDemo && !hasNoAccounts && !canTrade && !_subscriptionBlocked) {
@@ -582,55 +396,6 @@ class BotProvider extends ChangeNotifier {
     }
   }
 
-  void _tickMock() {
-    final states = ['AWAITING_SIGNAL', 'BIAS_ANALYSIS', 'AWAITING_SIGNAL', 'IN_TRADE', 'AWAITING_SIGNAL'];
-    final biases = ['BULLISH', 'BULLISH', 'NEUTRAL', 'BULLISH', 'CONFLICT'];
-    final strengths = [0.78, 0.82, 0.15, 0.71, 0.45];
-    final idx = DateTime.now().second % states.length;
-
-    final pnlDelta = (_rand.nextDouble() - 0.45) * 0.8;
-    final newDailyPnl = (_state?.dailyPnl ?? 0) + pnlDelta;
-    final newBalance = (_state?.balance ?? 1250) + pnlDelta;
-
-    _state = _state?.copyWith(
-      status: idx == 4 ? 'stopped' : 'running',
-      state: states[idx],
-      bias: biases[idx],
-      biasStrength: strengths[idx] * 100,
-      bid: 2345.67 + _rand.nextDouble() * 2 - 1,
-      ask: 2345.89 + _rand.nextDouble() * 2 - 1,
-      balance: newBalance,
-      dailyPnl: newDailyPnl,
-    );
-
-    _botRunning = idx != 4;
-    _subscription['current_month_profit'] = newBalance - 1000;
-    _subscription['current_month_fee'] = (newBalance - 1000) * 0.15;
-    if ((newBalance - 1000) * 0.15 > 0) {
-      _subscription['current_month_fee'] = double.parse(
-          ((newBalance - 1000) * 0.15).toStringAsFixed(2));
-    }
-
-    final logMsgs = [
-      'Signal check: momentum=${(0.5 + _rand.nextDouble() * 0.3).toStringAsFixed(2)}',
-      'Bias updated: ${biases[idx]} (strength=${strengths[idx]})',
-      'Price: XAUUSD ${(2345 + _rand.nextDouble() * 3).toStringAsFixed(2)}',
-      'P&L update: \$${newDailyPnl.toStringAsFixed(2)} today',
-    ];
-    final t = DateTime.now();
-    _logs.add(LogEntry(
-      time: '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:${t.second.toString().padLeft(2, '0')}',
-      message: logMsgs[idx % logMsgs.length],
-      level: ['INFO', 'BIAS', 'INFO', 'TRADE'][idx % 4],
-    ));
-    if (_logs.length > 200) _logs.removeRange(0, _logs.length - 200);
-
-    _equityCurve.add(EquityPoint(time: DateTime.now(), balance: newBalance));
-    if (_equityCurve.length > 200) _equityCurve.removeAt(0);
-
-    notifyListeners();
-  }
-
   void addLog(String message, {String level = 'INFO'}) {
     _logs.add(LogEntry(
       time: DateTime.now().toIso8601String().substring(11, 19),
@@ -669,14 +434,6 @@ class BotProvider extends ChangeNotifier {
 
   Future<bool> startBot() async {
     addLog('Starting bot...');
-    if (_useMockData) {
-      _botRunning = true;
-      _state = _state?.copyWith(status: 'running', state: 'AWAITING_SIGNAL');
-      addLog('Bot started successfully', level: 'TRADE');
-      await _device.markBotStarted();
-      notifyListeners();
-      return true;
-    }
     try {
       final accts = await getAccounts();
       if (accts.isEmpty) {
@@ -692,14 +449,8 @@ class BotProvider extends ChangeNotifier {
         notifyListeners();
         return false;
       }
-      final url = baseUrl;
-      final r = await _client.post(
-        Uri.parse('$url/api/device/bot/start'),
-        headers: _device.headers,
-        body: jsonEncode({}),
-      );
-      final data = jsonDecode(r.body);
-      if (r.statusCode == 200) {
+      final result = await _startBotRequest();
+      if (result['status'] == 'started') {
         _botRunning = true;
         _subscriptionBlocked = false;
         addLog('Bot started successfully', level: 'TRADE');
@@ -707,32 +458,47 @@ class BotProvider extends ChangeNotifier {
         notifyListeners();
         return true;
       }
-      if (r.statusCode == 402) {
+      if (result['status'] == 'subscription_needed') {
         _subscriptionBlocked = true;
         addLog('Trial expired. Please subscribe to continue.', level: 'WARNING');
         requestSubscription();
         notifyListeners();
         return false;
       }
-      addLog('Failed to start: ${data['error'] ?? r.body}', level: 'ERROR');
+      addLog('Failed to start: ${result['error']}', level: 'ERROR');
       notifyListeners();
       return false;
     } catch (e) {
-      addLog('Failed to start bot: $e', level: 'ERROR');
+      addLog('Failed to start bot: ${_networkError(e)}', level: 'ERROR');
       notifyListeners();
       return false;
     }
   }
 
+  Future<Map<String, dynamic>> _startBotRequest({bool retried = false}) async {
+    final url = baseUrl;
+    try {
+      final r = await _client.post(
+        Uri.parse('$url/api/device/bot/start'),
+        headers: _device.headers,
+        body: jsonEncode({}),
+      ).timeout(_timeout);
+      final data = jsonDecode(r.body);
+      if (r.statusCode == 200) return {'status': 'started'};
+      if (r.statusCode == 402) return {'status': 'subscription_needed'};
+      return {'status': 'error', 'error': data['error'] ?? r.body};
+    } catch (e) {
+      debugPrint('_startBotRequest failed: $e');
+      if (!retried) {
+        await _resolveUrl();
+        return _startBotRequest(retried: true);
+      }
+      rethrow;
+    }
+  }
+
   Future<String?> stopBot() async {
     addLog('Stopping bot...', level: 'WARNING');
-    if (_useMockData) {
-      _botRunning = false;
-      _state = _state?.copyWith(status: 'stopped', state: 'IDLE');
-      addLog('Bot stopped successfully', level: 'WARNING');
-      notifyListeners();
-      return null;
-    }
     try {
       await _post('/api/device/bot/stop', {});
       _botRunning = false;
@@ -749,13 +515,6 @@ class BotProvider extends ChangeNotifier {
 
   Future<Map<String, dynamic>> closeAllPositions() async {
     addLog('Closing all positions...', level: 'WARNING');
-    if (_useMockData) {
-      await Future.delayed(const Duration(milliseconds: 500));
-      _state = _state?.copyWith(state: 'IDLE', openPositions: 0);
-      addLog('All positions closed successfully (0 remaining)', level: 'TRADE');
-      notifyListeners();
-      return {'message': 'All positions closed', 'closed_count': 0};
-    }
     try {
       final result = await _post('/api/device/trades/close_all', {});
       final count = result['closed_count'] ?? 0;
@@ -770,9 +529,7 @@ class BotProvider extends ChangeNotifier {
   }
 
   Future<List<Map<String, dynamic>>> getAccounts() async {
-    final data = _useMockData
-        ? _mockResponse('/api/device/accounts')
-        : await _get('/api/device/accounts');
+    final data = await _get('/api/device/accounts');
     return List<Map<String, dynamic>>.from(data['accounts'] ?? []);
   }
 
@@ -782,31 +539,18 @@ class BotProvider extends ChangeNotifier {
     if (!_backendReady) {
       await _resolveUrl();
     }
-    if (!_useMockData) {
-      try {
-        final url = _activeUrl ?? _baseUrls.first;
-        addLog('Connecting to $url...');
-        final r = await _client.post(
-          Uri.parse('$url/api/device/accounts'),
-          headers: _device.headers,
-          body: jsonEncode({
-            'api_key': apiKey,
-            'identifier': identifier,
-            'password': password,
-            'demo': demo,
-          }),
-        ).timeout(const Duration(seconds: 15));
-        final data = jsonDecode(r.body);
-        if (r.statusCode != 200) {
-          final err = data['error'] ?? r.body;
-          addLog('Failed to save account: $err', level: 'ERROR');
-          return err.toString();
-        }
-      } catch (e) {
-        final clean = e.toString().replaceAll(RegExp(r'^Exception: POST [^:]+: '), '');
-        addLog('Failed to save account: $clean', level: 'ERROR');
-        return clean;
-      }
+    try {
+      addLog('Connecting to $baseUrl...');
+      await _post('/api/device/accounts', {
+        'api_key': apiKey,
+        'identifier': identifier,
+        'password': password,
+        'demo': demo,
+      });
+    } catch (e) {
+      final clean = _networkError(e);
+      addLog('Failed to save account: $clean', level: 'ERROR');
+      return clean;
     }
     await _device.saveCredentialsTimestamp();
     addLog('Account saved: $identifier', level: 'TRADE');
@@ -814,34 +558,21 @@ class BotProvider extends ChangeNotifier {
   }
 
   Future<bool> removeAccount(String identifier) async {
-    if (_useMockData) {
+    try {
+      await _delete('/api/device/accounts/$identifier');
       addLog('Removed: $identifier', level: 'WARNING');
       return true;
-    }
-    try {
-      final r = await _client.delete(
-        Uri.parse('$baseUrl/api/device/accounts/$identifier'),
-        headers: _device.headers,
-      );
-      if (r.statusCode == 200) {
-        addLog('Removed: $identifier', level: 'WARNING');
-        return true;
-      }
-      addLog('Failed to remove account: ${r.statusCode}', level: 'ERROR');
-      return false;
     } catch (e) {
-      addLog('Failed to remove account: $e', level: 'ERROR');
+      addLog('Failed to remove account: ${_networkError(e)}', level: 'ERROR');
       return false;
     }
   }
 
   Future<Map<String, dynamic>?> initializePayment(String email, {List<String>? channels}) async {
-    final data = _useMockData
-        ? _mockPostResponse('/api/payment/initialize', {})
-        : await _post('/api/payment/initialize', {
-            'email': email,
-            if (channels != null) 'channels': channels,
-          });
+    final data = await _post('/api/payment/initialize', {
+      'email': email,
+      if (channels != null) 'channels': channels,
+    });
     if (data['access_code'] != null) {
       addLog('Payment link generated');
     }
@@ -849,7 +580,6 @@ class BotProvider extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>?> initMaxelpayPayment(double amount) async {
-    if (_useMockData) return {'payment_url': 'https://checkout.maxelpay.com/mock'};
     try {
       return await _post('/api/payment/maxelpay/init', {
         'amount': amount,
@@ -861,9 +591,7 @@ class BotProvider extends ChangeNotifier {
   }
 
   Future<bool> verifyPayment(String reference) async {
-    if (!_useMockData) {
-      await _post('/api/payment/verify', {'reference': reference});
-    }
+    await _post('/api/payment/verify', {'reference': reference});
     addLog('Payment verified', level: 'INFO');
     _subscription['unpaid_fees'] = 0.0;
     _subscription['subscribed'] = true;
@@ -907,26 +635,4 @@ class BotProvider extends ChangeNotifier {
     _client.close();
     super.dispose();
   }
-}
-
-class MockPerformance extends Performance {
-  MockPerformance({
-    required super.totalTrades,
-    required super.wins,
-    required super.losses,
-    required super.winRate,
-    required super.grossProfit,
-    required super.grossLoss,
-    required super.netPnl,
-    required super.profitFactor,
-    required super.avgWin,
-    required super.avgLoss,
-    required super.maxDrawdown,
-    required super.startingBalance,
-    required super.endingBalance,
-    required super.returnPct,
-  }) : super(
-          monthly: [],
-          daily: [],
-        );
 }
