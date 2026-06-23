@@ -202,7 +202,16 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         err_msg = temp.last_error()[1] if not ok else ""
         temp.shutdown()
         if not ok:
-            logger.warning("Capital.com auth failed for %s: %s", ident, err_msg)
+            logger.warning("Capital.com auth failed for %s with demo=%s: %s", ident, data.demo, err_msg)
+            # Diagnostic: try the opposite mode
+            temp2 = CapitalClient()
+            ok2 = temp2.initialize(api_key=data.api_key, identifier=ident, password=data.password, demo=not data.demo)
+            err2 = temp2.last_error()[1] if not ok2 else ""
+            temp2.shutdown()
+            if ok2:
+                logger.warning("DIAG: %s works with demo=%s (opposite of what user selected)", ident, not data.demo)
+            else:
+                logger.warning("DIAG: %s also fails with demo=%s: %s", ident, not data.demo, err2)
             return JSONResponse(status_code=401, content={
                 "error": f"Broker authentication failed: {err_msg}",
                 "action_required": "check_credentials",
