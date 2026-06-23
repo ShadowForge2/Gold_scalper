@@ -27,6 +27,9 @@ import config as cfg
 
 
 
+import logging
+logger = logging.getLogger("GoldScalper")
+
 class AddAccountRequest(BaseModel):
     api_key: str
     identifier: str
@@ -45,9 +48,10 @@ class PaystackInitRequest(BaseModel):
 
 
 def sanitize_account(acct: Dict) -> Dict:
-    pw = acct.get("password", "")
-    masked = pw[:2] + "****" + pw[-1:] if len(pw) > 5 else "****"
-    return {k: v if k != "password" else masked for k, v in acct.items()}
+    clean = dict(acct)
+    clean["api_key"] = "****"
+    clean["password"] = "****"
+    return clean
 
 
 def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> FastAPI:
@@ -181,6 +185,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         did = device_id or "unknown"
         ident = data.identifier
         dev = await get_device(did)
+        existing = None
         if dev:
             existing = next((a for a in dev.get("accounts", []) if a["identifier"] == ident), None)
             if existing:
@@ -197,6 +202,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         err_msg = temp.last_error()[1] if not ok else ""
         temp.shutdown()
         if not ok:
+            logger.warning("Capital.com auth failed for %s: %s", ident, err_msg)
             return JSONResponse(status_code=401, content={
                 "error": f"Broker authentication failed: {err_msg}",
                 "action_required": "check_credentials",
