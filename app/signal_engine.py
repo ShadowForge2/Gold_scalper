@@ -151,7 +151,11 @@ class SignalEngine:
                       direction: str,
                       entry_score: float = None,
                       exit_threshold: float = 0.50,
-                      exit_mode: int = 1) -> Tuple[bool, float, str]:
+                      exit_mode: int = 1,
+                      trail_sl_mult: float = None,
+                      trail_trigger_mult: float = None,
+                      trail_retrace: float = None,
+                      trail_to_breakeven: bool = True) -> Tuple[bool, float, str]:
 
         if m1_data is None or len(m1_data) < 5:
             return False, 0.0, "insufficient_data"
@@ -159,7 +163,9 @@ class SignalEngine:
         if exit_mode == 4:
             return self._exit_mode_breakout(m1_data, entry_price, direction, entry_score)
         if exit_mode == 1:
-            return self._exit_mode_trail_sl(m1_data, entry_price, direction, exit_threshold)
+            return self._exit_mode_trail_sl(m1_data, entry_price, direction, exit_threshold,
+                                            trail_sl_mult, trail_trigger_mult, trail_retrace,
+                                            trail_to_breakeven)
         elif exit_mode == 2:
             return self._exit_mode_fixed_tp_sl(m1_data, entry_price, direction, exit_threshold)
         elif exit_mode == 3:
@@ -210,19 +216,22 @@ class SignalEngine:
             return True, round(exit_score, 3), "momentum_decay"
         return False, round(exit_score, 3), "holding"
 
-    def _exit_mode_trail_sl(self, df, entry, direction, exit_threshold):
+    def _exit_mode_trail_sl(self, df, entry, direction, exit_threshold,
+                            sl_mult: float = None, trigger_mult: float = None,
+                            retrace_pct: float = None,
+                            trail_to_breakeven: bool = True):
         momentum = self._compute_momentum(df)
         px = df["close"].iloc[-1]
         diff = px - entry if direction == "BUY" else entry - px
 
         atr = self._compute_atr(df, 14)
-        stop_loss = -(max(atr * 0.5, 0.15))
-        trail_trigger = max(atr * 1.0, 0.20)
-        trail_retrace_pct = 0.50
+        sl_m = sl_mult if sl_mult is not None else 0.5
+        tr_m = trigger_mult if trigger_mult is not None else 0.7
+        retrace = retrace_pct if retrace_pct is not None else 0.30
+        trail_trigger = max(atr * tr_m, 0.20)
+        trail_retrace_pct = retrace
 
-        if diff <= stop_loss:
-            return True, 1.0, "stop_loss"
-
+        triggered = False
         if len(df) >= 5:
             if direction == "BUY":
                 peaks = df["high"].values[-5:]
@@ -230,10 +239,20 @@ class SignalEngine:
             else:
                 troughs = df["low"].values[-5:]
                 peak = float(np.max(entry - troughs))
-            if peak >= trail_trigger:
-                pullback = peak - max(0, diff)
-                if pullback / peak > trail_retrace_pct:
-                    return True, 0.85, "trail_stop"
+            triggered = peak >= trail_trigger
+
+        stop_loss = -(max(atr * sl_m, 0.15))
+        if trail_to_breakeven and triggered:
+            stop_loss = max(stop_loss, 0.0)
+
+        if diff <= stop_loss:
+            reason = "breakeven" if (trail_to_breakeven and triggered and stop_loss >= 0) else "stop_loss"
+            return True, 1.0, reason
+
+        if triggered:
+            pullback = peak - max(0, diff)
+            if pullback / peak > trail_retrace_pct:
+                return True, 0.85, "trail_stop"
 
         if len(df) >= 4:
             last_dir = self._candle_direction(df)
