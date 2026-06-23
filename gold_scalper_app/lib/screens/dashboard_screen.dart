@@ -55,7 +55,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
 
         return RefreshIndicator(
-          onRefresh: () async => bp.init(),
+          onRefresh: () async => bp.refresh(),
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [

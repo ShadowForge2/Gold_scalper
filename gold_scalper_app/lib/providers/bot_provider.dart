@@ -218,6 +218,10 @@ class BotProvider extends ChangeNotifier {
     });
   }
 
+  Future<void> refresh() async {
+    await _fetchAll();
+  }
+
   Future<void> _fetchAll() async {
     await Future.wait([
       _fetchState(),
