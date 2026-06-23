@@ -48,6 +48,7 @@ class CapitalClient:
         self._last_order_error = ""
         self._request_times: deque = deque(maxlen=20)
         self._max_requests_per_sec = 8
+        self._timeout = 15
 
     def initialize(self, api_key: Optional[str] = None,
                    identifier: Optional[str] = None,
@@ -68,7 +69,12 @@ class CapitalClient:
         headers = {'X-CAP-API-KEY': self.api_key, 'Content-Type': 'application/json'}
         body = {'identifier': self.identifier, 'password': self.password, 'encryptedPassword': False}
         try:
-            r = self._session.post(f"{self.base_url}/api/v1/session", headers=headers, json=body)
+            r = self._session.post(
+                f"{self.base_url}/api/v1/session",
+                headers=headers,
+                json=body,
+                timeout=self._timeout,
+            )
             if r.ok:
                 self.cst = r.headers.get("CST")
                 self.security_token = r.headers.get("X-SECURITY-TOKEN")
@@ -92,7 +98,11 @@ class CapitalClient:
             return False
         if time.time() - self._last_activity > 280:
             try:
-                r = self._session.get(f"{self.base_url}/api/v1/ping", headers=self._auth_headers())
+                r = self._session.get(
+                    f"{self.base_url}/api/v1/ping",
+                    headers=self._auth_headers(),
+                    timeout=self._timeout,
+                )
                 if not r.ok:
                     self._login()
             except Exception:
@@ -112,6 +122,7 @@ class CapitalClient:
 
     def _request(self, method: str, url: str, **kwargs) -> Optional[requests.Response]:
         self._throttle()
+        kwargs.setdefault("timeout", self._timeout)
         for attempt in range(2):
             try:
                 r = self._session.request(method, url, **kwargs)
@@ -140,7 +151,11 @@ class CapitalClient:
     def shutdown(self):
         if self.connected:
             try:
-                self._session.delete(f"{self.base_url}/api/v1/session", headers=self._auth_headers())
+                self._session.delete(
+                    f"{self.base_url}/api/v1/session",
+                    headers=self._auth_headers(),
+                    timeout=self._timeout,
+                )
             except Exception:
                 pass
         self.connected = False
@@ -520,14 +535,11 @@ class CapitalClient:
         if result is None:
             return None
         deal_ref = result.get("dealReference", "")
-        # Poll up to 12s to confirm position
-        expected_prefix = str(magic) + ":"
+        expected_prefix = str(magic)
         for _ in range(24):
             time.sleep(0.5)
             fresh = self.get_positions()
             for p in fresh:
-                if p.get("ticket") == deal_ref:
-                    return p.get("ticket")
                 if p.get("comment", "").startswith(expected_prefix):
                     return p.get("ticket")
         self._last_order_error = "Order submitted but position not confirmed"
