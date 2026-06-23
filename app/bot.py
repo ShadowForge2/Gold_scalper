@@ -65,6 +65,7 @@ class Bot:
 
     async def initialize(self) -> bool:
         self.logger.info(f"Initializing {self.symbol} scalping bot...")
+        self.logger.info(f"Config: EXIT_THRESHOLD_TIGHT={cfg.EXIT_THRESHOLD_TIGHT} LOT_MULTIPLIER={cfg.LOT_MULTIPLIER} ENTRY_THRESHOLD={cfg.SIGNAL_ENTRY_THRESHOLD}")
 
         if cfg.BROKER == "CAPITAL":
             self.logger.info("Broker: Capital.com (REST API)")
