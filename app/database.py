@@ -74,9 +74,22 @@ CREATE TABLE IF NOT EXISTS processed_payments (
 )
 """
 
-CREATE_NOTIFICATIONS = """
+CREATE_NOTIFICATIONS_PG = """
 CREATE TABLE IF NOT EXISTS notifications (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT PRIMARY KEY,
+    identifier TEXT NOT NULL,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    data TEXT,
+    is_read INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL
+)
+"""
+
+CREATE_NOTIFICATIONS_SQLITE = """
+CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
     identifier TEXT NOT NULL,
     type TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -101,14 +114,16 @@ async def _try_pg() -> bool:
 async def _try_sqlite() -> bool:
     try:
         await database.connect()
-        for sql in ALL_TABLES:
+        for sql in ALL_TABLES_SQLITE:
             await database.execute(sql)
         return True
     except Exception:
         return False
 
 
-ALL_TABLES = [CREATE_DEVICES, CREATE_ACCOUNTS, CREATE_SUBSCRIPTIONS, CREATE_PERIODS, CREATE_PENDING_ORDERS, CREATE_PROCESSED_PAYMENTS, CREATE_NOTIFICATIONS]
+ALL_TABLES = [CREATE_DEVICES, CREATE_ACCOUNTS, CREATE_SUBSCRIPTIONS, CREATE_PERIODS, CREATE_PENDING_ORDERS, CREATE_PROCESSED_PAYMENTS]
+ALL_TABLES_SQLITE = [*ALL_TABLES, CREATE_NOTIFICATIONS_SQLITE]
+ALL_TABLES_PG = [*ALL_TABLES, CREATE_NOTIFICATIONS_PG]
 
 
 async def init_db():
@@ -116,7 +131,7 @@ async def init_db():
     if _env_url:
         ok = await _try_pg()
         if ok:
-            for sql in ALL_TABLES:
+            for sql in ALL_TABLES_PG:
                 await database.execute(sql)
             return
     database = Database(SQLITE_URL)

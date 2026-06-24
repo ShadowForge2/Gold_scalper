@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 class NotificationItem {
-  final int id;
+  final String id;
   final String type;
   final String title;
   final String message;
@@ -30,7 +30,7 @@ class NotificationItem {
     }
 
     return NotificationItem(
-      id: json['id'] is int ? json['id'] : int.tryParse(json['id'].toString()) ?? 0,
+      id: json['id']?.toString() ?? '',
       type: json['type'] ?? '',
       title: json['title'] ?? '',
       message: json['message'] ?? '',

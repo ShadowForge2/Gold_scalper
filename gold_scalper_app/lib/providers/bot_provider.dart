@@ -356,7 +356,7 @@ class BotProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> markNotificationsRead({int? id}) async {
+  Future<void> markNotificationsRead({String? id}) async {
     try {
       await _post('/api/device/notifications/mark-read', {
         if (id != null) 'id': id,

@@ -593,10 +593,12 @@ async def process_maxelpay_callback(order_id: str, status: str, amount: float) -
 # ── Notifications ────────────────────────────────────────────────
 
 async def create_notification(identifier: str, ntype: str, title: str, message: str, data: Optional[Dict] = None):
+    nid = uuid.uuid4().hex
     await db_mod.database.execute(
-        """INSERT INTO notifications (identifier, type, title, message, data, created_at)
-           VALUES (:ident, :type, :title, :msg, :data, :ca)""",
+        """INSERT INTO notifications (id, identifier, type, title, message, data, created_at)
+           VALUES (:nid, :ident, :type, :title, :msg, :data, :ca)""",
         {
+            "nid": nid,
             "ident": identifier,
             "type": ntype,
             "title": title,
@@ -617,7 +619,7 @@ async def get_notifications(identifier: str, limit: int = 50) -> List[Dict]:
     return [dict(r) for r in rows]
 
 
-async def mark_notification_read(notification_id: int):
+async def mark_notification_read(notification_id: str):
     await db_mod.database.execute(
         "UPDATE notifications SET is_read = 1 WHERE id = :id",
         {"id": notification_id},
