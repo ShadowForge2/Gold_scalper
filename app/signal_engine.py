@@ -56,6 +56,8 @@ class SignalEngine:
         direction = "BUY" if bias_dir == "BULLISH" else "SELL"
         closes = m1_data["close"].values
         range_size = h1_high - h1_low
+        atr = self._compute_atr(m1_data, cfg.ATR_PERIOD)
+        atr_entry_threshold = round(atr * cfg.ATR_MULTIPLIER / range_size, 4) if range_size > 0 and atr > 0 else None
 
         if direction == "BUY":
             breakout_dist = current_price - h1_high
@@ -138,6 +140,7 @@ class SignalEngine:
             "conviction": round(score, 3),
             "breakout_dist": round(breakout_dist, 2),
             "range_size": round(range_size, 2),
+            "atr_entry_threshold": atr_entry_threshold,
             "entry_price": current_price,
             "timestamp": datetime.now().isoformat(),
         }

@@ -369,7 +369,9 @@ class Bot:
             )
 
         entry_thresh = getattr(self, '_signal_entry_threshold_override', cfg.SIGNAL_ENTRY_THRESHOLD)
-        if signal and signal["score"] >= entry_thresh:
+        atr_thresh = signal.get("atr_entry_threshold") if signal else None
+        effective_thresh = atr_thresh if atr_thresh is not None else entry_thresh
+        if signal and signal["score"] >= effective_thresh:
             can_enter, reason = self.risk_manager.can_enter_trade(
                 symbol_info, datetime.now()
             )
@@ -404,6 +406,8 @@ class Bot:
                     "range_size": signal.get("range_size", 0),
                     "score": signal["score"],
                     "threshold": entry_thresh,
+                    "atr_entry_threshold": signal.get("atr_entry_threshold"),
+                    "atr_multiplier": cfg.ATR_MULTIPLIER,
                 },
             )
 
