@@ -63,6 +63,16 @@ class Bot:
         self._last_sub_check = 0.0
 
 
+    async def _notify(self, ntype: str, title: str, message: str, data: Optional[Dict] = None):
+        try:
+            from app.subscription import create_notification
+            await create_notification(
+                getattr(self, '_account_id', None) or "unknown",
+                ntype, title, message, data,
+            )
+        except Exception:
+            pass
+
     async def initialize(self) -> bool:
         self.logger.info(f"Initializing {self.symbol} scalping bot...")
         self.logger.info(f"Config: EXIT_THRESHOLD_TIGHT={cfg.EXIT_THRESHOLD_TIGHT} LOT_MULTIPLIER={cfg.LOT_MULTIPLIER} ENTRY_THRESHOLD={cfg.SIGNAL_ENTRY_THRESHOLD}")
@@ -457,6 +467,12 @@ class Bot:
             for pos_data in self.trade_executor.close_all_bot_positions():
                 self.position_manager.note_closed(pos_data)
             self.risk_manager.record_exit(pnl_data["event_pnl"])
+            await self._notify(
+                "trade_close",
+                "Trade Closed (Event Loss)",
+                f"PnL: ${pnl_data['event_pnl']:.2f} | {self.position_manager.open_count} position(s)",
+                {"pnl": pnl_data["event_pnl"], "reason": "event_loss"},
+            )
             self._enter_cooldown()
             return
 
@@ -500,6 +516,12 @@ class Bot:
             for pos_data in self.trade_executor.close_all_bot_positions():
                 self.position_manager.note_closed(pos_data)
             self.risk_manager.record_exit(pnl_data["event_pnl"])
+            await self._notify(
+                "trade_close",
+                "Trade Closed",
+                f"PnL: ${pnl_data['event_pnl']:.2f} | {reason}",
+                {"pnl": pnl_data["event_pnl"], "reason": reason},
+            )
             self._enter_cooldown()
             return
 
@@ -659,6 +681,12 @@ class Bot:
                 f"Entered {direction} mode with "
                 f"{self.position_manager.open_count} position(s)"
             )
+            await self._notify(
+                "trade_open",
+                "Trade Opened",
+                f"{direction} {lot} {self.symbol} @ ${current_price:.2f}",
+                {"direction": direction, "lot": lot, "price": current_price, "symbol": self.symbol},
+            )
         else:
             self.state = self.STATES["IDLE"]
 
@@ -748,6 +776,12 @@ class Bot:
         for pos_data in closed:
             self.position_manager.note_closed(pos_data)
         self.position_manager.refresh()
+        await self._notify(
+            "trade_close",
+            "Emergency Close",
+            f"Closed {len(closed)} position(s) manually",
+            {"count": len(closed), "reason": "emergency"},
+        )
         self.state = self.STATES["COOLDOWN"]
         self._enter_cooldown()
         return len(closed)

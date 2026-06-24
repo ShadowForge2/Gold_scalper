@@ -7,6 +7,7 @@ import '../models/bot_state.dart';
 import '../models/trade.dart';
 import '../models/performance.dart';
 import '../models/config.dart';
+import '../models/notification_item.dart';
 import '../widgets/terminal_log.dart';
 import 'device_provider.dart';
 
@@ -35,6 +36,9 @@ class BotProvider extends ChangeNotifier {
   bool _highlightCredentials = false;
   bool _subscriptionBlocked = false;
   bool _navigateToSubscription = false;
+
+  List<NotificationItem> _notifications = [];
+  int _unreadCount = 0;
 
   static const _configKey = 'saved_bot_config';
 
@@ -77,6 +81,8 @@ class BotProvider extends ChangeNotifier {
   bool get hasNoAccounts => _subscription['error'] != null || _subscription['is_new'] == true;
   bool get subscriptionBlocked => _subscriptionBlocked;
   bool get navigateToSubscription => _navigateToSubscription;
+  List<NotificationItem> get notifications => _notifications;
+  int get unreadCount => _unreadCount;
 
   Future<void> _resolveUrl() async {
     for (final url in _baseUrls) {
@@ -231,6 +237,7 @@ class BotProvider extends ChangeNotifier {
       _fetchPerformance(),
       _fetchTrades(),
       _fetchEquityCurve(),
+      _fetchNotifications(),
     ]);
   }
 
@@ -338,6 +345,55 @@ class BotProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> _fetchNotifications() async {
+    try {
+      final data = await _get('/api/device/notifications');
+      final list = (data['notifications'] as List? ?? []);
+      _notifications = list.map((n) => NotificationItem.fromJson(n)).toList();
+      _unreadCount = (data['unread_count'] ?? 0) as int;
+    } catch (e) {
+      debugPrint('_fetchNotifications failed: $e');
+    }
+  }
+
+  Future<void> markNotificationsRead({int? id}) async {
+    try {
+      await _post('/api/device/notifications/mark-read', {
+        if (id != null) 'id': id,
+      });
+      if (id != null) {
+        final idx = _notifications.indexWhere((n) => n.id == id);
+        if (idx >= 0) {
+          final old = _notifications[idx];
+          _notifications[idx] = NotificationItem(
+            id: old.id,
+            type: old.type,
+            title: old.title,
+            message: old.message,
+            data: old.data,
+            isRead: true,
+            createdAt: old.createdAt,
+          );
+          if (_unreadCount > 0) _unreadCount--;
+        }
+      } else {
+        _notifications = _notifications.map((n) => NotificationItem(
+          id: n.id,
+          type: n.type,
+          title: n.title,
+          message: n.message,
+          data: n.data,
+          isRead: true,
+          createdAt: n.createdAt,
+        )).toList();
+        _unreadCount = 0;
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint('markNotificationsRead failed: $e');
+    }
+  }
+
   Future<void> _tickLive() async {
     await Future.wait([
       _fetchStateAndLogs(),
@@ -345,6 +401,7 @@ class BotProvider extends ChangeNotifier {
       _get('/api/device/subscription').then((d) => _subscription = d).catchError((e) { debugPrint('_tickLive subscription: $e'); return <String, dynamic>{}; }),
       _get('/api/device/bot/performance').then((d) { _performance = Performance.fromJson(d); }).catchError((e) { debugPrint('_tickLive perf: $e'); return; }),
       _fetchEquityCurve().catchError((e) { debugPrint('_tickLive equity: $e'); }),
+      _fetchNotifications().catchError((e) { debugPrint('_tickLive notifications: $e'); }),
     ]);
 
     if (_botRunning && !isDemo && !hasNoAccounts && !canTrade && !_subscriptionBlocked) {

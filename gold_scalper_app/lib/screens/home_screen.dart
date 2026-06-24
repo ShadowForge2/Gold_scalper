@@ -5,6 +5,7 @@ import '../providers/device_provider.dart';
 import '../widgets/fade_in_scale.dart';
 import '../widgets/onboarding_tutorial.dart';
 import '../widgets/ui/haptic.dart';
+import '../widgets/notification_bell.dart';
 import '../theme.dart';
 import 'dashboard_screen.dart';
 import 'live_feed_screen.dart';
@@ -85,6 +86,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: kDarkBg,
       appBar: AppBar(
+        leading: const NotificationBell(),
         title: AnimatedSwitcher(
           duration: const Duration(milliseconds: 200),
           child: Text(

@@ -21,6 +21,9 @@ from app.subscription import (
     create_maxelpay_payment, process_maxelpay_callback,
     verify_maxelpay_webhook,
     _maxelpay_register_order, _maxelpay_get_identifier,
+    get_notifications, get_unread_notification_count,
+    mark_notification_read, mark_all_notifications_read,
+    create_notification,
 )
 from app.capital_client import CapitalClient
 import config as cfg
@@ -901,5 +904,35 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                 if ident:
                     bot_pool.add_log(ident, f"MaxelPay payment of ${amount:.2f} verified. Subscription active.", "INFO")
         return {"ok": True}
+
+    # ── Notifications ──────────────────────────────────────────────
+    @app.get("/api/device/notifications")
+    async def device_notifications(device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
+        did = device_id or "unknown"
+        dev = await get_device(did)
+        if not dev or not dev.get("accounts"):
+            return {"notifications": [], "unread_count": 0}
+        ident = dev["accounts"][0]["identifier"]
+        notifs = await get_notifications(ident)
+        unread = await get_unread_notification_count(ident)
+        return {"notifications": notifs, "unread_count": unread}
+
+    @app.post("/api/device/notifications/mark-read")
+    async def device_notifications_mark_read(data: dict, device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
+        did = device_id or "unknown"
+        dev = await get_device(did)
+        if not dev or not dev.get("accounts"):
+            return {"success": False}
+        ident = dev["accounts"][0]["identifier"]
+        nid = data.get("id")
+        if nid:
+            await mark_notification_read(nid)
+        else:
+            await mark_all_notifications_read(ident)
+        return {"success": True}
 
     return app

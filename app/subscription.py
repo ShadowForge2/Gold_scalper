@@ -5,7 +5,7 @@ import os
 import time
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 
 import requests as http_requests
 
@@ -588,3 +588,52 @@ async def process_maxelpay_callback(order_id: str, status: str, amount: float) -
     await _save_sub_record(record)
     await _mark_payment_processed(ref_key, ident, "maxelpay", amount)
     return True
+
+
+# ── Notifications ────────────────────────────────────────────────
+
+async def create_notification(identifier: str, ntype: str, title: str, message: str, data: Optional[Dict] = None):
+    await db_mod.database.execute(
+        """INSERT INTO notifications (identifier, type, title, message, data, created_at)
+           VALUES (:ident, :type, :title, :msg, :data, :ca)""",
+        {
+            "ident": identifier,
+            "type": ntype,
+            "title": title,
+            "msg": message,
+            "data": json.dumps(data) if data else None,
+            "ca": datetime.utcnow().isoformat(),
+        }
+    )
+
+
+async def get_notifications(identifier: str, limit: int = 50) -> List[Dict]:
+    rows = await db_mod.database.fetch_all(
+        """SELECT id, type, title, message, data, is_read, created_at
+           FROM notifications WHERE identifier = :ident
+           ORDER BY created_at DESC LIMIT :lim""",
+        {"ident": identifier, "lim": limit},
+    )
+    return [dict(r) for r in rows]
+
+
+async def mark_notification_read(notification_id: int):
+    await db_mod.database.execute(
+        "UPDATE notifications SET is_read = 1 WHERE id = :id",
+        {"id": notification_id},
+    )
+
+
+async def mark_all_notifications_read(identifier: str):
+    await db_mod.database.execute(
+        "UPDATE notifications SET is_read = 1 WHERE identifier = :ident AND is_read = 0",
+        {"ident": identifier},
+    )
+
+
+async def get_unread_notification_count(identifier: str) -> int:
+    row = await db_mod.database.fetch_one(
+        "SELECT COUNT(*) as cnt FROM notifications WHERE identifier = :ident AND is_read = 0",
+        {"ident": identifier},
+    )
+    return row["cnt"] if row else 0
