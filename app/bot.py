@@ -476,6 +476,17 @@ class Bot:
             return
 
         entry_score = self._current_signal.get("score") if self._current_signal else None
+        is_recovery = self._current_signal is None
+        if is_recovery:
+            if not hasattr(self, '_recovery_ticks'):
+                self._recovery_ticks = 0
+                self.logger.info("Recovery: warming up M1 window before exit checks")
+            self._recovery_ticks += 1
+            if self._recovery_ticks < 5:
+                return
+        else:
+            self._recovery_ticks = 0
+
         exit_thresh = getattr(self, '_exit_threshold_override', cfg.EXIT_THRESHOLD_TIGHT)
         should_exit, exit_score, reason = self.signal_engine.evaluate_exit(
             m1_data, entry_price, direction, entry_score,
