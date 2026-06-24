@@ -1,9 +1,9 @@
-# Gold Scalper — Multi-TF H1 Breakout System
+# Gold Scalper — Multi-TF H1 Breakout + Peak Harvest Exit
 
-> **Strategy**: H1 range breakout + M1 momentum entry with ATR-based exit.  
+> **Strategy**: H1 range breakout + M1 momentum entry with peak-harvest exit (no hard SL).  
 > **Broker**: Capital.com REST API (primary), MT5 fallback.  
-> **Backtest validation**: 2023 ($20→$64k), 2024 ($20→$79k), 2025 ($20→$30k), 2026 OOS ($20→$81).  
-> **Live risk**: Aggressive scalper. Lot multiplier amplifies both wins and losses. Start small.
+> **Exit philosophy**: No stop loss. Let trades breathe. Trail only after significant profit.  
+>   Close when directional confidence breaks down. Capture peak profit per event.
 
 ---
 
@@ -16,7 +16,8 @@ Capital.com REST API / MT5
     │
     └── M1 candles ──→ SignalEngine ──→ Entry (H1 breakout + momentum)
                                           │
-                                          └──→ Exit (ATR trail / anti-candle / momentum decay)
+                                          └──→ Exit (peak harvest — no SL, late trail,
+                                                    directional confidence decay)
                                                     │
                                                     └── Position closed, cooldown, re-enter
 ```
@@ -27,13 +28,12 @@ Capital.com REST API / MT5
 | `.env` | All credentials & config |
 | `config.py` | Env loader, all parameters |
 | `main.py` | Entry point (uvicorn FastAPI) |
-| `backtest.py` | Historical simulation (MT5/CAPITAL/YAHOO) |
-| `optimize.py` | Parameter sweeper |
+| `backtest.py` | Historical simulation (MT5/CAPITAL/YAHOO/DUKASCOPY) |
 | `app/capital_client.py` | Capital.com REST API client |
 | `app/mt5_client.py` | MT5 connection wrapper |
 | `app/bot.py` | Main loop: bias → signal → entry → exit |
 | `app/bias_engine.py` | H1 trend detection |
-| `app/signal_engine.py` | Entry/exit signal generation |
+| `app/signal_engine.py` | Entry/exit signal generation (exit_mode=5 default) |
 | `app/risk_manager.py` | EquityScaler + RiskManager |
 | `app/trade_executor.py` | Order execution (delegates to client) |
 | `app/position_manager.py` | Position tracking & PnL |
@@ -47,21 +47,18 @@ Capital.com REST API / MT5
 ### Input
 - 96 H1 candles (last 4 days)
 
-### Logic: Swing Point Detection + Majority Vote
+### Logic: EMA Cross + Swing Point Majority Vote
 
-1. **Swing points**: HIGH where price ≥ both sides (`lookback=5`), LOW where price ≤ both sides
-2. **Majority vote**:
-   ```
-   h_up = count of higher highs in last swings
-   h_dn = count of lower highs
-   l_up = count of higher lows
-   l_dn = count of lower lows
-   score = (h_up - h_dn) + (l_up - l_dn) / total
-   BULLISH if score >= +0.30
-   BEARISH if score <= -0.30
-   ```
-3. **Strength**: `0.3` if non-neutral, `0.0` otherwise
-4. **Tradeable**: bias must be BULLISH/BEARISH with strength >= 0.3
+1. **EMA trend**: Fast EMA(20) vs Slow EMA(50) slope → ±1 vote
+2. **Price vs Slow EMA**: Close above/below EMA(50) with slope → ±0.5 vote
+3. **Swing points** (lookback=5): Count higher highs/lows vs lower highs/lows → normalized swing score added
+
+**Decision**:
+- ≥ 0.75 → BULLISH
+- ≤ -0.75 → BEARISH
+- else → NEUTRAL
+
+**Strength** = `abs(votes) / 1.5`, capped at 1.0. Tradeable when strength ≥ 0.30.
 
 ---
 
@@ -70,65 +67,100 @@ Capital.com REST API / MT5
 ### 3a. Entry — `evaluate(m1_data, bias, price, h1_high, h1_low)`
 
 **Conditions** (ALL must pass):
-1. Bias is BULLISH or BEARISH with strength >= 0.30
-2. H1 high/low provided and valid (h1_high > h1_low)
-3. **Breakout condition**:
-   - BUY: price > h1_high (trading above H1 range)
-   - SELL: price < h1_low (trading below H1 range)
-4. **Recent range test**: at least 1 of the last 2-5 M1 candles was within the H1 range (confirms breakout just occurred)
-5. **Minimum distance**: breakout >= 2% of H1 range
+1. Bias is BULLISH or BEARISH with strength ≥ 0.30
+2. H1 range valid (h1_high > h1_low)
+3. **Breakout**: BUY if price > h1_high, SELL if price < h1_low
+4. **Recent range test** (optional): At least 1 of last 2-5 M1 candles was inside H1 range
+5. **Minimum breakout distance**: `breakout_dist / range_size ≥ MIN_BREAKOUT_SCORE` (0.02)
 
-**Score** = min(breakout_distance / h1_range, 1.0), entry if >= 0.70
+**Score** = `min(breakout_dist / h1_range, 1.0)`, entry if ≥ SIGNAL_ENTRY_THRESHOLD (default 0.70)
 
-### 3b. Exit — `evaluate_exit()`
+### 3b. Exit — `evaluate_exit()` — Peak Harvest (exit_mode=5)
 
-Exit mode depends on timeframe:
-- **M5 entry (exit_mode=1)**: trailing SL + anti-candle + momentum decay
-- **H1-only (exit_mode=4)**: ATR-based stop + double counter-candle + momentum decay
+The peak harvest exit has **no hard stop loss**. It trusts the entry signal and lets the trade develop:
+
+| Condition | Action | Reason |
+|-----------|--------|--------|
+| Normal price fluctuation | Hold | No SL — trust signal |
+| Peak profit < ATR × 2.0 | Hold | Not enough profit to trail yet |
+| Peak profit ≥ trigger × patience, retrace > 50% | Close | `trail_stop` — locked in peak profit |
+| 3+ consecutive counter-directional candles | Close | `direction_loss` — conviction broken |
+| Bars held ≥ 10, momentum decay > 0.85 | Close | `momentum_decay` — momentum exhausted |
+| Bars held > 48 (safety) | Close | `max_hold` — emergency exit |
+
+**Patience factor**: Higher entry score → more patience before trail activates.  
+Formula: `trail_trigger = ATR × PEAK_HARVEST_TRAIL_TRIGGER × (1.0 + (1.0 - entry_score))`
+
+**Other exit modes available** (for backtest comparison):
+- Mode 1: Trailing SL + anti-candle + momentum decay (original tight exit)
+- Mode 4: ATR-based stop + double counter-candle (for H1-only data)
 
 ---
 
 ## 4. Configuration (`.env` / `config.py`)
 
+### Core Trading
 | Parameter | Default | Description |
 |---|---|---|
 | `BROKER` | CAPITAL | "CAPITAL" or "MT5" |
-| `CAPITAL_DEMO` | true | true=demo, false=live |
-| `SIGNAL_ENTRY_THRESHOLD` | 0.70 | Min signal score for entry |
-| `EXIT_THRESHOLD_TIGHT` | 0.50 | Momentum decay exit threshold |
-| `LOT_MULTIPLIER` | 5 | Multiply scaler lot by this |
+| `SYMBOL` | XAUUSD | Trading symbol |
 | `LOT_SIZE` | 0.01 | Base micro lot |
-| `MAX_TRADES_PER_EVENT` | 10 | Max positions per event |
-| `RE_ENTRY_COOLDOWN_SEC` | 60 | Cooldown after exit |
-| `ALLOWED_SESSIONS` | ASIA,LONDON,NEW_YORK | Sessions to trade |
-| `MAX_DAILY_LOSS_USD` | 10.00 | Hard daily stop |
-| `MAX_EVENT_LOSS_USD` | 5.00 | Per-event stop |
-| `BIAS_UPDATE_INTERVAL_SEC` | 60 | Bias refresh interval |
+| `LOT_MULTIPLIER` | 5 | Multiply scaler lot by this |
+| `MIN_LOT` | 0.01 | Minimum lot |
+| `MAX_LOT` | 1.0 | Maximum lot |
+| `MIN_BALANCE` | 20.0 | Min balance to start trading |
+
+### Entry
+| Parameter | Default | Description |
+|---|---|---|
+| `SIGNAL_ENTRY_THRESHOLD` | 0.70 | Min signal score for entry |
+| `MIN_BREAKOUT_SCORE` | 0.02 | Min breakout distance / H1 range |
+| `REQUIRE_RECENT_PULLBACK` | false | Require recent candle inside H1 range |
+| `BIAS_STRENGTH_MIN` | 0.30 | Min bias strength to trade |
+
+### Peak Harvest Exit (mode 5)
+| Parameter | Default | Description |
+|---|---|---|
+| `PEAK_HARVEST_TRAIL_TRIGGER` | 2.0 | ATR multiple to activate trailing (higher = later) |
+| `PEAK_HARVEST_TRAIL_RETRACE` | 0.50 | Retrace % of peak before trail closes |
+| `PEAK_HARVEST_MIN_BARS_EXIT` | 10 | Min bars held before momentum-based exit |
+| `PEAK_HARVEST_MOMENTUM_THRESHOLD` | 0.85 | Momentum decay threshold to exit |
+| `PEAK_HARVEST_MAX_HOLD_BARS` | 48 | Max bars held (safety exit) |
+
+### Risk Controls
+| Parameter | Default | Description |
+|---|---|---|
+| `MAX_DAILY_LOSS_USD` | 2.00 | Hard daily stop (stops bot, does not close trades) |
+| `MAX_EVENT_LOSS_USD` | 1.00 | Per-event loss limit (closes all positions) |
+| `MAX_TRADES_PER_EVENT` | 1 | Max positions per event |
+| `MAX_TRADES_PER_SESSION` | 3 | Max trades per session/day |
+| `MAX_CONSECUTIVE_LOSSES` | 2 | Max consecutive losses before stop |
+| `RE_ENTRY_COOLDOWN_SEC` | 600 | Cooldown after exit (× consecutive losses) |
+| `MAX_SPREAD_PIPS` | 35.0 | Max spread to allow entry |
+| `ALLOWED_SESSIONS` | LONDON,NEW_YORK | Sessions to trade |
 
 ---
 
 ## 5. Bot Loop (`app/bot.py`)
 
 ```
-IDLE → AWAITING_SIGNAL → (signal found?) → execute_entry → IN_TRADE
-  ↑          ↑                                    │
-  └──────────┘                                    ↓
-                                             check_exit (every tick)
-                                                  │
-                                           exit condition met?
-                                                  │
-                                            yes → COOLDOWN → IDLE
+IDLE → (bias updated every 60s) → AWAITING_SIGNAL → ENTERING → IN_TRADE
+  ↑                                                           │
+  └──────────────────── COOLDOWN ←────────────────────────────┘
 ```
 
-**Tick cycle** (~2 sec):
+**Tick cycle (~1s)**:
 1. Refresh positions & PnL via client
-2. Check daily/event loss limits
-3. If IN_TRADE: evaluate exit conditions
-4. If IDLE/AWAITING_SIGNAL: update H1 bias every 60s, fetch M1 data + H1 range, check entry
-5. On entry: `lot = scaler.get_lot(balance) * LOT_MULTIPLIER`, open trades
-6. On exit: close all, set cooldown
-
-**Capital.com-specific**: Session auto-refresh on 401, CST+X-SECURITY-TOKEN header auth
+2. Check subscription status (every 30s)
+3. Check daily loss limit
+4. Reconnect on connection loss (exponential backoff 2^n, max 60s)
+5. Market hours check (Sun 23:00 UTC - Fri 22:00 UTC)
+6. State dispatch:
+   - **IN_TRADE**: Evaluate exit via peak harvest (mode 5). Check event loss limit.
+   - **COOLDOWN**: Wait until cooldown expires, then → IDLE
+   - **IDLE/AWAITING_SIGNAL**: Update H1 bias (every 60s), fetch 50 M1 candles + H1 range, check entry
+7. On entry: `lot = scaler.get_lot(balance) × LOT_MULTIPLIER`, open 1+ trades, margin check
+8. On exit: close all positions, cooldown = `RE_ENTRY_COOLDOWN_SEC × (1 + consecutive_losses)`
 
 ---
 
@@ -136,50 +168,36 @@ IDLE → AWAITING_SIGNAL → (signal found?) → execute_entry → IN_TRADE
 
 `EquityScaler`:
 ```
-lot = base_lot * (balance / starting_balance)
-lot = min(lot, balance / 5000)  # equity cap
-trades = base_trades * tier_mult * confidence_mult
-total_lot = lot * trades * LOT_MULTIPLIER
+lot = BASE_LOT (0.01) × (balance / 20.0)     # scales with equity
+lot = min(lot, balance / 5000)                 # equity cap
+lot = lot × LOT_MULTIPLIER                     # e.g. 5×
 ```
 
-Tiers: 1 (balance<50), 2 (50-100), 3 (100+)
+**Tiers** (balance-based):
+| Balance | Tier | Trade Mult | Max Trades |
+|---------|------|------------|------------|
+| < $50   | 1    | 1.0×       | 1          |
+| $50-100 | 2    | 1.5×       | 2          |
+| ≥ $100  | 3    | 2.0×       | 3          |
 
-Example with $20, 5x multiplier:
-- Start: 0.01 * (20/20) = 0.01, capped at 20/5000 = 0.004 → 0.01 min_lot
-- After scaling: trades × lot × 5
-
----
-
-## 7. Backtest Results
-
-### H1-only (Yahoo GC=F / MT5 XAUUSD)
-
-| Year | Start | End | WR | PF | Max DD | Return |
-|------|-------|-----|----|-----|--------|--------|
-| 2023 | $20 | $64,249 | 78.1% | 10.92 | $1,258 | +321,147% |
-| 2024 | $20 | $79,473 | 79.5% | 10.21 | $824 | +397,267% |
-| 2025 | $20 | $30,657 | 68.0% | 7.10 | $1,046 | +166,131% |
-
-### M5 entry OOS (Yahoo GC=F, Apr-Jun 2026)
-
-| Start | End | WR | PF | Trades |
-|-------|-----|----|-----|--------|
-| $20 | $81.66 | 53.3% | 1.59 | 30 |
+**Trades per event** = `base_trades × tier_mult × confidence_mult`
+- Confidence mult: 2.0 if score ≥ 0.85, 1.5 if ≥ 0.75, else 1.0
 
 ---
 
-## 8. Key Properties
+## 7. Key Properties
 
 1. **Breakout-based**: Only trades when price breaks H1 range with bias alignment
-2. **Fast exits**: H1-only uses ATR trail (exit_mode=4), M5 uses trailing SL + anti-candle
-3. **No overnight holds**: Most trades exit within 1-5 candles
-4. **Self-correcting**: Tight stops + fast re-entry after cooldown
-5. **All-session**: Trades ASIA, LONDON, NEW_YORK (configurable)
-6. **Broker-agnostic**: Same strategy via Capital.com REST API or MT5
+2. **No hard stop loss**: Lets trades breathe through pullbacks — trusts high-confidence signals
+3. **Late trailing**: Only activates after significant profit (≥2 ATR peak)
+4. **Peak harvesting**: Closes at/near peak profit when directional confidence breaks
+5. **Self-correcting**: Event loss limit ($1), daily loss limit ($2), cooldown after losses
+6. **All-session**: Trades LONDON, NEW_YORK (ASIA optional, wider spreads)
+7. **Broker-agnostic**: Same strategy via Capital.com REST API or MT5
 
 ---
 
-## 9. Capital.com API Notes
+## 8. Capital.com API Notes
 
 - Auth: `POST /api/v1/session` → CST + X-SECURITY-TOKEN headers
 - Session expires after ~10min inactivity (auto-refresh on 401)
@@ -188,25 +206,21 @@ Example with $20, 5x multiplier:
 - XAUUSD epic = "GOLD", decimalPlacesFactor=2
 - Demo: `demo-api-capital.backend-capital.com`
 - Live: `api-capital.backend-capital.com`
-- Toggle with `CAPITAL_DEMO=true/false`
 
 ---
 
-## 10. Broker Switching
+## 9. Broker Switching
 
 ```env
-BROKER=CAPITAL
-# vs
-BROKER=MT5
+BROKER=CAPITAL   # Capital.com REST API (no MT5 needed)
+BROKER=MT5       # Requires MetaTrader5 terminal
 ```
 
-- CAPITAL → `app/capital_client.py` (REST API, no MT5 needed)
-- MT5 → `app/mt5_client.py` (requires MetaTrader5 terminal)
-- `trade_executor.py` delegates to whichever client is active
+`trade_executor.py` delegates to whichever client is active.
 
 ---
 
-## 11. Dependencies
+## 10. Dependencies
 
 ```
 requests          # Capital.com REST API

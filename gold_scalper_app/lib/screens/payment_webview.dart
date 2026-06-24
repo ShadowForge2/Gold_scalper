@@ -18,17 +18,30 @@ class PaymentWebView extends StatefulWidget {
 }
 
 class _PaymentWebViewState extends State<PaymentWebView> {
-  late final WebViewController _controller;
+  WebViewController? _controller;
   bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
+    final uri = Uri.tryParse(widget.url);
+    if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
+      _loading = false;
+      _error = 'Invalid payment link.';
+      return;
+    }
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(NavigationDelegate(
         onPageStarted: (_) => setState(() => _loading = true),
         onPageFinished: (_) => setState(() => _loading = false),
+        onWebResourceError: (error) {
+          setState(() {
+            _loading = false;
+            _error = 'Payment page failed to load. Check your connection and try again.';
+          });
+        },
         onUrlChange: (change) {
           final url = change.url ?? '';
           if (url.contains('success') || url.contains('callback')) {
@@ -36,7 +49,7 @@ class _PaymentWebViewState extends State<PaymentWebView> {
           }
         },
       ))
-      ..loadRequest(Uri.parse(widget.url));
+      ..loadRequest(uri);
   }
 
   @override
@@ -60,7 +73,18 @@ class _PaymentWebViewState extends State<PaymentWebView> {
             ),
         ],
       ),
-      body: WebViewWidget(controller: _controller),
+      body: _error != null
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  _error!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white70),
+                ),
+              ),
+            )
+          : WebViewWidget(controller: _controller!),
     );
   }
 }

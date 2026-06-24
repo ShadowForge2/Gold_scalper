@@ -30,6 +30,7 @@ SLIPPAGE_PER_LOT_USD = 3.0 # avg slippage per lot per entry
 SPREAD_ROUND_TRIP = 2      # spread paid on both entry + exit
 LEVERAGE = 200              # Capital.com gold leverage (professional/offshore)
 MARGIN_MAX_PCT = 1.0        # Capital.com real req: allows up to 100% equity as margin
+MARGIN_RATE = None          # Override: Capital.com margin_rate (0.05). If None, uses CONTRACT_SIZE/LEVERAGE
 
 # Timeframe constants (same values as MT5 constants)
 TIMEFRAME_H1 = 16385
@@ -467,13 +468,15 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
         "max_trades_per_session": cfg.MAX_TRADES_PER_SESSION,
         "min_balance": cfg.MIN_BALANCE,
         "cash_flows": BACKTEST_CASH_FLOWS,
-        "exit_mode": 4 if BACKTEST_BROKER in ("YAHOO_H1", "MT5_H1") else 1,  # ATR-based for H1, trail_sl for M5
+        "exit_mode": 4 if BACKTEST_BROKER in ("YAHOO_H1", "MT5_H1") else 5,  # ATR-based for H1, peak_harvest for M5
+        "fixed_lot": None,
     }
     if params:
         p.update(params)
 
     et = p["entry_threshold"]
     ext = p["exit_threshold"]
+    fixed_lot = p["fixed_lot"]
     base_tr = p["base_trades_per_event"]
     sessions = p["sessions"]
     bias_min = p["bias_strength_min"]
@@ -487,6 +490,10 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
     min_balance = p["min_balance"]
     cash_flows = _normalize_cash_flows(p["cash_flows"])
     exit_mode = p["exit_mode"]
+    trail_sl_mult = p.get("trail_sl_mult")
+    trail_trigger_mult = p.get("trail_trigger_mult")
+    trail_retrace = p.get("trail_retrace")
+    trail_to_breakeven = p.get("trail_to_breakeven", True)
 
     sig_df = data["sig_df"]
     biases = data["biases"]
@@ -560,7 +567,9 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
             exit_window = sig_df.iloc[max(0, idx - 10):idx]
             should_exit, exit_score_val, reason = signal_engine.evaluate_exit(
                 exit_window, cur["entry_price"], cur["direction"], cur.get("entry_score"),
-                exit_threshold=tp["exit_threshold"], exit_mode=exit_mode
+                exit_threshold=ext, exit_mode=exit_mode,
+                trail_sl_mult=trail_sl_mult, trail_trigger_mult=trail_trigger_mult,
+                trail_retrace=trail_retrace, trail_to_breakeven=trail_to_breakeven,
             )
 
             if should_exit:
@@ -628,7 +637,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
             tier_et = max(et, tp["entry_threshold"])
             if score >= tier_et and sigs[idx] is not None:
                 scaler.base_trades = base_tr
-                lot = min(scaler.get_lot(balance) * lot_mult, cfg.MAX_LOT)
+                lot = fixed_lot if fixed_lot else min(scaler.get_lot(balance) * lot_mult, cfg.MAX_LOT)
                 num_tr = min(tp["num_trades"], max_trades, scaler.get_trades_per_event(balance, score))
                 # cap total exposure per event
                 total_lot = lot * num_tr
@@ -638,7 +647,10 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
                 if total_lot > max_total_lot:
                     lot = max_total_lot / num_tr
                 # margin check — Capital.com real requirement
-                margin_per_lot = (row["close"] * CONTRACT_SIZE) / LEVERAGE
+                if MARGIN_RATE is not None:
+                    margin_per_lot = row["close"] * MARGIN_RATE
+                else:
+                    margin_per_lot = (row["close"] * CONTRACT_SIZE) / LEVERAGE
                 max_lot_by_margin = (balance * MARGIN_MAX_PCT) / margin_per_lot
                 if max_lot_by_margin < cfg.MIN_LOT:
                     continue  # can't afford even 0.01 lot
@@ -737,7 +749,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
 
 
 if __name__ == "__main__":
-    default_em = 4 if BACKTEST_BROKER in ("YAHOO_H1", "MT5_H1") else 1
+    default_em = 4 if BACKTEST_BROKER in ("YAHOO_H1", "MT5_H1") else 5
     em = int(sys.argv[1]) if len(sys.argv) > 1 else default_em
     print(f"Broker={BACKTEST_BROKER} Year={BACKTEST_YEAR} exit_mode={em}", flush=True)
     print("Loading and pre-computing...", flush=True)

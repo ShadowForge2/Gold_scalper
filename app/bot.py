@@ -475,7 +475,7 @@ class Bot:
         exit_thresh = getattr(self, '_exit_threshold_override', cfg.EXIT_THRESHOLD_TIGHT)
         should_exit, exit_score, reason = self.signal_engine.evaluate_exit(
             m1_data, entry_price, direction, entry_score,
-            exit_mode=1, exit_threshold=exit_thresh,
+            exit_mode=5, exit_threshold=exit_thresh,
         )
 
         if should_exit:

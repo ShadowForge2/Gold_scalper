@@ -160,6 +160,8 @@ class SignalEngine:
         if m1_data is None or len(m1_data) < 5:
             return False, 0.0, "insufficient_data"
 
+        if exit_mode == 5:
+            return self._exit_mode_peak_harvest(m1_data, entry_price, direction, entry_score)
         if exit_mode == 4:
             return self._exit_mode_breakout(m1_data, entry_price, direction, entry_score)
         if exit_mode == 1:
@@ -308,6 +310,63 @@ class SignalEngine:
         if exit_score > exit_threshold:
             return True, round(exit_score, 3), "momentum_decay"
         return False, round(exit_score, 3), "holding"
+
+    def _exit_mode_peak_harvest(self, df, entry, direction, entry_score):
+        """
+        Peak-harvest exit — no hard stop loss, trail only after significant profit,
+        close when directional confidence breaks down.
+        """
+        momentum = self._compute_momentum(df)
+        atr = self._compute_atr(df, 14)
+        px = df["close"].iloc[-1]
+        diff = px - entry if direction == "BUY" else entry - px
+        bars = len(df)
+
+        if atr <= 0:
+            return False, 0.0, "holding"
+
+        if direction == "BUY":
+            peak = float(np.max(df["high"].values - entry))
+        else:
+            peak = float(np.max(entry - df["low"].values))
+
+        confidence = entry_score if entry_score is not None else 0.7
+        patience = 1.0 + (1.0 - confidence)
+
+        trail_trigger = atr * cfg.PEAK_HARVEST_TRAIL_TRIGGER * patience
+        trail_active = peak >= trail_trigger
+
+        if trail_active and diff > 0:
+            pullback = peak - diff
+            if pullback / peak > cfg.PEAK_HARVEST_TRAIL_RETRACE:
+                return True, 0.85, "trail_stop"
+
+        if bars >= 4:
+            streak = 0
+            for i in range(min(5, len(df))):
+                c = df.iloc[-(i + 1)]
+                if direction == "BUY":
+                    if c["close"] < c["open"]:
+                        streak += 1
+                    else:
+                        break
+                else:
+                    if c["close"] > c["open"]:
+                        streak += 1
+                    else:
+                        break
+            if streak >= 3:
+                return True, 0.80, "direction_loss"
+
+        if bars >= cfg.PEAK_HARVEST_MIN_BARS_EXIT:
+            exit_score = 1.0 - momentum
+            if exit_score > cfg.PEAK_HARVEST_MOMENTUM_THRESHOLD:
+                return True, round(exit_score, 3), "momentum_decay"
+
+        if bars > cfg.PEAK_HARVEST_MAX_HOLD_BARS:
+            return True, 0.50, "max_hold"
+
+        return False, 0.0, "holding"
 
     def _candle_direction(self, df: pd.DataFrame) -> int:
         if len(df) < 2:
