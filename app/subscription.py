@@ -105,6 +105,29 @@ async def remove_account(device_id: str, identifier: str) -> bool:
     return bool(result)
 
 
+async def set_account_active(identifier: str, active: bool):
+    await db_mod.database.execute(
+        "UPDATE accounts SET active = :act WHERE identifier = :id",
+        {"act": int(active), "id": identifier},
+    )
+
+
+async def get_account_by_identifier(identifier: str) -> Optional[Dict]:
+    row = await db_mod.database.fetch_one(
+        "SELECT api_key, identifier, password, demo, active FROM accounts WHERE identifier = :id LIMIT 1",
+        {"id": identifier},
+    )
+    return dict(row) if row else None
+
+
+async def get_active_accounts() -> List[Dict]:
+    rows = await db_mod.database.fetch_all(
+        """SELECT DISTINCT identifier, api_key, password, demo
+           FROM accounts WHERE active = 1"""
+    )
+    return [dict(r) for r in rows]
+
+
 async def restore_device_by_capital_id(identifier: str, new_device_id: str) -> Optional[Dict]:
     _device_cache.pop(new_device_id, None)
     old_device = await db_mod.database.fetch_one(
@@ -134,8 +157,8 @@ async def restore_device_by_capital_id(identifier: str, new_device_id: str) -> O
         )
     else:
         await db_mod.database.execute(
-            """INSERT INTO accounts (device_id, api_key, identifier, password, demo)
-               SELECT :ndid, api_key, identifier, password, demo FROM accounts
+            """INSERT INTO accounts (device_id, api_key, identifier, password, demo, active)
+               SELECT :ndid, api_key, identifier, password, demo, active FROM accounts
                WHERE device_id = :odid AND identifier NOT IN (
                    SELECT identifier FROM accounts WHERE device_id = :ndid2
                )""",

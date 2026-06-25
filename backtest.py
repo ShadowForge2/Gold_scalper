@@ -468,7 +468,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
         "max_trades_per_session": cfg.MAX_TRADES_PER_SESSION,
         "min_balance": cfg.MIN_BALANCE,
         "cash_flows": BACKTEST_CASH_FLOWS,
-        "exit_mode": 4 if BACKTEST_BROKER in ("YAHOO_H1", "MT5_H1") else 5,  # ATR-based for H1, peak_harvest for M5
+        "exit_mode": 6,
         "fixed_lot": None,
     }
     if params:
@@ -570,6 +570,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
                 exit_threshold=ext, exit_mode=exit_mode,
                 trail_sl_mult=trail_sl_mult, trail_trigger_mult=trail_trigger_mult,
                 trail_retrace=trail_retrace, trail_to_breakeven=trail_to_breakeven,
+                signal=cur.get("entry_signal"),
             )
 
             if should_exit:
@@ -636,7 +637,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
             sig = sigs[idx]
             score = scores[idx]
             atr_thresh = sig.get("atr_entry_threshold") if sig else None
-            tier_et = max(atr_thresh if atr_thresh is not None else et, tp["entry_threshold"])
+            tier_et = max(atr_thresh if atr_thresh is not None else 0, et, tp["entry_threshold"])
             if score >= tier_et and sig is not None:
                 scaler.base_trades = base_tr
                 lot = fixed_lot if fixed_lot else min(scaler.get_lot(balance) * lot_mult, cfg.MAX_LOT)
@@ -669,6 +670,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
                     "direction": sigs[idx]["direction"],
                     "lot": lot, "num_trades": num_tr,
                     "bars_held": 0, "entry_score": float(score),
+                    "entry_signal": sig,
                 }
                 event_pnl = 0.0
                 daily_trades += 1
@@ -751,8 +753,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
 
 
 if __name__ == "__main__":
-    default_em = 4 if BACKTEST_BROKER in ("YAHOO_H1", "MT5_H1") else 5
-    em = int(sys.argv[1]) if len(sys.argv) > 1 else default_em
+    em = int(sys.argv[1]) if len(sys.argv) > 1 else 6
     print(f"Broker={BACKTEST_BROKER} Year={BACKTEST_YEAR} exit_mode={em}", flush=True)
     print("Loading and pre-computing...", flush=True)
     d = load_and_compute()

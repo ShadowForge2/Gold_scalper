@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     identifier TEXT NOT NULL,
     password TEXT NOT NULL,
     demo INTEGER NOT NULL DEFAULT 1,
+    active INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (device_id, identifier)
 )
 """
@@ -136,3 +137,9 @@ async def init_db():
             return
     database = Database(SQLITE_URL)
     await _try_sqlite()
+    # migration: add active column if missing
+    for col in ["active"]:
+        try:
+            await database.execute(f"ALTER TABLE accounts ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass

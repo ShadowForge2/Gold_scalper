@@ -15,6 +15,7 @@ from app.bot_pool import BotPool
 from app.subscription import (
     ensure_device, get_device,
     add_account, remove_account, restore_device_by_capital_id,
+    set_account_active, get_active_accounts, get_account_by_identifier,
     start_trial, get_subscription,
     can_start_live, initialize_payment, verify_payment,
     verify_paystack_webhook, process_paystack_webhook,
@@ -173,6 +174,22 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
     def _no_db():
         return JSONResponse(status_code=503, content={"error": "Database not connected"})
 
+    async def _restore_bot_after_payment(identifier: str):
+        if not bot_pool:
+            return
+        if bot_pool.is_running(identifier):
+            return
+        acct = await get_account_by_identifier(identifier)
+        if not acct:
+            return
+        bot_pool.start(
+            identifier=acct["identifier"],
+            api_key=acct["api_key"],
+            password=acct["password"],
+            demo=bool(acct.get("demo", True)),
+        )
+        await set_account_active(identifier, True)
+
     # ── Device-based Account Management ──────────────────────────
     @app.get("/api/device/accounts")
     async def device_list_accounts(device_id: str = Header(None, alias="X-Device-Id")):
@@ -229,6 +246,13 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             if prev_type != new_type:
                 bot_pool.add_log(ident, f"Account switched from {prev_type} to {new_type}.", "INFO")
         dev = await get_device(did)
+        # auto-start if previously active
+        for acct in dev.get("accounts", []):
+            if acct["identifier"] == ident and acct.get("active") and bot_pool and not bot_pool.is_running(ident):
+                bot_pool.add_log(ident, "Account was previously active — auto-starting...", "INFO")
+                bot_pool.start(identifier=ident, api_key=data.api_key, password=data.password, demo=data.demo)
+                await set_account_active(ident, True)
+                break
         return {"success": True, "accounts": [sanitize_account(a) for a in (dev.get("accounts") or [])]}
 
     @app.delete("/api/device/accounts/{identifier}")
@@ -282,6 +306,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             demo=demo,
         )
         if result["success"]:
+            await set_account_active(ident, True)
             if not demo:
                 bal = 0.0
                 temp_client = CapitalClient()
@@ -334,6 +359,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             })
         result = bot_pool.stop(ident)
         if result["success"]:
+            await set_account_active(ident, False)
             bot_pool.add_log(ident, "Bot stopped.", "WARNING")
         return result
 
@@ -823,6 +849,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         amount = result.get("amount", 0)
         if bot_pool:
             bot_pool.add_log(ident, f"Payment of ₦{amount:.2f} verified. Subscription active for 30 more days.", "INFO")
+        await _restore_bot_after_payment(ident)
         return {"message": "Payment verified", "data": result}
 
     @app.post("/api/payment/paystack/webhook")
@@ -835,6 +862,11 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         event = payload.get("event", "")
         data = payload.get("data", {})
         ok = await process_paystack_webhook(event, data)
+        if ok:
+            meta = (data.get("metadata") or {}) if isinstance(data, dict) else {}
+            ident = meta.get("identifier", "")
+            if ident:
+                await _restore_bot_after_payment(ident)
         return {"ok": ok}
 
     # ── MaxelPay ──────────────────────────────────────────────────
@@ -903,6 +935,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                 ident = await _maxelpay_get_identifier(order_id)
                 if ident:
                     bot_pool.add_log(ident, f"MaxelPay payment of ${amount:.2f} verified. Subscription active.", "INFO")
+                    await _restore_bot_after_payment(ident)
         return {"ok": True}
 
     # ── Notifications ──────────────────────────────────────────────

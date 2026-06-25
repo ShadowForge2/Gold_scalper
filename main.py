@@ -6,11 +6,34 @@ from app.bot import Bot
 from app.bot_pool import BotPool
 from app import database as db_mod
 from app.database import init_db
+from app.subscription import get_active_accounts, can_start_live
+from app.capital_client import CapitalClient
 import config as cfg
 
 bot = Bot()
 bot_pool = BotPool()
 _db_connected = False
+
+
+async def _try_start_user_bot(ident: str, api_key: str, password: str, demo: bool):
+    if bot_pool.is_running(ident):
+        return
+    if not demo:
+        try:
+            if not await can_start_live(ident):
+                bot.logger.warning(f"Skipping live account {ident}: subscription not active")
+                return
+        except Exception as e:
+            bot.logger.warning(f"Sub check failed for {ident}: {e}. Will still attempt.")
+    temp = CapitalClient()
+    ok = temp.initialize(api_key=api_key, identifier=ident, password=password, demo=demo)
+    temp.shutdown()
+    if not ok:
+        bot.logger.warning(f"Skipping account {ident}: credentials no longer valid")
+        return
+    result = bot_pool.start(identifier=ident, api_key=api_key, password=password, demo=demo)
+    if result["success"]:
+        bot.logger.info(f"Restored user bot: {ident}")
 
 
 async def startup_db():
@@ -41,6 +64,22 @@ async def startup():
     await startup_db()
     await bot.initialize()
     asyncio.create_task(bot.run())
+    if _db_connected:
+        try:
+            accounts = await get_active_accounts()
+            for acct in accounts:
+                asyncio.create_task(
+                    _try_start_user_bot(
+                        ident=acct["identifier"],
+                        api_key=acct["api_key"],
+                        password=acct["password"],
+                        demo=bool(acct.get("demo", True)),
+                    )
+                )
+            if accounts:
+                bot.logger.info(f"Scheduled {len(accounts)} user bot(s) for restoration")
+        except Exception as e:
+            bot.logger.warning(f"Failed to restore user bots: {e}")
 
 
 @app.on_event("shutdown")
