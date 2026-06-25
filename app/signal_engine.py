@@ -133,6 +133,22 @@ class SignalEngine:
                 threshold=cfg.MIN_BREAKOUT_SCORE,
             )
 
+        atr_val = atr if atr > 0 else (current_price * 0.001)
+        if direction == "BUY":
+            sl_price = current_price - atr_val * cfg.SL_ATR_MULTIPLIER
+            if h1_low is not None:
+                sl_price = min(sl_price, h1_low)
+            tp1 = current_price + atr_val * cfg.TP1_MULTIPLIER
+            tp2 = current_price + atr_val * cfg.TP2_MULTIPLIER
+            tp3 = current_price + atr_val * cfg.TP3_MULTIPLIER
+        else:
+            sl_price = current_price + atr_val * cfg.SL_ATR_MULTIPLIER
+            if h1_high is not None:
+                sl_price = max(sl_price, h1_high)
+            tp1 = current_price - atr_val * cfg.TP1_MULTIPLIER
+            tp2 = current_price - atr_val * cfg.TP2_MULTIPLIER
+            tp3 = current_price - atr_val * cfg.TP3_MULTIPLIER
+
         signal = {
             "direction": direction,
             "bias": bias_dir,
@@ -142,6 +158,11 @@ class SignalEngine:
             "range_size": round(range_size, 2),
             "atr_entry_threshold": atr_entry_threshold,
             "entry_price": current_price,
+            "sl": round(sl_price, 2),
+            "tp1": round(tp1, 2),
+            "tp2": round(tp2, 2),
+            "tp3": round(tp3, 2),
+            "atr_value": round(atr_val, 4),
             "timestamp": datetime.now().isoformat(),
         }
 
@@ -158,11 +179,14 @@ class SignalEngine:
                       trail_sl_mult: float = None,
                       trail_trigger_mult: float = None,
                       trail_retrace: float = None,
-                      trail_to_breakeven: bool = True) -> Tuple[bool, float, str]:
+                      trail_to_breakeven: bool = True,
+                      signal: dict = None) -> Tuple[bool, float, str]:
 
         if m1_data is None or len(m1_data) < 5:
             return False, 0.0, "insufficient_data"
 
+        if exit_mode == 6:
+            return self._exit_mode_multi_tp(m1_data, entry_price, direction, entry_score, signal)
         if exit_mode == 5:
             return self._exit_mode_peak_harvest(m1_data, entry_price, direction, entry_score)
         if exit_mode == 4:
@@ -368,6 +392,60 @@ class SignalEngine:
 
         if bars > cfg.PEAK_HARVEST_MAX_HOLD_BARS:
             return True, 0.50, "max_hold"
+
+        return False, 0.0, "holding"
+
+    def _exit_mode_multi_tp(self, df, entry, direction, entry_score, signal):
+        """
+        Zone-aware multi-TP exit (mode 6).
+        Computes SL, TP1, TP2, TP3 on entry. Holds through retracements between
+        targets. Closes near a TP level when momentum fades — captures profit
+        before a retracement can give it back.
+        """
+        momentum = self._compute_momentum(df)
+        px = df["close"].iloc[-1]
+        diff = px - entry if direction == "BUY" else entry - px
+
+        if not signal:
+            return False, 0.0, "no_signal_data"
+
+        sl_price = signal.get("sl")
+        tp1 = signal.get("tp1")
+        tp2 = signal.get("tp2")
+        tp3 = signal.get("tp3")
+
+        if None in (sl_price, tp1, tp2, tp3):
+            return False, 0.0, "no_targets"
+
+        if direction == "BUY":
+            if px <= sl_price:
+                return True, 1.0, "stop_loss"
+            tp_levels = [(tp1, "tp1"), (tp2, "tp2"), (tp3, "tp3")]
+            active_tps = [(tp, name) for tp, name in tp_levels if px < tp]
+            if not active_tps:
+                if momentum < cfg.TP_CLOSE_MOMENTUM_MIN:
+                    return True, round(1.0 - momentum, 3), "momentum_exhausted"
+                return False, 0.0, "running"
+            nearest_tp, tp_name = active_tps[0]
+            progress = (diff) / (nearest_tp - entry) if nearest_tp != entry else 1.0
+        else:
+            if px >= sl_price:
+                return True, 1.0, "stop_loss"
+            tp_levels = [(tp1, "tp1"), (tp2, "tp2"), (tp3, "tp3")]
+            active_tps = [(tp, name) for tp, name in tp_levels if px > tp]
+            if not active_tps:
+                if momentum < cfg.TP_CLOSE_MOMENTUM_MIN:
+                    return True, round(1.0 - momentum, 3), "momentum_exhausted"
+                return False, 0.0, "running"
+            nearest_tp, tp_name = active_tps[0]
+            progress = (diff) / (entry - nearest_tp) if entry != nearest_tp else 1.0
+
+        progress = min(progress, 1.0)
+
+        if progress >= cfg.TP_CLOSE_THRESHOLD:
+            if momentum < cfg.TP_CLOSE_MOMENTUM_MIN:
+                return True, round(progress, 3), f"take_profit_{tp_name}"
+            return False, 0.0, f"holding_near_{tp_name}"
 
         return False, 0.0, "holding"
 
