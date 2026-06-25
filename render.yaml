@@ -48,7 +48,19 @@ services:
       - key: BIAS_UPDATE_INTERVAL_SEC
         value: "60"
       - key: SIGNAL_ENTRY_THRESHOLD
-        value: "0.50"
+        value: "0.85"
+      - key: SL_ATR_MULTIPLIER
+        value: "2.0"
+      - key: TP1_MULTIPLIER
+        value: "1.0"
+      - key: TP2_MULTIPLIER
+        value: "2.0"
+      - key: TP3_MULTIPLIER
+        value: "3.5"
+      - key: TP_CLOSE_THRESHOLD
+        value: "0.8"
+      - key: TP_CLOSE_MOMENTUM_MIN
+        value: "0.25"
       - key: EXIT_THRESHOLD_TIGHT
         value: "0.50"
       - key: MAX_SPREAD_PIPS
