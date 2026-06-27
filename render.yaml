@@ -52,7 +52,7 @@ services:
       - key: SIGNAL_ENTRY_THRESHOLD
         value: "0.85"
       - key: SL_ATR_MULTIPLIER
-        value: "2.0"
+        value: "1.0"
       - key: TP1_MULTIPLIER
         value: "2.0"
       - key: TP2_MULTIPLIER
