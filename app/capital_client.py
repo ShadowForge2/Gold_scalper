@@ -68,25 +68,33 @@ class CapitalClient:
     def _login(self) -> bool:
         headers = {'X-CAP-API-KEY': self.api_key, 'Content-Type': 'application/json'}
         body = {'identifier': self.identifier, 'password': self.password, 'encryptedPassword': False}
-        try:
-            r = self._session.post(
-                f"{self.base_url}/api/v1/session",
-                headers=headers,
-                json=body,
-                timeout=self._timeout,
-            )
-            if r.ok:
-                self.cst = r.headers.get("CST")
-                self.security_token = r.headers.get("X-SECURITY-TOKEN")
-                self.connected = True
-                self._last_activity = time.time()
-                data = r.json()
-                self._prev_balance = data.get("accountInfo", {}).get("balance", 0)
-                self._last_order_error = ""
-                return True
-            self._last_order_error = f"HTTP {r.status_code}: {r.text[:500]}"
-        except Exception as exc:
-            self._last_order_error = f"{type(exc).__name__}: {exc}"
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            try:
+                self._throttle()
+                r = self._session.post(
+                    f"{self.base_url}/api/v1/session",
+                    headers=headers,
+                    json=body,
+                    timeout=self._timeout,
+                )
+                if r.ok:
+                    self.cst = r.headers.get("CST")
+                    self.security_token = r.headers.get("X-SECURITY-TOKEN")
+                    self.connected = True
+                    self._last_activity = time.time()
+                    data = r.json()
+                    self._prev_balance = data.get("accountInfo", {}).get("balance", 0)
+                    self._last_order_error = ""
+                    return True
+                self._last_order_error = f"HTTP {r.status_code}: {r.text[:500]}"
+                if r.status_code not in (429, 502, 503, 504):
+                    break
+            except Exception as exc:
+                self._last_order_error = f"{type(exc).__name__}: {exc}"
+            if attempt < max_attempts - 1:
+                backoff = min(2 ** attempt, 30)
+                time.sleep(backoff)
         self.connected = False
         return False
 

@@ -127,7 +127,7 @@ class Bot:
         else:
             err = self.client.last_error()
             self.logger.error(f"Connection failed: {err}")
-            self.state = self.STATES["STOPPED"]
+            self.state = self.STATES["IDLE"]
             return False
 
     async def initialize_with_credentials(self, api_key: str, identifier: str, password: str, demo: bool = True) -> bool:
