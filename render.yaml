@@ -57,6 +57,8 @@ services:
         value: "4.0"
       - key: TP3_MULTIPLIER
         value: "6.0"
+      - key: ATR_MULTIPLIER
+        value: "1.0"
       - key: TP_CLOSE_THRESHOLD
         value: "0.8"
       - key: TP_CLOSE_MOMENTUM_MIN
