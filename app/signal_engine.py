@@ -136,15 +136,11 @@ class SignalEngine:
         atr_val = atr if atr > 0 else (current_price * 0.001)
         if direction == "BUY":
             sl_price = current_price - atr_val * cfg.SL_ATR_MULTIPLIER
-            if h1_low is not None:
-                sl_price = min(sl_price, h1_low)
             tp1 = current_price + atr_val * cfg.TP1_MULTIPLIER
             tp2 = current_price + atr_val * cfg.TP2_MULTIPLIER
             tp3 = current_price + atr_val * cfg.TP3_MULTIPLIER
         else:
             sl_price = current_price + atr_val * cfg.SL_ATR_MULTIPLIER
-            if h1_high is not None:
-                sl_price = max(sl_price, h1_high)
             tp1 = current_price - atr_val * cfg.TP1_MULTIPLIER
             tp2 = current_price - atr_val * cfg.TP2_MULTIPLIER
             tp3 = current_price - atr_val * cfg.TP3_MULTIPLIER
@@ -397,10 +393,14 @@ class SignalEngine:
 
     def _exit_mode_multi_tp(self, df, entry, direction, entry_score, signal):
         """
-        Zone-aware multi-TP exit (mode 6).
-        Computes SL, TP1, TP2, TP3 on entry. Holds through retracements between
-        targets. Closes near a TP level when momentum fades — captures profit
-        before a retracement can give it back.
+        Zone-aware multi-TP exit (mode 6) — v2 with dynamic SL, trail, and wick rejection.
+
+        1. Static SL from signal (always active)
+        2. Breakeven at 60% TP1 progress (lock out the loss)
+        3. Lock 30% of TP1 profit when TP1 exceeded
+        4. Trail 2 ATR after TP2 exceeded
+        5. Wick rejection: if a candle near TP has >60% wick, exit early
+        6. Original momentum-fade exit when near a TP level
         """
         momentum = self._compute_momentum(df)
         px = df["close"].iloc[-1]
@@ -417,28 +417,91 @@ class SignalEngine:
         if None in (sl_price, tp1, tp2, tp3):
             return False, 0.0, "no_targets"
 
+        atr = self._compute_atr(df, 14)
+        if atr <= 0:
+            atr = abs(entry) * 0.001
+
         if direction == "BUY":
+            # --- hard SL ---
             if px <= sl_price:
                 return True, 1.0, "stop_loss"
+
+            tp1_progress = (px - entry) / (tp1 - entry) if tp1 != entry else 0
+
+            # --- dynamic SL management ---
+            if px >= tp2:
+                sl_price = max(sl_price, px - atr * 2)
+            elif px >= tp1:
+                sl_price = max(sl_price, entry + (tp1 - entry) * 0.3)
+            elif tp1_progress >= 0.6:
+                sl_price = max(sl_price, entry + atr * 0.3)
+
+            if px <= sl_price:
+                return True, 1.0, "stop_loss"
+
             tp_levels = [(tp1, "tp1"), (tp2, "tp2"), (tp3, "tp3")]
             active_tps = [(tp, name) for tp, name in tp_levels if px < tp]
+
             if not active_tps:
+                # above all TPs — trail
+                trail = px - atr * 2
+                sl_price = max(signal.get("sl"), trail)
+                if px <= sl_price:
+                    return True, 1.0, "trailing_stop"
                 if momentum < cfg.TP_CLOSE_MOMENTUM_MIN:
                     return True, round(1.0 - momentum, 3), "momentum_exhausted"
                 return False, 0.0, "running"
+
             nearest_tp, tp_name = active_tps[0]
-            progress = (diff) / (nearest_tp - entry) if nearest_tp != entry else 1.0
-        else:
+            progress = diff / (nearest_tp - entry) if nearest_tp != entry else 1.0
+
+            # wick rejection near TP
+            if progress >= 0.8:
+                candle = df.iloc[-1]
+                upper_wick = candle["high"] - max(candle["close"], candle["open"])
+                lower_wick = min(candle["close"], candle["open"]) - candle["low"]
+                total_range = candle["high"] - candle["low"]
+                if total_range > 0 and upper_wick / total_range > 0.6:
+                    return True, round(progress, 3), f"wick_rejection_{tp_name}"
+
+        else:  # SELL
             if px >= sl_price:
                 return True, 1.0, "stop_loss"
+
+            tp1_progress = (entry - px) / (entry - tp1) if entry != tp1 else 0
+
+            if px <= tp2:
+                sl_price = min(sl_price, px + atr * 2)
+            elif px <= tp1:
+                sl_price = min(sl_price, entry - (entry - tp1) * 0.3)
+            elif tp1_progress >= 0.6:
+                sl_price = min(sl_price, entry - atr * 0.3)
+
+            if px >= sl_price:
+                return True, 1.0, "stop_loss"
+
             tp_levels = [(tp1, "tp1"), (tp2, "tp2"), (tp3, "tp3")]
             active_tps = [(tp, name) for tp, name in tp_levels if px > tp]
+
             if not active_tps:
+                trail = px + atr * 2
+                sl_price = min(signal.get("sl"), trail)
+                if px >= sl_price:
+                    return True, 1.0, "trailing_stop"
                 if momentum < cfg.TP_CLOSE_MOMENTUM_MIN:
                     return True, round(1.0 - momentum, 3), "momentum_exhausted"
                 return False, 0.0, "running"
+
             nearest_tp, tp_name = active_tps[0]
-            progress = (diff) / (entry - nearest_tp) if entry != nearest_tp else 1.0
+            progress = diff / (entry - nearest_tp) if entry != nearest_tp else 1.0
+
+            if progress >= 0.8:
+                candle = df.iloc[-1]
+                upper_wick = candle["high"] - max(candle["close"], candle["open"])
+                lower_wick = min(candle["close"], candle["open"]) - candle["low"]
+                total_range = candle["high"] - candle["low"]
+                if total_range > 0 and lower_wick / total_range > 0.6:
+                    return True, round(progress, 3), f"wick_rejection_{tp_name}"
 
         progress = min(progress, 1.0)
 

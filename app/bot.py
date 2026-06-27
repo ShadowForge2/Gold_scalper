@@ -289,6 +289,23 @@ class Bot:
     async def _handle_search(self, pnl_data: Dict):
         if self._winding_down:
             return
+
+        m1_count = 100
+        m1_data = self.client.get_rates(
+            self.symbol, cfg.SIGNAL_TIMEFRAME, m1_count
+        )
+        if m1_data is None or len(m1_data) < 10:
+            self._log_signal_diagnostic(
+                "insufficient_m1_data",
+                {"bars": 0 if m1_data is None else len(m1_data)},
+            )
+            return
+
+        symbol_info = self.client.get_symbol_info(self.symbol)
+        if symbol_info is None:
+            self._log_signal_diagnostic("symbol_info_unavailable", {})
+            return
+
         now = time.monotonic()
         if not hasattr(self, '_last_bias_time'):
             self._last_bias_time = 0.0
@@ -306,26 +323,9 @@ class Bot:
         if not self.bias_engine.is_tradeable():
             self._log_signal_diagnostic(
                 "bias_not_tradeable",
-                {
-                    "bias": self._bias_summary.get("bias", "UNKNOWN"),
-                    "strength": self._bias_summary.get("strength", 0),
-                },
+                {"bias": self._bias_summary.get("bias", "UNKNOWN"),
+                 "strength": self._bias_summary.get("strength", 0)},
             )
-            return
-
-        m1_data = self.client.get_rates(
-            self.symbol, cfg.SIGNAL_TIMEFRAME, 50
-        )
-        if m1_data is None or len(m1_data) < 10:
-            self._log_signal_diagnostic(
-                "insufficient_m1_data",
-                {"bars": 0 if m1_data is None else len(m1_data)},
-            )
-            return
-
-        symbol_info = self.client.get_symbol_info(self.symbol)
-        if symbol_info is None:
-            self._log_signal_diagnostic("symbol_info_unavailable", {})
             return
 
         bias_dir = self._bias_summary.get("bias", "NEUTRAL")
@@ -369,19 +369,12 @@ class Bot:
             rejection = self.signal_engine.last_rejection or {}
             self._log_signal_diagnostic(
                 rejection.get("reason", "signal_not_generated"),
-                {
-                    "bias": bias_dir,
-                    "price": current_price,
-                    "h1_high": h1_high,
-                    "h1_low": h1_low,
-                    **rejection,
-                },
+                {"bias": bias_dir, "price": current_price,
+                 "h1_high": h1_high, "h1_low": h1_low, **rejection},
             )
 
-        entry_thresh = getattr(self, '_signal_entry_threshold_override', cfg.SIGNAL_ENTRY_THRESHOLD)
-        atr_thresh = signal.get("atr_entry_threshold") if signal else None
-        effective_thresh = atr_thresh if atr_thresh is not None else entry_thresh
-        if signal and signal["score"] >= effective_thresh:
+        # Shared entry logic
+        if signal and signal["score"] >= cfg.SIGNAL_ENTRY_THRESHOLD:
             can_enter, reason = self.risk_manager.can_enter_trade(
                 symbol_info, datetime.now()
             )
@@ -389,36 +382,23 @@ class Bot:
                 self.logger.signal(
                     f"Signal {signal['direction']} (score={signal['score']:.2f}) "
                     f"blocked: {reason} | "
-                    f"bias={bias_dir} price={current_price:.2f} "
-                    f"h1_high={h1_high:.2f} h1_low={h1_low:.2f} "
-                    f"breakout={signal.get('breakout_dist', 0):.2f} "
-                    f"range={signal.get('range_size', 0):.2f} "
+                    f"price={current_price:.2f} "
                     f"spread={symbol_info.get('spread', 0)}"
                 )
                 return
 
             self.logger.signal(
                 f"Signal triggered: {signal['direction']} "
-                f"score={signal['score']:.2f} | "
-                f"breakout={signal.get('breakout_dist', 0):.2f}pt"
+                f"score={signal['score']:.2f}"
             )
             await self._execute_entry(signal, symbol_info)
         elif signal:
             self._log_signal_diagnostic(
                 "score_below_entry_threshold",
-                {
-                    "direction": signal["direction"],
-                    "bias": bias_dir,
-                    "price": current_price,
-                    "h1_high": h1_high,
-                    "h1_low": h1_low,
-                    "breakout_dist": signal.get("breakout_dist", 0),
-                    "range_size": signal.get("range_size", 0),
-                    "score": signal["score"],
-                    "threshold": entry_thresh,
-                    "atr_entry_threshold": signal.get("atr_entry_threshold"),
-                    "atr_multiplier": cfg.ATR_MULTIPLIER,
-                },
+                {"direction": signal["direction"],
+                 "price": current_price,
+                 "score": signal["score"],
+                 "threshold": cfg.SIGNAL_ENTRY_THRESHOLD},
             )
 
     def _log_signal_diagnostic(self, reason: str, context: Dict):
@@ -505,10 +485,10 @@ class Bot:
 
         exit_thresh = getattr(self, '_exit_threshold_override', cfg.EXIT_THRESHOLD_TIGHT)
         should_exit, exit_score, reason = self.signal_engine.evaluate_exit(
-            m1_data, entry_price, direction, entry_score,
-            exit_mode=6, exit_threshold=exit_thresh,
-            signal=self._current_signal,
-        )
+                m1_data, entry_price, direction, entry_score,
+                exit_mode=6, exit_threshold=exit_thresh,
+                signal=self._current_signal,
+            )
 
         if should_exit:
             self.logger.signal(
