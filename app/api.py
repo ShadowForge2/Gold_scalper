@@ -904,8 +904,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         if bot_pool:
             bot_pool.add_log(ident, f"MaxelPay payment of ${amount:.2f} created", "INFO")
         checkout_url = (
-            result.get("data", {}).get("checkoutUrl") or
-            result.get("checkoutUrl") or
+            result.get("data", {}).get("paymentUrl") or
+            result.get("paymentUrl") or
             result.get("url") or
             ""
         )
@@ -947,10 +947,18 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         dev = await get_device(did)
         if not dev or not dev.get("accounts"):
             return {"notifications": [], "unread_count": 0}
-        ident = dev["accounts"][0]["identifier"]
-        notifs = await get_notifications(ident)
-        unread = await get_unread_notification_count(ident)
-        return {"notifications": notifs, "unread_count": unread}
+        all_notifs = []
+        total_unread = 0
+        seen = set()
+        for acct in dev["accounts"]:
+            ident = acct["identifier"]
+            for n in await get_notifications(ident):
+                if n["id"] not in seen:
+                    seen.add(n["id"])
+                    all_notifs.append(n)
+            total_unread += await get_unread_notification_count(ident)
+        all_notifs.sort(key=lambda n: n.get("created_at", ""), reverse=True)
+        return {"notifications": all_notifs[:50], "unread_count": total_unread}
 
     @app.post("/api/device/notifications/mark-read")
     async def device_notifications_mark_read(data: dict, device_id: str = Header(None, alias="X-Device-Id")):
@@ -960,12 +968,12 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         dev = await get_device(did)
         if not dev or not dev.get("accounts"):
             return {"success": False}
-        ident = dev["accounts"][0]["identifier"]
         nid = data.get("id")
         if nid:
             await mark_notification_read(nid)
         else:
-            await mark_all_notifications_read(ident)
+            for acct in dev["accounts"]:
+                await mark_all_notifications_read(acct["identifier"])
         return {"success": True}
 
     return app
