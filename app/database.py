@@ -8,7 +8,7 @@ _env_url = os.getenv("DATABASE_URL", "").strip()
 if _env_url.startswith("postgresql://") and "+" not in _env_url:
     _env_url = _env_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-database = Database(_env_url if _env_url else SQLITE_URL)
+database = Database(SQLITE_URL)
 
 CREATE_DEVICES = """
 CREATE TABLE IF NOT EXISTS devices (
@@ -101,15 +101,25 @@ CREATE TABLE IF NOT EXISTS notifications (
 )
 """
 
+ALL_TABLES = [CREATE_DEVICES, CREATE_ACCOUNTS, CREATE_SUBSCRIPTIONS, CREATE_PERIODS, CREATE_PENDING_ORDERS, CREATE_PROCESSED_PAYMENTS]
+ALL_TABLES_SQLITE = [*ALL_TABLES, CREATE_NOTIFICATIONS_SQLITE]
+ALL_TABLES_PG = [*ALL_TABLES, CREATE_NOTIFICATIONS_PG]
+
 
 async def _try_pg() -> bool:
+    test_db = Database(_env_url, min_size=1, max_size=1)
     try:
-        async with asyncio.timeout(5):
-            await database.connect()
-            await database.execute("SELECT 1")
+        async with asyncio.timeout(15):
+            await test_db.connect()
+            await test_db.execute("SELECT 1")
             return True
     except Exception:
         return False
+    finally:
+        try:
+            await test_db.disconnect()
+        except Exception:
+            pass
 
 
 async def _try_sqlite() -> bool:
@@ -122,22 +132,27 @@ async def _try_sqlite() -> bool:
         return False
 
 
-ALL_TABLES = [CREATE_DEVICES, CREATE_ACCOUNTS, CREATE_SUBSCRIPTIONS, CREATE_PERIODS, CREATE_PENDING_ORDERS, CREATE_PROCESSED_PAYMENTS]
-ALL_TABLES_SQLITE = [*ALL_TABLES, CREATE_NOTIFICATIONS_SQLITE]
-ALL_TABLES_PG = [*ALL_TABLES, CREATE_NOTIFICATIONS_PG]
-
-
 async def init_db():
     global database, _env_url
     if _env_url:
         ok = await _try_pg()
         if ok:
-            for sql in ALL_TABLES_PG:
-                await database.execute(sql)
-            return
-    database = Database(SQLITE_URL)
+            try:
+                db = Database(_env_url)
+                async with asyncio.timeout(15):
+                    await db.connect()
+                for sql in ALL_TABLES_PG:
+                    await db.execute(sql)
+                for col in ["active"]:
+                    try:
+                        await db.execute(f"ALTER TABLE accounts ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
+                    except Exception:
+                        pass
+                database = db
+                return
+            except Exception:
+                pass
     await _try_sqlite()
-    # migration: add active column if missing
     for col in ["active"]:
         try:
             await database.execute(f"ALTER TABLE accounts ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
