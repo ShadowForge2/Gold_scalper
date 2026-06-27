@@ -28,7 +28,9 @@ services:
       - key: MIN_LOT
         value: "0.01"
       - key: MAX_LOT
-        value: "1.00"
+        value: "100.00"
+      - key: LOT_STEP
+        value: "0.01"
       - key: LOT_MULTIPLIER
         value: "2"
       - key: SIGNAL_TIMEFRAME
@@ -42,7 +44,7 @@ services:
       - key: MAX_TRADES_PER_SESSION
         value: "10"
       - key: MAX_CONSECUTIVE_LOSSES
-        value: "3"
+        value: "5"
       - key: RE_ENTRY_COOLDOWN_SEC
         value: "60"
       - key: BIAS_UPDATE_INTERVAL_SEC
@@ -50,7 +52,7 @@ services:
       - key: SIGNAL_ENTRY_THRESHOLD
         value: "0.85"
       - key: SL_ATR_MULTIPLIER
-        value: "1.0"
+        value: "2.0"
       - key: TP1_MULTIPLIER
         value: "2.0"
       - key: TP2_MULTIPLIER
@@ -64,14 +66,34 @@ services:
       - key: TP_CLOSE_MOMENTUM_MIN
         value: "0.25"
       - key: EXIT_THRESHOLD_TIGHT
-        value: "0.50"
+        value: "0.60"
       - key: MAX_SPREAD_PIPS
         value: "50.0"
+      - key: MAX_SLIPPAGE_PIPS
+        value: "10"
+      - key: MIN_BALANCE
+        value: "10.0"
+      - key: MIN_VOLATILITY_PIPS
+        value: "5.0"
+      - key: MAX_VOLATILITY_PIPS
+        value: "200.0"
       - key: ALLOWED_SESSIONS
         value: ASIA,LONDON,NEW_YORK
+      - key: PEAK_HARVEST_TRAIL_TRIGGER
+        value: "3.0"
+      - key: PEAK_HARVEST_TRAIL_RETRACE
+        value: "0.60"
+      - key: PEAK_HARVEST_MIN_BARS_EXIT
+        value: "15"
+      - key: PEAK_HARVEST_MOMENTUM_THRESHOLD
+        value: "0.90"
+      - key: PEAK_HARVEST_MAX_HOLD_BARS
+        value: "48"
+      - key: USD_TO_NGN_RATE
+        value: "1500"
       - key: PAYSTACK_SECRET_KEY
         sync: false
       - key: DATABASE_URL
         sync: false
       - key: CORS_ORIGINS
-        value: https://your-frontend-domain.com
+        value: https://gold-scalper-qyhg.onrender.com
