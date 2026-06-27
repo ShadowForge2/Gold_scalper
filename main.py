@@ -25,15 +25,11 @@ async def _try_start_user_bot(ident: str, api_key: str, password: str, demo: boo
                 return
         except Exception as e:
             bot.logger.warning(f"Sub check failed for {ident}: {e}. Will still attempt.")
-    temp = CapitalClient()
-    ok = temp.initialize(api_key=api_key, identifier=ident, password=password, demo=demo)
-    temp.shutdown()
-    if not ok:
-        bot.logger.warning(f"Skipping account {ident}: credentials no longer valid")
-        return
     result = bot_pool.start(identifier=ident, api_key=api_key, password=password, demo=demo)
     if result["success"]:
         bot.logger.info(f"Restored user bot: {ident}")
+    else:
+        bot.logger.warning(f"Failed to restore user bot {ident}: {result.get('error', 'unknown')}")
 
 
 async def startup_db():
