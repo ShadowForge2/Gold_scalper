@@ -32,7 +32,7 @@ services:
       - key: LOT_MULTIPLIER
         value: "2"
       - key: SIGNAL_TIMEFRAME
-        value: "5"
+        value: "1"
       - key: MAX_DAILY_LOSS_USD
         value: "10.00"
       - key: MAX_EVENT_LOSS_USD
