@@ -14,6 +14,7 @@ from app.signal_engine import SignalEngine
 from app.risk_manager import RiskManager, EquityScaler
 from app.trade_executor import TradeExecutor
 from app.position_manager import PositionManager
+from app.gemini_advisor import GeminiAdvisor
 
 
 class Bot:
@@ -37,6 +38,9 @@ class Bot:
         self.signal_engine = SignalEngine()
         self.risk_manager = RiskManager()
         self.scaler = EquityScaler()
+        self.gemini_advisor = GeminiAdvisor()
+        if self.gemini_advisor.enabled:
+            self.logger.info("Gemini advisor enabled")
 
         self.state: str = self.STATES["IDLE"]
         self.symbol: str = cfg.SYMBOL
@@ -387,6 +391,45 @@ class Bot:
                 )
                 return
 
+            gemini_advice = await self.gemini_advisor.advise_entry({
+                "bias": self._bias_summary.get("bias", "UNKNOWN"),
+                "direction": signal["direction"],
+                "score": signal["score"],
+                "atr": signal.get("atr_value"),
+                "breakout_dist": signal.get("breakout_dist"),
+                "range_size": signal.get("range_size"),
+                "spread": symbol_info.get("spread", 0),
+                "consecutive_losses": self.risk_manager.consecutive_losses,
+                "session": self._current_session(),
+                "momentum": round(
+                    self.signal_engine._compute_momentum(m1_data), 3
+                ) if hasattr(self.signal_engine, '_compute_momentum') else None,
+                "volatility": symbol_info.get("volatility", 0),
+            })
+
+            if gemini_advice:
+                action = gemini_advice.get("action", "proceed")
+                reason = gemini_advice.get("reason", "")
+                self.logger.signal(
+                    f"Gemini: {action} | {reason}"
+                )
+                if action == "skip":
+                    return
+                if action == "caution":
+                    tp_mod = float(gemini_advice.get("tp_modifier", 1.0))
+                    if "tp1" in signal:
+                        signal["tp1"] = signal["entry_price"] + (
+                            signal["tp1"] - signal["entry_price"]
+                        ) * tp_mod
+                    if "tp2" in signal:
+                        signal["tp2"] = signal["entry_price"] + (
+                            signal["tp2"] - signal["entry_price"]
+                        ) * tp_mod
+                    if "tp3" in signal:
+                        signal["tp3"] = signal["entry_price"] + (
+                            signal["tp3"] - signal["entry_price"]
+                        ) * tp_mod
+
             self.logger.signal(
                 f"Signal triggered: {signal['direction']} "
                 f"score={signal['score']:.2f}"
@@ -400,6 +443,16 @@ class Bot:
                  "score": signal["score"],
                  "threshold": cfg.SIGNAL_ENTRY_THRESHOLD},
             )
+
+    def _current_session(self) -> str:
+        h = datetime.utcnow().hour
+        if 6 <= h < 14:
+            return "ASIA"
+        if 14 <= h < 20:
+            return "LONDON"
+        if 20 <= h < 24 or h < 2:
+            return "NEW_YORK"
+        return "OVERLAP"
 
     def _log_signal_diagnostic(self, reason: str, context: Dict):
         now = time.monotonic()
@@ -489,6 +542,32 @@ class Bot:
                 exit_mode=6, exit_threshold=exit_thresh,
                 signal=self._current_signal,
             )
+
+        gemini_exit_advice = None
+        if not should_exit:
+            gemini_exit_advice = await self.gemini_advisor.advise_exit({
+                "direction": direction,
+                "pnl": round(pnl_data["event_pnl"], 2),
+                "run_duration_min": round(
+                    (time.time() - self.position_manager._event_start_ts) / 60
+                ) if hasattr(self.position_manager, '_event_start_ts') and self.position_manager._event_start_ts else None,
+                "momentum": round(
+                    self.signal_engine._compute_momentum(m1_data), 3
+                ) if hasattr(self.signal_engine, '_compute_momentum') else None,
+                "distance_from_entry": round(
+                    m1_data["close"].iloc[-1] - entry_price
+                ) if direction == "BUY" else round(
+                    entry_price - m1_data["close"].iloc[-1]
+                ),
+                "tp1": self._current_signal.get("tp1") if self._current_signal else None,
+                "tp2": self._current_signal.get("tp2") if self._current_signal else None,
+                "spread": self.client.get_symbol_info(self.symbol).get("spread", 0)
+                if self.client else 0,
+            })
+            if gemini_exit_advice and gemini_exit_advice.get("action") == "exit_early":
+                self.logger.signal(
+                    f"Gemini suggests early exit: {gemini_exit_advice.get('reason', '')}"
+                )
 
         if should_exit:
             self.logger.signal(
