@@ -52,9 +52,6 @@ class NotificationBell extends StatelessWidget {
   }
 
   void _showPanel(BuildContext context) {
-    final bp = context.read<BotProvider>();
-    bp.markNotificationsRead();
-
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,

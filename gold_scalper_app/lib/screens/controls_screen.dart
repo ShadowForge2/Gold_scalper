@@ -15,6 +15,8 @@ class ControlsScreen extends StatefulWidget {
 }
 
 class _ControlsScreenState extends State<ControlsScreen> {
+  bool _isStarting = false;
+
   @override
   Widget build(BuildContext context) {
     return Consumer<BotProvider>(
@@ -48,7 +50,10 @@ class _ControlsScreenState extends State<ControlsScreen> {
   }
 
   Future<void> _startBot(BuildContext context, BotProvider bp) async {
+    if (_isStarting) return;
+    setState(() => _isStarting = true);
     final ok = await bp.startBot();
+    if (mounted) setState(() => _isStarting = false);
     if (!ok && context.mounted) {
       if (bp.subscriptionBlocked) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -114,12 +119,16 @@ class _ControlsScreenState extends State<ControlsScreen> {
             children: [
               if (!isRunning)
                 ElevatedButton.icon(
-                  onPressed: hapt(() => _startBot(context, bp)),
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('Start Bot'),
+                  onPressed: _isStarting ? null : hapt(() => _startBot(context, bp)),
+                  icon: _isStarting
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.play_arrow),
+                  label: Text(_isStarting ? 'Starting...' : 'Start Bot'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green,
                     foregroundColor: Colors.white,
+                    disabledBackgroundColor: Colors.green.withValues(alpha: 0.4),
+                    disabledForegroundColor: Colors.white60,
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),

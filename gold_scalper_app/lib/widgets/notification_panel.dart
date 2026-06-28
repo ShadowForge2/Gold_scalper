@@ -145,65 +145,71 @@ class _NotificationTile extends StatelessWidget {
               : kGold.withValues(alpha: 0.12),
         ),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: notification.isRead ? null : () {
+          context.read<BotProvider>().markNotificationsRead(id: notification.id);
+        },
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: iconColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: iconColor, size: 16),
             ),
-            child: Icon(icon, color: iconColor, size: 16),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        notification.title,
-                        style: TextStyle(
-                          color: notification.isRead ? Colors.white54 : Colors.white,
-                          fontSize: 13,
-                          fontWeight: notification.isRead ? FontWeight.normal : FontWeight.w600,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          notification.title,
+                          style: TextStyle(
+                            color: notification.isRead ? Colors.white54 : Colors.white,
+                            fontSize: 13,
+                            fontWeight: notification.isRead ? FontWeight.normal : FontWeight.w600,
+                          ),
                         ),
                       ),
-                    ),
-                    Text(
-                      timeStr,
-                      style: const TextStyle(color: Colors.white24, fontSize: 10),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  notification.message,
-                  style: TextStyle(
-                    color: notification.isRead ? Colors.white38 : Colors.white60,
-                    fontSize: 12,
-                    height: 1.3,
+                      Text(
+                        timeStr,
+                        style: const TextStyle(color: Colors.white24, fontSize: 10),
+                      ),
+                    ],
                   ),
-                ),
-              ],
-            ),
-          ),
-          if (!notification.isRead)
-            Padding(
-              padding: const EdgeInsets.only(left: 4, top: 4),
-              child: Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: kGold,
-                  shape: BoxShape.circle,
-                ),
+                  const SizedBox(height: 4),
+                  Text(
+                    notification.message,
+                    style: TextStyle(
+                      color: notification.isRead ? Colors.white38 : Colors.white60,
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
               ),
             ),
-        ],
+            if (!notification.isRead)
+              Padding(
+                padding: const EdgeInsets.only(left: 4, top: 4),
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: kGold,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

@@ -9,6 +9,7 @@ import '../models/performance.dart';
 import '../models/config.dart';
 import '../models/notification_item.dart';
 import '../widgets/terminal_log.dart';
+import '../services/notification_service.dart';
 import 'device_provider.dart';
 
 class BotProvider extends ChangeNotifier {
@@ -39,6 +40,7 @@ class BotProvider extends ChangeNotifier {
 
   List<NotificationItem> _notifications = [];
   int _unreadCount = 0;
+  final Set<String> _seenNotificationIds = {};
 
   static const _configKey = 'saved_bot_config';
 
@@ -349,7 +351,23 @@ class BotProvider extends ChangeNotifier {
     try {
       final data = await _get('/api/device/notifications');
       final list = (data['notifications'] as List? ?? []);
-      _notifications = list.map((n) => NotificationItem.fromJson(n)).toList();
+      final parsed = list.map((n) => NotificationItem.fromJson(n)).toList();
+      final newIds = parsed.map((n) => n.id).toSet();
+      for (final n in parsed) {
+        if (!_seenNotificationIds.contains(n.id)) {
+          _seenNotificationIds.add(n.id);
+          if (n.type == 'trade_open' || n.type == 'trade_close') {
+            NotificationService.instance.showNotification(
+              id: NotificationService.nextId,
+              title: n.title,
+              body: n.message,
+              payload: n.id,
+            );
+          }
+        }
+      }
+      _seenNotificationIds.retainAll(newIds);
+      _notifications = parsed;
       _unreadCount = (data['unread_count'] ?? 0) as int;
     } catch (e) {
       debugPrint('_fetchNotifications failed: $e');
@@ -615,6 +633,7 @@ class BotProvider extends ChangeNotifier {
     }
     await _device.saveCredentialsTimestamp();
     addLog('Account saved: $identifier', level: 'TRADE');
+    await _fetchState(); // immediately pick up auto-started state
     return null;
   }
 

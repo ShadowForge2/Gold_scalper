@@ -1,10 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class PaymentWebView extends StatefulWidget {
   final String url;
   final String title;
-  final VoidCallback? onSuccess;
+  final Future<bool> Function(String reference)? onSuccess;
 
   const PaymentWebView({
     super.key,
@@ -42,10 +43,15 @@ class _PaymentWebViewState extends State<PaymentWebView> {
             _error = 'Payment page failed to load. Check your connection and try again.';
           });
         },
-        onUrlChange: (change) {
+        onUrlChange: (change) async {
           final url = change.url ?? '';
-          if (url.contains('success') || url.contains('callback')) {
-            widget.onSuccess?.call();
+          final params = Uri.tryParse(url)?.queryParameters ?? {};
+          final ref = params['reference'] ?? params['trxref'] ?? '';
+          if (ref.isNotEmpty && !url.contains('paystack.com/checkout')) {
+            final ok = await widget.onSuccess?.call(ref) ?? true;
+            if (ok && context.mounted) {
+              Navigator.of(context).pop(ref);
+            }
           }
         },
       ))

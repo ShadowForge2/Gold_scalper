@@ -6,10 +6,12 @@ import 'providers/device_provider.dart';
 import 'providers/bot_provider.dart';
 import 'screens/home_screen.dart';
 import 'screens/welcome/welcome_screen.dart';
+import 'services/notification_service.dart';
 import 'theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  NotificationService.instance.init();
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,

@@ -455,19 +455,35 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 if (result != null && context.mounted) {
                   final url = result['authorization_url'] as String?;
                   if (url != null) {
-                    await Navigator.push(
+                    final ref = await Navigator.push<String>(
                       context,
                       MaterialPageRoute(
                         builder: (_) => PaymentWebView(
                           url: url,
                           title: isCard ? 'Card Payment' : 'Bank Transfer',
+                          onSuccess: (reference) async {
+                            for (var i = 0; i < 30; i++) {
+                              try {
+                                await bp.verifyPayment(reference);
+                                return true;
+                              } catch (_) {}
+                              await Future.delayed(const Duration(seconds: 2));
+                            }
+                            return false;
+                          },
                         ),
                       ),
                     );
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Payment completed. Check subscription status.')),
-                      );
+                      if (ref != null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Payment successful! Subscription activated.')),
+                        );
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Payment completed. Check subscription status.')),
+                        );
+                      }
                     }
                   } else {
                     ScaffoldMessenger.of(context).showSnackBar(
