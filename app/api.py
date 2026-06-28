@@ -81,6 +81,10 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
     def _db_ok() -> bool:
         return db_check() if db_check else True
 
+    @app.get("/")
+    async def root():
+        return {"service": "Gold Scalper", "status": "running"}
+
     @app.get("/health")
     async def health():
         connected = bot.client is not None and bot.client.is_connected()
