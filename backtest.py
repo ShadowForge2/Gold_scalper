@@ -69,22 +69,7 @@ def _pnl(entry_px, exit_px, direction, lot, num_trades, entry_time=None):
     slippage_cost = SLIPPAGE_PER_LOT_USD * lot * num_trades
     return gross - spread_cost - slippage_cost
 
-# ── equity tiers ──
-
-def _get_tier(balance):
-    if balance >= 100.0:
-        return 3
-    elif balance >= 50.0:
-        return 2
-    return 1
-
-def _tier_params(tier):
-    tiers = {
-        1: {"entry_threshold": 0.00, "exit_threshold": 0.50, "max_trades": 1, "num_trades": 1},
-        2: {"entry_threshold": 0.00, "exit_threshold": 0.50, "max_trades": 2, "num_trades": 2},
-        3: {"entry_threshold": 0.00, "exit_threshold": 0.50, "max_trades": 3, "num_trades": 3},
-    }
-    return tiers.get(tier, tiers[1])
+# ── tier helpers (live EquityScaler handles the logic) ──
 
 def _normalize_cash_flows(cash_flows):
     normalized = []
@@ -526,9 +511,6 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
         ts = sig_df["time"].iloc[idx]
         row = sig_df.iloc[idx]
         px = row["open"]
-        tier = _get_tier(balance)
-        tp = _tier_params(tier)
-
         # daily header
         if cur_day != ts.date():
             if cur_day is not None and verbose:
@@ -637,11 +619,11 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
             sig = sigs[idx]
             score = scores[idx]
             atr_thresh = sig.get("atr_entry_threshold") if sig else None
-            tier_et = max(atr_thresh if atr_thresh is not None else 0, et, tp["entry_threshold"])
-            if score >= tier_et and sig is not None:
+            min_et = max(atr_thresh if atr_thresh is not None else 0, et)
+            if score >= min_et and sig is not None:
                 scaler.base_trades = base_tr
                 lot = fixed_lot if fixed_lot else min(scaler.get_lot(balance) * lot_mult, cfg.MAX_LOT)
-                num_tr = min(tp["num_trades"], max_trades, scaler.get_trades_per_event(balance, score))
+                num_tr = min(max_trades, scaler.get_trades_per_event(balance, score))
                 # cap total exposure per event
                 total_lot = lot * num_tr
                 if total_lot > max_total_lot:

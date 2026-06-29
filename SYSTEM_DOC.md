@@ -220,7 +220,24 @@ BROKER=MT5       # Requires MetaTrader5 terminal
 
 ---
 
-## 10. Dependencies
+## 10. Gemini AI Integration
+
+An optional **Google Gemini API** advisory layer (`app/gemini_advisor.py`) can be enabled to provide AI-driven oversight on trading decisions.
+
+### Configuration (`.env`)
+| Variable | Default | Description |
+|---|---|---|
+| `GEMINI_API_KEY` | `""` | Google Gemini API key |
+| `GEMINI_ENABLED` | `false` | Enable/disable Gemini advisor |
+| `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model to use |
+| `GEMINI_ADVICE_WEIGHT` | `1.0` | Weight multiplier for advice |
+
+### How it works
+- **Entry gate**: After the mechanical signal engine detects a valid setup (score >= 0.85), the current market context (bias, score, ATR, spread, momentum, consecutive losses, session) is sent to Gemini. It returns a JSON decision — `"proceed"` (trade as planned), `"skip"` (block the trade), or `"caution"` (adjust take-profit targets). If Gemini fails or is disabled, the trade proceeds on mechanical rules alone.
+- **Exit observer**: While in a trade, Gemini is periodically consulted with live PnL, run duration, and momentum data. Its advice is logged for reference but does not trigger any action — all exits are determined by the mechanical exit engine.
+- Gemini is **disabled by default** and requires explicit opt-in via `GEMINI_ENABLED=true` and a valid API key.
+
+## 11. Dependencies
 
 ```
 requests          # Capital.com REST API
@@ -229,6 +246,7 @@ numpy             # Numerical ops
 python-dotenv     # .env loading
 uvicorn           # FastAPI server
 fastapi           # Dashboard
+google-generativeai # Gemini API
 yfinance          # Backtest data (optional, Yahoo)
 MetaTrader5       # Backtest data (optional, MT5)
 ```

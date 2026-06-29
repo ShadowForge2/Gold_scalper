@@ -40,6 +40,8 @@ class EquityScaler:
         lot = self.base_lot * (balance / reference)
         max_by_equity = balance / 5000.0
         lot = min(lot, max_by_equity)
+        if self.in_drawdown(balance):
+            lot *= 0.5
         lot = round(lot / cfg.LOT_STEP) * cfg.LOT_STEP
         return max(cfg.MIN_LOT, min(lot, cfg.MAX_LOT))
 
@@ -56,7 +58,10 @@ class EquityScaler:
             cm = 1.0
 
         trades = int(self.base_trades * tm * cm)
-        return max(1, trades)
+        trades = max(1, trades)
+        if self.in_drawdown(balance):
+            trades = 1
+        return trades
 
     def in_drawdown(self, balance: float) -> bool:
         if not self.peak_balance or self.peak_balance <= 0:
