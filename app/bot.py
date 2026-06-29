@@ -15,6 +15,7 @@ from app.risk_manager import RiskManager, EquityScaler
 from app.trade_executor import TradeExecutor
 from app.position_manager import PositionManager
 from app.gemini_advisor import GeminiAdvisor
+from app.meta_strategy import MetaStrategy
 
 
 class Bot:
@@ -38,6 +39,7 @@ class Bot:
         self.signal_engine = SignalEngine()
         self.risk_manager = RiskManager()
         self.scaler = EquityScaler()
+        self.meta = MetaStrategy() if cfg.META_ENABLED else None
         self.gemini_advisor = GeminiAdvisor()
         if self.gemini_advisor.enabled:
             self.logger.info("Gemini advisor enabled")
@@ -378,7 +380,8 @@ class Bot:
             )
 
         # Shared entry logic
-        if signal and signal["score"] >= cfg.SIGNAL_ENTRY_THRESHOLD:
+        effective_threshold = self.meta.current_threshold if self.meta else cfg.SIGNAL_ENTRY_THRESHOLD
+        if signal and signal["score"] >= effective_threshold:
             can_enter, reason = self.risk_manager.can_enter_trade(
                 symbol_info, datetime.now()
             )
@@ -441,7 +444,7 @@ class Bot:
                 {"direction": signal["direction"],
                  "price": current_price,
                  "score": signal["score"],
-                 "threshold": cfg.SIGNAL_ENTRY_THRESHOLD},
+                 "threshold": effective_threshold},
             )
 
     def _current_session(self) -> str:
@@ -500,6 +503,9 @@ class Bot:
             for pos_data in self.trade_executor.close_all_bot_positions():
                 self.position_manager.note_closed(pos_data)
             self.risk_manager.record_exit(pnl_data["event_pnl"])
+            if self.meta:
+                self.meta.record_trade(pnl_data["event_pnl"], self._bias_summary.get("strength", 0))
+                self.meta.update(balance, self._bias_summary)
             await self._notify(
                 "trade_close",
                 "Trade Closed (Event Loss)",
@@ -576,6 +582,9 @@ class Bot:
             for pos_data in self.trade_executor.close_all_bot_positions():
                 self.position_manager.note_closed(pos_data)
             self.risk_manager.record_exit(pnl_data["event_pnl"])
+            if self.meta:
+                self.meta.record_trade(pnl_data["event_pnl"], self._bias_summary.get("strength", 0))
+                self.meta.update(balance, self._bias_summary)
             await self._notify(
                 "trade_close",
                 "Trade Closed",
@@ -612,6 +621,11 @@ class Bot:
 
         summary = self.bias_engine.update(h1_data)
         self._bias_summary = summary
+
+        if self.meta:
+            info = self.client.get_account_info()
+            balance = info["balance"] if info else 0
+            self.meta.update(balance, summary)
 
         tradeable = self.bias_engine.is_tradeable()
         self.logger.bias(
@@ -654,11 +668,15 @@ class Bot:
         self.scaler.update_peak(balance)
 
         lot_mult = getattr(self, '_lot_multiplier_override', cfg.LOT_MULTIPLIER)
+        if self.meta:
+            lot_mult = self.meta.current_lot_mult
         lot = min(self.scaler.get_lot(balance) * lot_mult, cfg.MAX_LOT)
         vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
         lot = round(lot / vol_step) * vol_step
         lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), min(lot, fresh_info.get("volume_max", cfg.MAX_LOT)))
         max_trades = self.scaler.get_trades_per_event(balance, score)
+        if self.meta:
+            max_trades = self.meta.current_trades_per_event
 
         # Price drift check — reject if price moved outside signal range
         current_price = fresh_info["bid"] if direction == "SELL" else fresh_info["ask"]

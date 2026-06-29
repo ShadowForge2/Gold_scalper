@@ -15,6 +15,7 @@ import config as cfg
 from app.signal_engine import SignalEngine
 from app.bias_engine import BiasEngine
 from app.risk_manager import EquityScaler
+from app.meta_strategy import MetaStrategy
 from app.capital_client import CapitalClient
 
 BACKTEST_BROKER = "DUKASCOPY" # "MT5", "MT5_H1", "CAPITAL", "YAHOO", "YAHOO_H1", or "DUKASCOPY"
@@ -493,6 +494,8 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
     scaler = EquityScaler()
     scaler.initialize(INITIAL_BALANCE)
 
+    meta = MetaStrategy() if cfg.META_ENABLED else None
+
     trades = []
     cur = None
     balance = INITIAL_BALANCE
@@ -515,6 +518,10 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
         if cur_day != ts.date():
             if cur_day is not None and verbose:
                 print(f"  {cur_day}: {daily_trades:3d} tr  ${balance:7.2f}  pk=${peak:7.2f}  dd=${peak - balance:5.2f}", flush=True)
+                if meta:
+                    ms = meta.summary(balance)
+                    print(f"    meta: {ms['regime']} et={ms['entry_threshold']} lm={ms['lot_multiplier']} "
+                          f"te={ms['trades_per_event']} wr={ms['rolling_win_rate']}% pf={ms['rolling_profit_factor']}", flush=True)
             cur_day = ts.date()
             daily_trades = 0
             daily_pnl = 0.0
@@ -572,6 +579,9 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
                 })
                 consec_losses = 0 if pnl > 0 else consec_losses + 1
                 cooldown = ts + timedelta(seconds=cfg.RE_ENTRY_COOLDOWN_SEC * (1 + consec_losses))
+                if meta:
+                    meta.record_trade(pnl, bsum.get("strength", 0) if bsum else 0)
+                    meta.update(balance, bsum or {"strength": 0, "bias": "NEUTRAL"})
                 cur = None
                 continue
 
@@ -592,6 +602,9 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
                 })
                 consec_losses += 1
                 cooldown = ts + timedelta(seconds=cfg.RE_ENTRY_COOLDOWN_SEC * (1 + consec_losses))
+                if meta:
+                    meta.record_trade(pnl, bsum.get("strength", 0) if bsum else 0)
+                    meta.update(balance, bsum or {"strength": 0, "bias": "NEUTRAL"})
                 cur = None
                 continue
 
@@ -613,17 +626,24 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
                 continue
             if bsum.get("bias") not in ("BULLISH", "BEARISH"):
                 continue
-            if bsum.get("strength", 0) < bias_min:
+            effective_bias_min = meta.current_bias_min if meta else bias_min
+            if bsum.get("strength", 0) < effective_bias_min:
                 continue
+
+            if meta:
+                meta.update(balance, bsum)
 
             sig = sigs[idx]
             score = scores[idx]
             atr_thresh = sig.get("atr_entry_threshold") if sig else None
-            min_et = max(atr_thresh if atr_thresh is not None else 0, et)
+            effective_et = meta.current_threshold if meta else et
+            min_et = max(atr_thresh if atr_thresh is not None else 0, effective_et)
             if score >= min_et and sig is not None:
                 scaler.base_trades = base_tr
-                lot = fixed_lot if fixed_lot else min(scaler.get_lot(balance) * lot_mult, cfg.MAX_LOT)
-                num_tr = min(max_trades, scaler.get_trades_per_event(balance, score))
+                effective_lot_mult = meta.current_lot_mult if meta else lot_mult
+                effective_max_trades = meta.current_trades_per_event if meta else max_trades
+                lot = fixed_lot if fixed_lot else min(scaler.get_lot(balance) * effective_lot_mult, cfg.MAX_LOT)
+                num_tr = min(effective_max_trades, scaler.get_trades_per_event(balance, score))
                 # cap total exposure per event
                 total_lot = lot * num_tr
                 if total_lot > max_total_lot:
@@ -726,6 +746,11 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
     if verbose:
         print(f"  => ${total_pnl:.2f} WR={wr:.1f}% PF={pf:.2f} DD=${max_dd:.2f} "
               f"Ret={result['return_pct']:.2f}%", flush=True)
+        if meta:
+            ms = meta.summary(balance)
+            print(f"  META: regime={ms['regime']} final_et={ms['entry_threshold']} "
+                  f"lm={ms['lot_multiplier']} te={ms['trades_per_event']} "
+                  f"wr={ms['rolling_win_rate']}% pf={ms['rolling_profit_factor']} dd={ms['drawdown_pct']}%", flush=True)
         print("\nMonthly breakdown:", flush=True)
         for m, v in monthly_breakdown.items():
             print(f"  {m}: {v['trades']:3d} tr  ${v['pnl']:+.2f}  WR={v['wr']:.1f}%", flush=True)
