@@ -446,7 +446,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
     for idx in range(N):
         ts = sig_df["time"].iloc[idx]
         row = sig_df.iloc[idx]
-        px = row["open"]
+        px = row["close"]
         # daily header
         if cur_day != ts.date():
             if cur_day is not None and verbose:
