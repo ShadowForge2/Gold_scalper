@@ -446,7 +446,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
     for idx in range(N):
         ts = sig_df["time"].iloc[idx]
         row = sig_df.iloc[idx]
-        px = row["close"]
+        px = row["open"]
         # daily header
         if cur_day != ts.date():
             if cur_day is not None and verbose:
@@ -485,7 +485,8 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
 
         # ── EXIT ──
         if cur is not None:
-            event_pnl = _pnl(cur["entry_price"], px, cur["direction"], cur["lot"], cur["num_trades"], entry_time=cur["entry_time"])
+            exit_px = row["close"]
+            event_pnl = _pnl(cur["entry_price"], exit_px, cur["direction"], cur["lot"], cur["num_trades"], entry_time=cur["entry_time"])
             exit_window = sig_df.iloc[max(0, idx - 20):idx]
             should_exit, exit_score_val, reason = signal_engine.evaluate_exit(
                 exit_window, cur["entry_price"], cur["direction"], cur.get("entry_score"),
@@ -496,7 +497,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
             )
 
             if should_exit:
-                pnl = _pnl(cur["entry_price"], px, cur["direction"], cur["lot"], cur["num_trades"], entry_time=cur["entry_time"])
+                pnl = _pnl(cur["entry_price"], exit_px, cur["direction"], cur["lot"], cur["num_trades"], entry_time=cur["entry_time"])
                 balance += pnl
                 daily_pnl += pnl
                 if balance > peak:
@@ -505,7 +506,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
                 trades.append({
                     "entry_time": cur["entry_time"], "exit_time": ts,
                     "direction": cur["direction"], "entry_price": cur["entry_price"],
-                    "exit_price": round(px, 2), "pnl": round(pnl, 2),
+                    "exit_price": round(exit_px, 2), "pnl": round(pnl, 2),
                     "lot": cur["lot"], "num_trades": cur["num_trades"],
                     "bars_held": cur.get("bars_held", 0), "exit_reason": reason,
                     "exit_score": exit_score_val, "balance": round(balance, 2),
