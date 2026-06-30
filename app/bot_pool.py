@@ -220,7 +220,7 @@ class BotPool:
                 try:
                     return await can_start_live(orig_ident, 0.0)
                 except Exception:
-                    return True
+                    return False
             bot.set_can_trade_callback(_sub_check)
 
         self._write_state(ident, {

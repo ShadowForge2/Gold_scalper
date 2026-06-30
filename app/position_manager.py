@@ -6,7 +6,7 @@ import config as cfg
 
 class PositionManager:
     def __init__(self, client: Any):
-        self.mt5 = client
+        self.client = client
         self.magic = cfg.MAGIC_NUMBER
         self.open_positions: List[Dict] = []
         self.event_pnl: float = 0.0
@@ -35,7 +35,7 @@ class PositionManager:
             self.closed_history[:100] = []
 
     def refresh(self) -> Dict:
-        raw_positions = self.mt5.get_positions(magic=self.magic)
+        raw_positions = self.client.get_positions(magic=self.magic)
         now = time.time()
         cutoff = now - 30.0
         self._closed_tickets = {
@@ -47,7 +47,7 @@ class PositionManager:
             if str(p["ticket"]) not in self._closed_tickets
         ]
         self.event_pnl = sum(p["profit"] for p in self.open_positions)
-        self.daily_pnl = self.mt5.get_total_daily_pnl(self.magic)
+        self.daily_pnl = self.client.get_total_daily_pnl(self.magic)
         self.in_event = len(self.open_positions) > 0
         self.open_count = len(self.open_positions)
         return self.summary()

@@ -125,7 +125,8 @@ class RiskManager:
                 remaining = int(self.cooldown_seconds - elapsed)
                 return False, f"cooldown ({remaining}s remaining)"
 
-        spread_pips = symbol_info.get("spread", 0)
+        point = symbol_info.get("point", 0.0001)
+        spread_pips = float(symbol_info.get("spread", 0)) / point if point > 0 else 0
         if spread_pips > self.max_spread:
             return False, f"spread_too_high ({spread_pips:.1f} > {self.max_spread})"
 

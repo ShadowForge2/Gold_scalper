@@ -174,7 +174,7 @@ class CapitalClient:
     def reconnect(self, server: str, account: str, password: str) -> bool:
         self.shutdown()
         self.demo = "demo" in server.lower() or "DEMO" in server
-        return self.initialize(self.api_key, self.identifier, self.password)
+        return self.initialize(self.api_key, account, password)
 
     def last_error(self) -> Tuple[int, str]:
         return 0, self._last_order_error or "No error"
@@ -471,16 +471,15 @@ class CapitalClient:
             if info:
                 self._prev_balance = info.get("balance", 0)
             self._daily_pnl_date = today
-            self._realized_daily_pnl = 0.0
-            self._last_position_pnl.clear()
 
         info = self.get_account_info()
         if info is None or self._prev_balance is None:
             return 0.0
 
+        current_balance = info.get("balance", 0)
         positions = self.get_positions(magic)
         open_pnl = sum(p["profit"] for p in positions)
-        return self._realized_daily_pnl + open_pnl
+        return (current_balance - self._prev_balance) + open_pnl
 
     async def order_send(self, request: dict) -> Dict:
         epic = request.get("epic", self._resolve_epic(request.get("symbol", "GOLD")))

@@ -18,7 +18,7 @@ from app.risk_manager import EquityScaler
 from app.meta_strategy import MetaStrategy
 from app.capital_client import CapitalClient
 
-BACKTEST_BROKER = "DUKASCOPY" # "MT5", "MT5_H1", "CAPITAL", "YAHOO", "YAHOO_H1", or "DUKASCOPY"
+BACKTEST_BROKER = "DUKASCOPY" # "CAPITAL", "YAHOO", "YAHOO_H1", or "DUKASCOPY"
 BACKTEST_YEAR = 2025          # Full year H1 validation
 BACKTEST_START = datetime(2025, 1, 1)
 BACKTEST_END = datetime(2025, 12, 31, 23, 59)
@@ -33,7 +33,7 @@ LEVERAGE = 200              # Capital.com gold leverage (professional/offshore)
 MARGIN_MAX_PCT = 1.0        # Capital.com real req: allows up to 100% equity as margin
 MARGIN_RATE = None          # Override: Capital.com margin_rate (0.05). If None, uses CONTRACT_SIZE/LEVERAGE
 
-# Timeframe constants (same values as MT5 constants)
+# Timeframe constants
 TIMEFRAME_H1 = 16385
 TIMEFRAME_M5 = 5
 
@@ -123,73 +123,7 @@ def _load_from_capital():
 
     return _pre_compute(sig_df, h1)
 
-def _load_from_mt5():
-    try:
-        import MetaTrader5 as mt5
-    except ImportError:
-        print("MetaTrader5 not installed")
-        return None
 
-    acct = cfg.MT5_ACCOUNT
-    if not mt5.initialize(login=int(acct), password=cfg.MT5_PASSWORD, server=cfg.MT5_SERVER):
-        print(f"MT5 init failed: {mt5.last_error()}")
-        return None
-
-    h1_fr = BACKTEST_START - timedelta(days=BIAS_WARMUP_DAYS)
-    print("Downloading H1 data from MT5...", flush=True)
-    h1_raw = mt5.copy_rates_range(cfg.SYMBOL, mt5.TIMEFRAME_H1, h1_fr, BACKTEST_END)
-    print("Downloading M5 data (monthly chunks) from MT5...", flush=True)
-    chunks = []
-    cursor = BACKTEST_START
-    while cursor < BACKTEST_END:
-        chunk_end = min(cursor + timedelta(days=28), BACKTEST_END)
-        raw = mt5.copy_rates_range(cfg.SYMBOL, TIMEFRAME_M5, cursor, chunk_end)
-        if raw is not None and len(raw) > 0:
-            chunks.append(pd.DataFrame(raw))
-        else:
-            print(f"  WARN: no data for {cursor.date()} to {chunk_end.date()}", flush=True)
-        cursor = chunk_end
-    mt5.shutdown()
-
-    if not chunks:
-        return None
-    sig_df = pd.concat(chunks, ignore_index=True)
-    sig_df.drop_duplicates(subset="time", keep="last", inplace=True)
-    sig_df.reset_index(drop=True, inplace=True)
-
-    if h1_raw is None or sig_df is None:
-        print(f"Data download failed: H1={'OK' if h1_raw is not None else 'NOK'} SIG={'OK' if sig_df is not None else 'NOK'}")
-        return None
-
-    sig_df["time"] = pd.to_datetime(sig_df["time"], unit="s")
-    h1 = pd.DataFrame(h1_raw)
-    h1["time"] = pd.to_datetime(h1["time"], unit="s")
-    return _pre_compute(sig_df, h1)
-
-def _load_from_mt5_h1():
-    try:
-        import MetaTrader5 as mt5
-    except ImportError:
-        print("MetaTrader5 not installed")
-        return None
-
-    acct = cfg.MT5_ACCOUNT
-    if not mt5.initialize(login=int(acct), password=cfg.MT5_PASSWORD, server=cfg.MT5_SERVER):
-        print(f"MT5 init failed: {mt5.last_error()}")
-        return None
-
-    h1_fr = BACKTEST_START - timedelta(days=BIAS_WARMUP_DAYS)
-    print("Downloading H1 data from MT5...", flush=True)
-    h1_raw = mt5.copy_rates_range(cfg.SYMBOL, mt5.TIMEFRAME_H1, h1_fr, BACKTEST_END)
-    mt5.shutdown()
-
-    if h1_raw is None or len(h1_raw) == 0:
-        print("No H1 data available")
-        return None
-
-    h1 = pd.DataFrame(h1_raw)
-    h1["time"] = pd.to_datetime(h1["time"], unit="s")
-    return _pre_compute_h1(h1)
 
 def _pre_compute(sig_df, h1):
     N = len(sig_df)
@@ -429,12 +363,11 @@ def load_and_compute():
         return _load_from_yahoo()
     elif BACKTEST_BROKER == "YAHOO_H1":
         return _load_from_yahoo_h1()
-    elif BACKTEST_BROKER == "MT5_H1":
-        return _load_from_mt5_h1()
     elif BACKTEST_BROKER == "DUKASCOPY":
         return _load_from_dukascopy()
     else:
-        return _load_from_mt5()
+        print(f"Unknown BACKTEST_BROKER: {BACKTEST_BROKER}")
+        return None
 
 # ── backtest runner ──
 

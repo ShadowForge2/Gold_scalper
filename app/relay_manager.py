@@ -1,5 +1,5 @@
 """
-Relay Manager — bridges remote MT5 instances to the bot.
+Relay Manager — bridges remote instances to the bot.
 Stores relay data, queues pending orders, manages WebSocket connections.
 """
 import asyncio

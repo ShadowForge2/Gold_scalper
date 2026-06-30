@@ -29,15 +29,10 @@ def _env_bool(key: str, default: bool) -> bool:
     return val.lower() in ("1", "true", "yes", "on")
 
 
-# Broker selection: "MT5" or "CAPITAL"
-BROKER = _env_str("BROKER", "MT5").upper()
+# Broker
+BROKER = _env_str("BROKER", "CAPITAL").upper()
 
-# MT5 Account (only used if BROKER=MT5)
-MT5_ACCOUNT = _env_str("MT5_ACCOUNT", "49717207")
-MT5_PASSWORD = _env_str("MT5_PASSWORD", "Thunder@g1")
-MT5_SERVER = _env_str("MT5_SERVER", "HFMarketsGlobal-Demo")
-
-# Capital.com Account (only used if BROKER=CAPITAL)
+# Capital.com Account
 CAPITAL_API_KEY = _env_str("CAPITAL_API_KEY", "")
 CAPITAL_IDENTIFIER = _env_str("CAPITAL_IDENTIFIER", "")
 CAPITAL_PASSWORD = _env_str("CAPITAL_PASSWORD", "")
@@ -126,8 +121,8 @@ API_HOST = _env_str("API_HOST", "0.0.0.0")
 API_PORT = _env_int("API_PORT", 8000)
 
 # Timeframes used by the system
-BIAS_TIMEFRAME = _env_int("BIAS_TIMEFRAME", 16385)  # mt5.TIMEFRAME_H1
-SIGNAL_TIMEFRAME = _env_int("SIGNAL_TIMEFRAME", 1)  # mt5.TIMEFRAME_M1
+BIAS_TIMEFRAME = _env_int("BIAS_TIMEFRAME", 16385)  # H1
+SIGNAL_TIMEFRAME = _env_int("SIGNAL_TIMEFRAME", 1)  # M1
 STRUCTURE_TIMEFRAMES = [16385, 16408]  # H1, H4
 
 # Market hours (spot gold: Sun 23:00 UTC - Fri 22:00 UTC)

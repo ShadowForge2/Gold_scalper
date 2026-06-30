@@ -82,29 +82,14 @@ class Bot:
         self.logger.info(f"Initializing {self.symbol} scalping bot...")
         self.logger.info(f"Config: EXIT_THRESHOLD_TIGHT={cfg.EXIT_THRESHOLD_TIGHT} LOT_MULTIPLIER={cfg.LOT_MULTIPLIER} ENTRY_THRESHOLD={cfg.SIGNAL_ENTRY_THRESHOLD}")
 
-        if cfg.BROKER == "CAPITAL":
-            self.logger.info("Broker: Capital.com (REST API)")
-            self.client = CapitalClient()
-            success = self.client.initialize(
-                api_key=cfg.CAPITAL_API_KEY,
-                identifier=cfg.CAPITAL_IDENTIFIER,
-                password=cfg.CAPITAL_PASSWORD,
-                demo=cfg.CAPITAL_DEMO,
-            )
-        else:
-            self.logger.info("Broker: MetaTrader 5")
-            from app.mt5_client import MT5Client
-            self.client = MT5Client()
-            login = None
-            password = None
-            server = cfg.MT5_SERVER
-            if cfg.MT5_ACCOUNT:
-                try:
-                    login = int(cfg.MT5_ACCOUNT)
-                    password = cfg.MT5_PASSWORD
-                except ValueError:
-                    self.logger.warning("MT5_ACCOUNT is not a valid integer")
-            success = self.client.initialize(login, password, server)
+        self.logger.info("Broker: Capital.com (REST API)")
+        self.client = CapitalClient()
+        success = self.client.initialize(
+            api_key=cfg.CAPITAL_API_KEY,
+            identifier=cfg.CAPITAL_IDENTIFIER,
+            password=cfg.CAPITAL_PASSWORD,
+            demo=cfg.CAPITAL_DEMO,
+        )
 
         self.trade_executor = TradeExecutor(self.client, self.logger)
         self.position_manager = PositionManager(self.client)
@@ -175,9 +160,11 @@ class Bot:
 
     async def shutdown(self):
         self._running = False
-        for pos_data in self.trade_executor.close_all_bot_positions():
-            self.position_manager.note_closed(pos_data)
-        self.client.shutdown()
+        if hasattr(self, 'trade_executor'):
+            for pos_data in self.trade_executor.close_all_bot_positions():
+                self.position_manager.note_closed(pos_data)
+        if hasattr(self, 'client'):
+            self.client.shutdown()
         self.logger.info("Bot shutdown complete")
 
     def set_can_trade_callback(self, cb):
@@ -335,7 +322,8 @@ class Bot:
             return
 
         bias_dir = self._bias_summary.get("bias", "NEUTRAL")
-        current_price = symbol_info["bid"] if bias_dir == "BEARISH" else symbol_info["ask"]
+        has_bid_ask = m1_data is not None and len(m1_data) >= 10 and "high_ask" in m1_data.columns
+        current_price = symbol_info["ask"] if (has_bid_ask and bias_dir == "BULLISH") else symbol_info["bid"]
 
         h1_high = None
         h1_low = None
@@ -407,7 +395,7 @@ class Bot:
             )
 
         # Shared entry logic
-        effective_threshold = self.meta.current_threshold if self.meta else cfg.SIGNAL_ENTRY_THRESHOLD
+        effective_threshold = getattr(self, '_signal_entry_threshold_override', None) or (self.meta.current_threshold if self.meta else cfg.SIGNAL_ENTRY_THRESHOLD)
         if signal and signal["score"] >= effective_threshold:
             can_enter, reason = self.risk_manager.can_enter_trade(
                 symbol_info, datetime.now()
@@ -433,7 +421,7 @@ class Bot:
                 "session": self._current_session(),
                 "momentum": round(
                     self.signal_engine.compute_momentum(m1_data), 3
-                ) if hasattr(self.signal_engine, '_compute_momentum') else None,
+                ) if hasattr(self.signal_engine, 'compute_momentum') else None,
                 "volatility": symbol_info.get("volatility", 0),
             })
 
@@ -596,7 +584,7 @@ class Bot:
                 ) if hasattr(self.position_manager, '_event_start_ts') and self.position_manager._event_start_ts else None,
                 "momentum": round(
                     self.signal_engine.compute_momentum(m1_data), 3
-                ) if hasattr(self.signal_engine, '_compute_momentum') else None,
+                ) if hasattr(self.signal_engine, 'compute_momentum') else None,
                 "distance_from_entry": round(
                     m1_data["close"].iloc[-1] - entry_price
                 ) if direction == "BUY" else round(
@@ -611,6 +599,7 @@ class Bot:
                 self.logger.signal(
                     f"Gemini suggests early exit: {gemini_exit_advice.get('reason', '')}"
                 )
+                should_exit = True
 
         if should_exit:
             self.logger.signal(

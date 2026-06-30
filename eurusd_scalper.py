@@ -80,7 +80,7 @@ class Config:
     MIN_BALANCE = 10.0
 
     # Data
-    DATA_PROVIDER = "SIMULATED"  # SIMULATED | MT5 | CAPITAL | YAHOO
+    DATA_PROVIDER = "SIMULATED"  # SIMULATED | CAPITAL | YAHOO
 
 
 config = Config()

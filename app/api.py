@@ -111,7 +111,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
     async def get_account():
         info = bot.client.get_account_info()
         if info is None:
-            return JSONResponse(status_code=503, content={"error": "MT5 not connected"})
+            return JSONResponse(status_code=503, content={"error": "Account not connected"})
         return info
 
     @app.get("/api/state")

@@ -408,7 +408,11 @@ class SignalEngine:
         diff = px - entry if direction == "BUY" else entry - px
 
         if not signal:
-            return False, 0.0, "no_signal_data"
+            atr = self._compute_atr(df, 14)
+            if atr <= 0:
+                atr = abs(entry) * 0.001
+            sl_price = entry - (2 * atr) if direction == "BUY" else entry + (2 * atr)
+            return False, 0.0, "recovery_trail"
 
         sl_price = signal.get("sl")
         tp1 = signal.get("tp1")
@@ -416,7 +420,11 @@ class SignalEngine:
         tp3 = signal.get("tp3")
 
         if None in (sl_price, tp1, tp2, tp3):
-            return False, 0.0, "no_targets"
+            atr = self._compute_atr(df, 14)
+            if atr <= 0:
+                atr = abs(entry) * 0.001
+            sl_price = entry - (2 * atr) if direction == "BUY" else entry + (2 * atr)
+            return False, 0.0, "recovery_trail"
 
         atr = self._compute_atr(df, 14)
         if atr <= 0:
@@ -556,7 +564,8 @@ class SignalEngine:
         tr = np.maximum(h[1:] - l[1:],
                         np.maximum(np.abs(h[1:] - c[:-1]),
                                    np.abs(l[1:] - c[:-1])))
-        return float(np.mean(tr[-period:]))
+        atr = float(np.mean(tr[-period:]))
+        return 0.0 if np.isnan(atr) else atr
 
     def _candle_strength(self, df: pd.DataFrame) -> float:
         if len(df) < 3:
