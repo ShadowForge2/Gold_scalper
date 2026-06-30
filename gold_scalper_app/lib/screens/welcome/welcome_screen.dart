@@ -26,7 +26,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     curve: Curves.easeIn,
   );
 
-  static const _title = 'HIDE AI TRADING CORE';
+  static const _title = 'Quantora FX Pro';
   int _typewriterChars = 0;
   Timer? _twTimer;
 

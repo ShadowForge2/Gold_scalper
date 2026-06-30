@@ -13,11 +13,12 @@ from dukascopy_python import (
     INTERVAL_MIN_1, INTERVAL_MIN_5, INTERVAL_MIN_10, INTERVAL_MIN_15,
     INTERVAL_MIN_30, INTERVAL_HOUR_1, INTERVAL_HOUR_4, INTERVAL_DAY_1,
 )
-from dukascopy_python.instruments import INSTRUMENT_FX_METALS_XAU_USD
+from dukascopy_python.instruments import INSTRUMENT_FX_METALS_XAU_USD, INSTRUMENT_FX_MAJORS_EUR_USD
 
 SYMBOL_MAP = {
     "XAUUSD": INSTRUMENT_FX_METALS_XAU_USD,
     "GOLD": INSTRUMENT_FX_METALS_XAU_USD,
+    "EURUSD": INSTRUMENT_FX_MAJORS_EUR_USD,
 }
 
 TF_MAP = {
@@ -33,13 +34,14 @@ TF_MAP = {
 
 
 class DukascopyClient:
-    def __init__(self, cache_dir: str = "data/dukascopy"):
+    def __init__(self, symbol: str = "XAUUSD", cache_dir: str = "data/dukascopy"):
+        self.symbol = symbol.upper()
         self.cache_dir = cache_dir
         self._cache: dict = {}
 
     def _cache_path(self, year: int) -> str:
         os.makedirs(self.cache_dir, exist_ok=True)
-        return os.path.join(self.cache_dir, f"XAUUSD_M1_{year}.parquet")
+        return os.path.join(self.cache_dir, f"{self.symbol}_M1_{year}.parquet")
 
     def download_year(self, year: int) -> pd.DataFrame:
         """Download M1 data for a full year + 2-day buffer."""
@@ -50,10 +52,15 @@ class DukascopyClient:
         start = datetime(year, 1, 1)
         end = datetime(year + 1, 1, 1)
 
-        print(f"  Downloading XAUUSD M1 for {year}...", flush=True)
+        instr = SYMBOL_MAP.get(self.symbol)
+        if instr is None:
+            print(f"  ERROR: symbol {self.symbol} not in SYMBOL_MAP", flush=True)
+            return pd.DataFrame()
+
+        print(f"  Downloading {self.symbol} M1 for {year}...", flush=True)
         try:
             df = fetch(
-                instrument=INSTRUMENT_FX_METALS_XAU_USD,
+                instrument=instr,
                 interval=INTERVAL_MIN_1,
                 offer_side=OFFER_SIDE_BID,
                 start=start,

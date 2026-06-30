@@ -332,6 +332,15 @@ class CapitalClient:
         mask = (df["time"] >= from_dt) & (df["time"] <= to_dt)
         return df[mask].copy() if mask.any() else df
 
+    @staticmethod
+    def _extract_price(price_field, side: str = "bid") -> float:
+        if isinstance(price_field, dict):
+            return float(price_field.get(side if side == "bid" else "offer", 0))
+        try:
+            return float(price_field)
+        except (TypeError, ValueError):
+            return 0.0
+
     def _parse_prices(self, prices: list) -> list:
         rows = []
         for p in prices:
@@ -341,14 +350,18 @@ class CapitalClient:
             dt = datetime.fromisoformat(t)
             if dt.tzinfo is not None:
                 dt = dt.replace(tzinfo=None)
-            open_bid = float(p.get("openPrice", {}).get("bid", 0))
-            open_ask = float(p.get("openPrice", {}).get("offer", 0))
-            high_bid = float(p.get("highPrice", {}).get("bid", 0))
-            high_ask = float(p.get("highPrice", {}).get("offer", 0))
-            low_bid = float(p.get("lowPrice", {}).get("bid", 0))
-            low_ask = float(p.get("lowPrice", {}).get("offer", 0))
-            close_bid = float(p.get("closePrice", {}).get("bid", 0))
-            close_ask = float(p.get("closePrice", {}).get("offer", 0))
+            open_price = p.get("openPrice", {})
+            high_price = p.get("highPrice", {})
+            low_price = p.get("lowPrice", {})
+            close_price = p.get("closePrice", {})
+            open_bid = self._extract_price(open_price, "bid")
+            open_ask = self._extract_price(open_price, "ask")
+            high_bid = self._extract_price(high_price, "bid")
+            high_ask = self._extract_price(high_price, "ask")
+            low_bid = self._extract_price(low_price, "bid")
+            low_ask = self._extract_price(low_price, "ask")
+            close_bid = self._extract_price(close_price, "bid")
+            close_ask = self._extract_price(close_price, "ask")
             rows.append({
                 "time": dt,
                 "open": open_bid,

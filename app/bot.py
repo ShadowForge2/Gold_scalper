@@ -337,23 +337,50 @@ class Bot:
         bias_dir = self._bias_summary.get("bias", "NEUTRAL")
         current_price = symbol_info["bid"] if bias_dir == "BEARISH" else symbol_info["ask"]
 
-        h1_data = self.client.get_rates(
-            self.symbol, cfg.BIAS_TIMEFRAME, 3
-        )
-        if h1_data is not None and len(h1_data) >= 2:
-            has_bid_ask = "high_ask" in h1_data.columns
-            if has_bid_ask and bias_dir == "BULLISH":
-                h1_high = h1_data["high_ask"].iloc[-2]
-                h1_low = h1_data["low_ask"].iloc[-2]
-            elif has_bid_ask and bias_dir == "BEARISH":
-                h1_high = h1_data["high_bid"].iloc[-2]
-                h1_low = h1_data["low_bid"].iloc[-2]
+        h1_high = None
+        h1_low = None
+        try:
+            if m1_data is not None and len(m1_data) >= 60:
+                m1_idx = m1_data.set_index("time")
+                has_bid_ask_m1 = "high_ask" in m1_idx.columns
+                if has_bid_ask_m1:
+                    h1_agg = m1_idx.resample("1H").agg({
+                        "high_ask": "max", "low_ask": "min",
+                        "high_bid": "max", "low_bid": "min",
+                        "high": "max", "low": "min",
+                    }).dropna()
+                else:
+                    h1_agg = m1_idx.resample("1H").agg({
+                        "high": "max", "low": "min",
+                    }).dropna()
+                if len(h1_agg) >= 2:
+                    bar = h1_agg.iloc[-2]
+                    h1_high = bar.get("high_ask" if (has_bid_ask_m1 and bias_dir == "BULLISH") else "high_bid" if (has_bid_ask_m1 and bias_dir == "BEARISH") else "high")
+                    h1_low = bar.get("low_ask" if (has_bid_ask_m1 and bias_dir == "BULLISH") else "low_bid" if (has_bid_ask_m1 and bias_dir == "BEARISH") else "low")
+                    if h1_high is None or h1_low is None or not (h1_high > 0 and h1_low > 0):
+                        h1_high = None
+                        h1_low = None
+        except Exception:
+            pass
+
+        if h1_high is None or h1_low is None or h1_high <= h1_low:
+            h1_data = self.client.get_rates(
+                self.symbol, cfg.BIAS_TIMEFRAME, 3
+            )
+            if h1_data is not None and len(h1_data) >= 2:
+                has_bid_ask = "high_ask" in h1_data.columns
+                if has_bid_ask and bias_dir == "BULLISH":
+                    h1_high = h1_data["high_ask"].iloc[-2]
+                    h1_low = h1_data["low_ask"].iloc[-2]
+                elif has_bid_ask and bias_dir == "BEARISH":
+                    h1_high = h1_data["high_bid"].iloc[-2]
+                    h1_low = h1_data["low_bid"].iloc[-2]
+                else:
+                    h1_high = h1_data["high"].iloc[-2]
+                    h1_low = h1_data["low"].iloc[-2]
             else:
-                h1_high = h1_data["high"].iloc[-2]
-                h1_low = h1_data["low"].iloc[-2]
-        else:
-            h1_high = None
-            h1_low = None
+                h1_high = None
+                h1_low = None
 
         signal = self.signal_engine.evaluate(
             m1_data, self._bias_summary, current_price,

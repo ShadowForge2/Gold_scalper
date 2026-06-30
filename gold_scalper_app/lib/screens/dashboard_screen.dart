@@ -302,7 +302,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           blendMode: BlendMode.srcIn,
           child: const Text('HIDE', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 6, height: 1.1)),
         ),
-        const Text('Gold Scalper Pro', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: kTextSecondary, letterSpacing: 3)),
+        const Text('Quantora FX Pro', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: kTextSecondary, letterSpacing: 3)),
         const SizedBox(height: 6),
         StatusIndicator(active: s.connected, label: s.broker),
       ],
