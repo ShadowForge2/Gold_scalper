@@ -322,8 +322,7 @@ class Bot:
             return
 
         bias_dir = self._bias_summary.get("bias", "NEUTRAL")
-        has_bid_ask = m1_data is not None and len(m1_data) >= 10 and "high_ask" in m1_data.columns
-        current_price = symbol_info["ask"] if (has_bid_ask and bias_dir == "BULLISH") else symbol_info["bid"]
+        current_price = symbol_info["ask"] if bias_dir == "BULLISH" else symbol_info["bid"]
 
         h1_high = None
         h1_low = None
@@ -932,8 +931,12 @@ class Bot:
             clamped["bias_update_interval_sec"] = max(1, min(float(settings["bias_update_interval_sec"]), 3600.0))
             self._bias_update_interval = clamped["bias_update_interval_sec"]
         if "allowed_sessions" in settings:
-            sessions = str(settings["allowed_sessions"])
-            self.risk_manager.allowed_sessions = [s.strip().upper() for s in sessions.split(",")]
+            sessions_raw = settings["allowed_sessions"]
+            if isinstance(sessions_raw, list):
+                sessions_str = ",".join(str(s) for s in sessions_raw)
+            else:
+                sessions_str = str(sessions_raw)
+            self.risk_manager.allowed_sessions = [s.strip().upper() for s in sessions_str.split(",") if s.strip()]
         if "exit_mode" in settings:
             clamped["exit_mode"] = max(1, min(int(settings["exit_mode"]), 6))
             self._exit_mode_override = clamped["exit_mode"]

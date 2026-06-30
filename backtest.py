@@ -520,7 +520,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
                 continue
 
             if event_pnl <= -event_loss_limit:
-                pnl = _pnl(cur["entry_price"], px, cur["direction"], cur["lot"], cur["num_trades"], entry_time=cur["entry_time"])
+                pnl = _pnl(cur["entry_price"], exit_px, cur["direction"], cur["lot"], cur["num_trades"], entry_time=cur["entry_time"])
                 balance += pnl
                 daily_pnl += pnl
                 if balance > peak:

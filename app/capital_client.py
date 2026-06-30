@@ -397,7 +397,7 @@ class CapitalClient:
                     deal_id = p.get("dealId", "")
                     comment = p.get("reference", "")
                     if magic is not None:
-                        if not comment.startswith(str(magic)) and epic != target_epic:
+                        if not comment.startswith(str(magic)) or epic != target_epic:
                             continue
                     result.append({
                         "ticket": deal_id,
