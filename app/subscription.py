@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
 
-import requests as http_requests
+import httpx
 
 from app import database as db_mod
 
@@ -427,8 +427,8 @@ def initialize_payment(email: str, amount_kobo: int, metadata: Dict = None, chan
             body["metadata"] = metadata
         if channels:
             body["channels"] = channels
-        r = http_requests.post(f"{PAYSTACK_BASE}/transaction/initialize", headers=_paystack_headers(), json=body, timeout=15)
-        if r.ok:
+        r = httpx.post(f"{PAYSTACK_BASE}/transaction/initialize", headers=_paystack_headers(), json=body, timeout=15)
+        if r.is_success:
             return r.json().get("data")
     except Exception:
         pass
@@ -441,8 +441,9 @@ async def verify_payment(reference: str) -> Optional[Dict]:
     if await _is_payment_processed(reference):
         return {"error": "already_processed"}
     try:
-        r = http_requests.get(f"{PAYSTACK_BASE}/transaction/verify/{reference}", headers=_paystack_headers(), timeout=15)
-        if not r.ok:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(f"{PAYSTACK_BASE}/transaction/verify/{reference}", headers=_paystack_headers())
+        if not r.is_success:
             return None
         data = r.json().get("data", {})
         if data.get("status") != "success":
@@ -577,8 +578,8 @@ def create_maxelpay_payment(amount_usd: float, order_id: str, description: str =
             "callbackUrl": callback_url or "https://gold-scalper-qyhg.onrender.com/api/payment/maxelpay/callback",
         }
         headers = _maxelpay_headers()
-        r = http_requests.post(f"{MAXELPAY_BASE}/payments/sessions", headers=headers, json=payload, timeout=15)
-        if r.ok:
+        r = httpx.post(f"{MAXELPAY_BASE}/payments/sessions", headers=headers, json=payload, timeout=15)
+        if r.is_success:
             return r.json()
     except Exception:
         pass

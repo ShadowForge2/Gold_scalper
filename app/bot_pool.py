@@ -72,6 +72,8 @@ class BotPool:
             if bot is None:
                 return {"success": False, "error": "No bot running for this account"}
             if loop and loop.is_running():
+                for task in asyncio.all_tasks(loop):
+                    task.cancel()
                 loop.call_soon_threadsafe(loop.stop)
             return {"success": True, "message": "Bot stopped"}
 
@@ -160,9 +162,6 @@ class BotPool:
                 })
             return result
 
-    def is_running(self, identifier: str) -> bool:
-        return _fmt_id(identifier) in self._bots
-
     async def emergency_close(self, identifier: str) -> int:
         ident = _fmt_id(identifier)
         with self._lock:
@@ -234,7 +233,8 @@ class BotPool:
         self._remove_bot(ident)
 
     def _write_state(self, ident: str, extra: Optional[Dict] = None):
-        bot = self._bots.get(ident)
+        with self._lock:
+            bot = self._bots.get(ident)
         if bot is None:
             return
         account = bot.client.get_account_info() or {"error": "No connection"}

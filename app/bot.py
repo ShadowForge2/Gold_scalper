@@ -432,7 +432,7 @@ class Bot:
                 "consecutive_losses": self.risk_manager.consecutive_losses,
                 "session": self._current_session(),
                 "momentum": round(
-                    self.signal_engine._compute_momentum(m1_data), 3
+                    self.signal_engine.compute_momentum(m1_data), 3
                 ) if hasattr(self.signal_engine, '_compute_momentum') else None,
                 "volatility": symbol_info.get("volatility", 0),
             })
@@ -519,6 +519,12 @@ class Bot:
 
     async def _handle_in_trade(self, pnl_data: Dict):
         if pnl_data["open_count"] == 0:
+            self.risk_manager.record_exit(pnl_data["event_pnl"])
+            if self.meta:
+                self.meta.record_trade(pnl_data["event_pnl"], self._bias_summary.get("strength", 0))
+                balance = (self.client.get_account_info() or {}).get("balance", 0)
+                self.meta.update(balance, self._bias_summary)
+            self._enter_cooldown()
             self.state = self.STATES["IDLE"]
             return
 
@@ -573,9 +579,10 @@ class Bot:
             self._recovery_ticks = 0
 
         exit_thresh = getattr(self, '_exit_threshold_override', cfg.EXIT_THRESHOLD_TIGHT)
+        effective_exit_mode = getattr(self, '_exit_mode_override', cfg.EXIT_MODE)
         should_exit, exit_score, reason = self.signal_engine.evaluate_exit(
                 m1_data, entry_price, direction, entry_score,
-                exit_mode=6, exit_threshold=exit_thresh,
+                exit_mode=effective_exit_mode, exit_threshold=exit_thresh,
                 signal=self._current_signal,
             )
 
@@ -588,7 +595,7 @@ class Bot:
                     (time.time() - self.position_manager._event_start_ts) / 60
                 ) if hasattr(self.position_manager, '_event_start_ts') and self.position_manager._event_start_ts else None,
                 "momentum": round(
-                    self.signal_engine._compute_momentum(m1_data), 3
+                    self.signal_engine.compute_momentum(m1_data), 3
                 ) if hasattr(self.signal_engine, '_compute_momentum') else None,
                 "distance_from_entry": round(
                     m1_data["close"].iloc[-1] - entry_price
@@ -711,11 +718,15 @@ class Bot:
         # Price drift check — reject if price moved outside allowed drift
         current_price = fresh_info["bid"] if direction == "SELL" else fresh_info["ask"]
         signal_price = symbol_info["bid"] if direction == "SELL" else symbol_info["ask"]
+        point = fresh_info.get("point", 0.01)
         drift_amount = abs(current_price - signal_price)
-        if drift_amount > cfg.MAX_SPREAD_PIPS * 0.1:
+        drift_pct = drift_amount / signal_price * 100
+        max_drift = cfg.MAX_SPREAD_PIPS * point
+        if drift_amount > max_drift:
             self.logger.warning(
                 f"Entry blocked: price drifted ${drift_amount:.2f} "
-                f"from signal price ${signal_price:.2f} to ${current_price:.2f}"
+                f"from signal price ${signal_price:.2f} to ${current_price:.2f} "
+                f"(max drift ${max_drift:.2f})"
             )
             self.state = self.STATES["IDLE"]
             return
@@ -897,32 +908,47 @@ class Bot:
         return len(closed)
 
     def update_settings(self, settings: Dict):
+        clamped = {}
         if "max_daily_loss" in settings:
-            self.risk_manager.max_daily_loss = float(settings["max_daily_loss"])
+            clamped["max_daily_loss"] = max(0.01, min(float(settings["max_daily_loss"]), 10000.0))
+            self.risk_manager.max_daily_loss = clamped["max_daily_loss"]
         if "max_event_loss" in settings:
-            self.risk_manager.max_event_loss = float(settings["max_event_loss"])
+            clamped["max_event_loss"] = max(0.01, min(float(settings["max_event_loss"]), 1000.0))
+            self.risk_manager.max_event_loss = clamped["max_event_loss"]
         if "max_trades_per_event" in settings:
-            self.risk_manager.max_trades_per_event = int(settings["max_trades_per_event"])
+            clamped["max_trades_per_event"] = max(1, min(int(settings["max_trades_per_event"]), 50))
+            self.risk_manager.max_trades_per_event = clamped["max_trades_per_event"]
         if "max_trades_per_session" in settings:
-            self.risk_manager.max_trades_per_session = int(settings["max_trades_per_session"])
+            clamped["max_trades_per_session"] = max(1, min(int(settings["max_trades_per_session"]), 100))
+            self.risk_manager.max_trades_per_session = clamped["max_trades_per_session"]
         if "cooldown_seconds" in settings:
-            self.risk_manager.cooldown_seconds = int(settings["cooldown_seconds"])
+            clamped["cooldown_seconds"] = max(0, min(int(settings["cooldown_seconds"]), 86400))
+            self.risk_manager.cooldown_seconds = clamped["cooldown_seconds"]
         if "consecutive_loss_limit" in settings:
-            self.risk_manager.max_consecutive_losses = int(settings["consecutive_loss_limit"])
+            clamped["consecutive_loss_limit"] = max(1, min(int(settings["consecutive_loss_limit"]), 100))
+            self.risk_manager.max_consecutive_losses = clamped["consecutive_loss_limit"]
         if "lot_multiplier" in settings:
-            self._lot_multiplier_override = float(settings["lot_multiplier"])
+            clamped["lot_multiplier"] = max(0.1, min(float(settings["lot_multiplier"]), 100.0))
+            self._lot_multiplier_override = clamped["lot_multiplier"]
         if "signal_entry_threshold" in settings:
-            self._signal_entry_threshold_override = float(settings["signal_entry_threshold"])
+            clamped["signal_entry_threshold"] = max(0.1, min(float(settings["signal_entry_threshold"]), 1.0))
+            self._signal_entry_threshold_override = clamped["signal_entry_threshold"]
         if "exit_threshold_tight" in settings:
-            self._exit_threshold_override = float(settings["exit_threshold_tight"])
+            clamped["exit_threshold_tight"] = max(0.01, min(float(settings["exit_threshold_tight"]), 1.0))
+            self._exit_threshold_override = clamped["exit_threshold_tight"]
         if "max_spread_pips" in settings:
-            self.risk_manager.max_spread = float(settings["max_spread_pips"])
+            clamped["max_spread_pips"] = max(1.0, min(float(settings["max_spread_pips"]), 500.0))
+            self.risk_manager.max_spread = clamped["max_spread_pips"]
         if "bias_update_interval_sec" in settings:
-            self._bias_update_interval = float(settings["bias_update_interval_sec"])
+            clamped["bias_update_interval_sec"] = max(1, min(float(settings["bias_update_interval_sec"]), 3600.0))
+            self._bias_update_interval = clamped["bias_update_interval_sec"]
         if "allowed_sessions" in settings:
             sessions = str(settings["allowed_sessions"])
             self.risk_manager.allowed_sessions = [s.strip().upper() for s in sessions.split(",")]
-        self.logger.info("Bot settings updated")
+        if "exit_mode" in settings:
+            clamped["exit_mode"] = max(1, min(int(settings["exit_mode"]), 6))
+            self._exit_mode_override = clamped["exit_mode"]
+        self.logger.info(f"Bot settings updated: {clamped}")
 
     def login(self, server: str, account: str, password: str) -> Dict:
         self.logger.info(f"Logging into {server} account {account}...")

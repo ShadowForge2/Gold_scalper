@@ -5,7 +5,7 @@ import config as cfg
 
 class TradeExecutor:
     def __init__(self, client: Any, logger: BotLogger):
-        self.mt5 = client
+        self.client = client
         self.logger = logger
 
     async def open_market(self, symbol: str, direction: str,
@@ -13,7 +13,7 @@ class TradeExecutor:
                           comment: str = cfg.COMMENT,
                           slippage: int = cfg.MAX_SLIPPAGE_PIPS) -> Optional[Any]:
 
-        ticket = await self.mt5.open_position(
+        ticket = await self.client.open_position(
             symbol=symbol, direction=direction, volume=volume,
             magic=magic, comment=comment, slippage=slippage
         )
@@ -25,14 +25,14 @@ class TradeExecutor:
             return ticket
         else:
             detail = ""
-            if hasattr(self.mt5, "last_order_error"):
-                detail = self.mt5.last_order_error()
+            if hasattr(self.client, "last_order_error"):
+                detail = self.client.last_order_error()
             suffix = f": {detail}" if detail else ""
             self.logger.error(f"Order failed for {symbol} {direction}{suffix}")
             return None
 
     def close_position(self, ticket: int) -> bool:
-        success = self.mt5.close_position(ticket)
+        success = self.client.close_position(ticket)
         if not success:
             self.logger.warning(f"Position {ticket} not found or close failed")
             return False
@@ -40,7 +40,7 @@ class TradeExecutor:
         return True
 
     def close_all_bot_positions(self) -> List[Dict]:
-        positions = self.mt5.get_positions(magic=cfg.MAGIC_NUMBER)
+        positions = self.client.get_positions(magic=cfg.MAGIC_NUMBER)
         closed = []
         for pos in positions:
             if self.close_position(pos["ticket"]):
@@ -50,7 +50,7 @@ class TradeExecutor:
         return closed
 
     def close_all_positions(self, symbol: Optional[str] = None) -> int:
-        positions = self.mt5.get_positions()
+        positions = self.client.get_positions()
         if symbol:
             positions = [p for p in positions if p["symbol"] == symbol]
         closed = 0

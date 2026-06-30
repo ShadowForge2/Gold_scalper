@@ -111,10 +111,10 @@ class CapitalClient:
                     headers=self._auth_headers(),
                     timeout=self._timeout,
                 )
-                if not r.ok:
+                if r.status_code in (401, 403):
                     self._login()
             except Exception:
-                self._login()
+                pass
         self._last_activity = time.time()
         return self.connected
 
@@ -382,11 +382,11 @@ class CapitalClient:
             })
         return rows
 
-    def get_positions(self, magic: Optional[int] = None) -> List[Dict]:
+    def get_positions(self, magic: Optional[int] = None, symbol: Optional[str] = None) -> List[Dict]:
         if not self._ensure_session():
             return []
         try:
-            target_epic = self._resolve_epic(cfg.CAPITAL_EPIC) if magic is not None else None
+            target_epic = self._resolve_epic(symbol or cfg.SYMBOL) if magic is not None else None
             r = self._request("GET", f"{self.base_url}/api/v1/positions", headers=self._auth_headers())
             if r.ok:
                 result = []
@@ -405,7 +405,7 @@ class CapitalClient:
                         "type": "BUY" if p.get("direction") == "BUY" else "SELL",
                         "volume": float(p.get("size", 0)),
                         "price_open": float(p.get("level", 0)),
-                        "price_current": float(p.get("level", 0)),
+                        "price_current": float(mkt.get("bid", p.get("level", 0))),
                         "sl": float(p.get("stopLevel", 0)) if p.get("stopLevel") else 0.0,
                         "tp": float(p.get("profitLevel", 0)) if p.get("profitLevel") else 0.0,
                         "profit": float(p.get("upl", 0)),
@@ -482,22 +482,15 @@ class CapitalClient:
         open_pnl = sum(p["profit"] for p in positions)
         return self._realized_daily_pnl + open_pnl
 
-    def order_send(self, request: dict) -> Dict:
+    async def order_send(self, request: dict) -> Dict:
         epic = request.get("epic", self._resolve_epic(request.get("symbol", "GOLD")))
         direction = "BUY" if request.get("type") == 0 else "SELL"
         volume = request.get("volume", 0.01)
 
-        body = {"epic": epic, "direction": direction, "size": volume,
-                "orderType": "MARKET", "guaranteedStop": False, "forceOpen": True}
-
         sl = request.get("sl")
         tp = request.get("tp")
-        if sl:
-            body["stopLevel"] = float(sl)
-        if tp:
-            body["profitLevel"] = float(tp)
 
-        result = self._open_position_raw(epic, direction, volume, sl, tp)
+        result = await self._open_position_raw(epic, direction, volume, sl, tp)
         if result:
             return {"retcode": 10009, "order": result.get("dealReference", ""), "comment": "Done",
                     "volume": volume, "price": 0, "bid": 0, "ask": 0, "success": True}

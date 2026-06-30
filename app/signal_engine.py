@@ -199,7 +199,7 @@ class SignalEngine:
 
     def _exit_mode_breakout(self, df, entry, direction, entry_score):
         """Breakout exit: SL using high/low, ATR trailing, counter-candle."""
-        momentum = self._compute_momentum(df)
+        momentum = self.compute_momentum(df)
         atr = self._compute_atr(df, 14)
 
         last_high = df["high"].iloc[-1]
@@ -245,7 +245,7 @@ class SignalEngine:
                             sl_mult: float = None, trigger_mult: float = None,
                             retrace_pct: float = None,
                             trail_to_breakeven: bool = True):
-        momentum = self._compute_momentum(df)
+        momentum = self.compute_momentum(df)
         px = df["close"].iloc[-1]
         diff = px - entry if direction == "BUY" else entry - px
 
@@ -306,7 +306,7 @@ class SignalEngine:
         return False, 0.0, "holding"
 
     def _exit_mode_atr_anticandle(self, df, entry, direction, exit_threshold):
-        momentum = self._compute_momentum(df)
+        momentum = self.compute_momentum(df)
         px = df["close"].iloc[-1]
         diff = px - entry if direction == "BUY" else entry - px
 
@@ -339,7 +339,7 @@ class SignalEngine:
         Peak-harvest exit — no hard stop loss, trail only after significant profit,
         close when directional confidence breaks down.
         """
-        momentum = self._compute_momentum(df)
+        momentum = self.compute_momentum(df)
         atr = self._compute_atr(df, 14)
         px = df["close"].iloc[-1]
         diff = px - entry if direction == "BUY" else entry - px
@@ -366,7 +366,8 @@ class SignalEngine:
 
         if bars >= 4:
             streak = 0
-            for i in range(min(5, len(df))):
+            lookback = min(cfg.DIRECTION_LOSS_LOOKBACK, len(df))
+            for i in range(lookback):
                 c = df.iloc[-(i + 1)]
                 if direction == "BUY":
                     if c["close"] < c["open"]:
@@ -378,7 +379,7 @@ class SignalEngine:
                         streak += 1
                     else:
                         break
-            if streak >= 3:
+            if streak >= cfg.DIRECTION_LOSS_STREAK:
                 return True, 0.80, "direction_loss"
 
         if bars >= cfg.PEAK_HARVEST_MIN_BARS_EXIT:
@@ -402,7 +403,7 @@ class SignalEngine:
         5. Wick rejection: if a candle near TP has >60% wick, exit early
         6. Original momentum-fade exit when near a TP level
         """
-        momentum = self._compute_momentum(df)
+        momentum = self.compute_momentum(df)
         px = df["close"].iloc[-1]
         diff = px - entry if direction == "BUY" else entry - px
 
@@ -523,7 +524,7 @@ class SignalEngine:
             return -1
         return 1 if last["close"] > last["open"] else -1 if last["close"] < last["open"] else 0
 
-    def _compute_momentum(self, df: pd.DataFrame) -> float:
+    def compute_momentum(self, df: pd.DataFrame) -> float:
         closes = df["close"].values
         if len(closes) < 5:
             return 0.0
