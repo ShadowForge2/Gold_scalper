@@ -109,10 +109,9 @@ ALL_TABLES_PG = [*ALL_TABLES, CREATE_NOTIFICATIONS_PG]
 async def _try_pg() -> bool:
     test_db = Database(_env_url, min_size=1, max_size=1, statement_cache_size=0)
     try:
-        async with asyncio.timeout(15):
-            await test_db.connect()
-            await test_db.execute("SELECT 1")
-            return True
+        await asyncio.wait_for(test_db.connect(), timeout=15)
+        await asyncio.wait_for(test_db.execute("SELECT 1"), timeout=15)
+        return True
     except Exception:
         return False
     finally:
@@ -139,8 +138,7 @@ async def init_db():
         if ok:
             try:
                 db = Database(_env_url, statement_cache_size=0)
-                async with asyncio.timeout(15):
-                    await db.connect()
+                await asyncio.wait_for(db.connect(), timeout=15)
                 for sql in ALL_TABLES_PG:
                     await db.execute(sql)
                 for col in ["active"]:

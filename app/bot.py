@@ -7,7 +7,6 @@ from typing import Optional, Dict, List
 
 import config as cfg
 from app.logger import BotLogger
-from app.mt5_client import MT5Client
 from app.capital_client import CapitalClient
 from app.bias_engine import BiasEngine
 from app.signal_engine import SignalEngine
@@ -94,6 +93,7 @@ class Bot:
             )
         else:
             self.logger.info("Broker: MetaTrader 5")
+            from app.mt5_client import MT5Client
             self.client = MT5Client()
             login = None
             password = None
@@ -522,6 +522,9 @@ class Bot:
             self.state = self.STATES["IDLE"]
             return
 
+        acct = self.client.get_account_info()
+        balance = acct["balance"] if acct else 0
+
         event_ok, event_msg = self.risk_manager.check_event_loss(
             pnl_data["event_pnl"]
         )
@@ -705,13 +708,13 @@ class Bot:
         if self.meta:
             max_trades = self.meta.current_trades_per_event
 
-        # Price drift check — reject if price moved outside signal range
+        # Price drift check — reject if price moved outside allowed drift
         current_price = fresh_info["bid"] if direction == "SELL" else fresh_info["ask"]
         signal_price = symbol_info["bid"] if direction == "SELL" else symbol_info["ask"]
-        drift_pct = abs(current_price - signal_price) / signal_price * 100 if signal_price else 0
-        if drift_pct > cfg.MAX_SPREAD_PIPS * 0.1:
+        drift_amount = abs(current_price - signal_price)
+        if drift_amount > cfg.MAX_SPREAD_PIPS * 0.1:
             self.logger.warning(
-                f"Entry blocked: price drifted {drift_pct:.3f}% "
+                f"Entry blocked: price drifted ${drift_amount:.2f} "
                 f"from signal price ${signal_price:.2f} to ${current_price:.2f}"
             )
             self.state = self.STATES["IDLE"]
@@ -765,7 +768,7 @@ class Bot:
             if not can_add:
                 break
 
-            ticket = self.trade_executor.open_market(
+            ticket = await self.trade_executor.open_market(
                 self.symbol, direction, lot
             )
             if ticket is not None:
@@ -782,6 +785,8 @@ class Bot:
 
         if self.position_manager.in_event:
             self.state = self.STATES["IN_TRADE"]
+            if self.position_manager._event_start_ts is None:
+                self.position_manager._event_start_ts = time.time()
             self.logger.info(
                 f"Entered {direction} mode with "
                 f"{self.position_manager.open_count} position(s)"

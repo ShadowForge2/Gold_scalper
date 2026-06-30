@@ -14,7 +14,7 @@ class MarketStructure:
 
     def analyze(self, df: pd.DataFrame, lookback: int = 5) -> Dict:
         if df is None or len(df) < lookback * 3:
-            return self._summary()
+            return self._summary(price=df["close"].iloc[-1] if df is not None and len(df) else None)
 
         highs, lows = self._find_swing_points(df, lookback)
         self.swing_highs = highs
@@ -23,7 +23,7 @@ class MarketStructure:
         self.key_levels = self._identify_key_levels(df)
         self.structure_broken = self._detect_structure_break()
 
-        return self._summary()
+        return self._summary(price=df["close"].iloc[-1])
 
     def _find_swing_points(self, df: pd.DataFrame, lookback: int = 5
                            ) -> Tuple[List[Dict], List[Dict]]:
@@ -119,12 +119,12 @@ class MarketStructure:
             return None
         return abs(price - level) / point
 
-    def _summary(self) -> Dict:
+    def _summary(self, price: float = None) -> Dict:
         return {
             "trend": self.trend,
             "swing_highs": self.swing_highs[-5:],
             "swing_lows": self.swing_lows[-5:],
             "key_levels": self.key_levels,
             "structure_broken": self.structure_broken,
-            "near_level": self.is_near_level,
+            "near_level": self.is_near_level(price) if price is not None else False,
         }

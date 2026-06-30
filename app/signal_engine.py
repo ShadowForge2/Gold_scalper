@@ -445,7 +445,7 @@ class SignalEngine:
             if not active_tps:
                 # above all TPs — trail
                 trail = px - atr * 2
-                sl_price = max(signal.get("sl"), trail)
+                sl_price = max(sl_price, trail)
                 if px <= sl_price:
                     return True, 1.0, "trailing_stop"
                 if momentum < cfg.TP_CLOSE_MOMENTUM_MIN:
@@ -485,7 +485,7 @@ class SignalEngine:
 
             if not active_tps:
                 trail = px + atr * 2
-                sl_price = min(signal.get("sl"), trail)
+                sl_price = min(sl_price, trail)
                 if px >= sl_price:
                     return True, 1.0, "trailing_stop"
                 if momentum < cfg.TP_CLOSE_MOMENTUM_MIN:

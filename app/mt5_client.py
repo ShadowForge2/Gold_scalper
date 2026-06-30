@@ -13,7 +13,7 @@ from datetime import datetime
 class MT5Client:
     def __init__(self):
         self.connected = False
-        self._account_info: Optional[mt5.AccountInfo] = None
+        self._account_info = None
 
     def initialize(self, login: Optional[int] = None,
                    password: Optional[str] = None,

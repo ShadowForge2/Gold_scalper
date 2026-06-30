@@ -15,6 +15,7 @@ class PositionManager:
         self.open_count: int = 0
         self._closed_tickets: Dict[str, float] = {}
         self.closed_history: List[Dict] = []
+        self._event_start_ts: Optional[float] = None
 
     def note_closed(self, pos_data: Dict) -> None:
         ticket = pos_data["ticket"]

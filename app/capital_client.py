@@ -504,11 +504,12 @@ class CapitalClient:
         return {"retcode": 10004, "order": 0, "comment": "Open failed", "volume": 0, "price": 0,
                 "bid": 0, "ask": 0, "success": False}
 
-    def _open_position_raw(self, epic: str, direction: str, volume: float,
-                           stop_loss: Optional[float] = None,
-                           take_profit: Optional[float] = None,
-                           force_open: bool = True,
-                           reference: str = "") -> Optional[Dict]:
+    async def _open_position_raw(self, epic: str, direction: str, volume: float,
+                                   stop_loss: Optional[float] = None,
+                                   take_profit: Optional[float] = None,
+                                   force_open: bool = True,
+                                   reference: str = "") -> Optional[Dict]:
+        import asyncio
         if not self._ensure_session():
             return None
         body = {"epic": epic, "direction": direction.upper(), "size": volume,
@@ -524,20 +525,21 @@ class CapitalClient:
                                    headers=self._auth_headers(), json=body)
             if r.ok:
                 self._last_order_error = ""
-                time.sleep(0.5)
+                await asyncio.sleep(0.5)
                 return r.json()
             self._last_order_error = f"HTTP {r.status_code}: {r.text[:500]}"
         except Exception as exc:
             self._last_order_error = f"{type(exc).__name__}: {exc}"
         return None
 
-    def open_position(self, symbol: str, direction: str, volume: float,
-                      price: Optional[float] = None,
-                      stop_loss: Optional[float] = None,
-                      take_profit: Optional[float] = None,
-                      comment: str = "",
-                      magic: int = 0,
-                      slippage: int = 30) -> Optional[str]:
+    async def open_position(self, symbol: str, direction: str, volume: float,
+                            price: Optional[float] = None,
+                            stop_loss: Optional[float] = None,
+                            take_profit: Optional[float] = None,
+                            comment: str = "",
+                            magic: int = 0,
+                            slippage: int = 30) -> Optional[str]:
+        import asyncio
         epic = self._resolve_epic(symbol)
         reference = str(magic) + ":" + comment if comment else str(magic)
         positions = self.get_positions()
@@ -552,13 +554,13 @@ class CapitalClient:
                     f"cannot open {direction.upper()}"
                 )
                 return None
-        result = self._open_position_raw(epic, direction, volume, stop_loss, take_profit, reference=reference)
+        result = await self._open_position_raw(epic, direction, volume, stop_loss, take_profit, reference=reference)
         if result is None:
             return None
         deal_ref = result.get("dealReference", "")
         expected_prefix = str(magic)
         for _ in range(24):
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
             fresh = self.get_positions()
             for p in fresh:
                 if p.get("comment", "").startswith(expected_prefix):

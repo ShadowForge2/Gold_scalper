@@ -104,7 +104,7 @@ class MetaStrategy:
             return 0.0
         return (self._peak_balance - balance) / self._peak_balance * 100
 
-    def _detect_regime(self, bias_summary: Dict) -> str:
+    def _detect_regime(self, bias_summary: Dict, balance: float = 0.0) -> str:
         strength = bias_summary.get("strength", 0.0)
 
         if self.tracker.count < cfg.META_MIN_TRADES_FOR_REGIME:
@@ -124,16 +124,16 @@ class MetaStrategy:
         if strength < 0.4 or (wr < 0.3 and pf < 1.0):
             return "CHOPPY"
 
-        if self.dd_pct(0) > 15:
+        if self.dd_pct(balance) > 15:
             return "DRAWDOWN"
 
         return "RANGING"
 
-    def _compute_threshold_adjustment(self, regime: str) -> float:
+    def _compute_threshold_adjustment(self, regime: str, balance: float = 0.0) -> float:
         adjust = 0.0
         wr = self.tracker.win_rate()
         consec_losses = self.tracker.consecutive_losses()
-        dd = self.dd_pct(0)
+        dd = self.dd_pct(balance)
 
         if regime == "TRENDING_STRONG" and wr >= 0.45:
             adjust = -0.10
@@ -158,10 +158,10 @@ class MetaStrategy:
 
         return adjust
 
-    def _compute_lot_mult_adjustment(self, regime: str) -> float:
+    def _compute_lot_mult_adjustment(self, regime: str, balance: float = 0.0) -> float:
         mult = 1.0
         wr = self.tracker.win_rate()
-        dd = self.dd_pct(0)
+        dd = self.dd_pct(balance)
 
         if regime == "TRENDING_STRONG" and wr >= 0.45:
             mult = 1.5
@@ -179,13 +179,13 @@ class MetaStrategy:
 
         return mult
 
-    def _compute_trades_adjustment(self, regime: str) -> int:
+    def _compute_trades_adjustment(self, regime: str, balance: float = 0.0) -> int:
         if self.tracker.count < 5:
             return self.base_trades_per_event
 
         wr = self.tracker.win_rate()
         consec = self.tracker.consecutive_losses()
-        dd = self.dd_pct(0)
+        dd = self.dd_pct(balance)
 
         if consec >= 3 or dd > 15:
             return 1
@@ -207,21 +207,21 @@ class MetaStrategy:
 
     def update(self, balance: float, bias_summary: Dict) -> Dict:
         self.update_peak(balance)
-        regime = self._detect_regime(bias_summary)
+        regime = self._detect_regime(bias_summary, balance)
 
         if regime != self._last_regime:
             self._regime_since = datetime.now()
             self._last_regime = regime
 
-        thresh_adj = self._compute_threshold_adjustment(regime)
+        thresh_adj = self._compute_threshold_adjustment(regime, balance)
         new_threshold = self.base_entry_threshold + thresh_adj
         new_threshold = max(cfg.META_THRESHOLD_MIN, min(cfg.META_THRESHOLD_MAX, new_threshold))
         self._current_threshold = new_threshold
 
-        lot_factor = self._compute_lot_mult_adjustment(regime)
+        lot_factor = self._compute_lot_mult_adjustment(regime, balance)
         self._current_lot_mult = max(1, round(self.base_lot_multiplier * lot_factor))
 
-        self._current_trades_per_event = self._compute_trades_adjustment(regime)
+        self._current_trades_per_event = self._compute_trades_adjustment(regime, balance)
         self._current_bias_min = self._compute_bias_min_adjustment(regime)
 
         return self.summary(balance, regime)

@@ -7,12 +7,21 @@ from app.bot_pool import BotPool
 from app import database as db_mod
 from app.database import init_db
 from app.subscription import get_active_accounts, can_start_live
-from app.capital_client import CapitalClient
 import config as cfg
 
 bot = Bot()
 bot_pool = BotPool()
 _db_connected = False
+
+
+def _fire_task(coro, name: str = "task"):
+    task = asyncio.create_task(coro)
+    task.add_done_callback(
+        lambda t: bot.logger.error(
+            f"{name} failed: {t.exception()}"
+        ) if t.exception() else None
+    )
+    return task
 
 
 async def _try_start_user_bot(ident: str, api_key: str, password: str, demo: bool):
@@ -59,18 +68,19 @@ app = create_app(bot, bot_pool=bot_pool, db_check=is_db_connected)
 async def startup():
     await startup_db()
     await bot.initialize()
-    asyncio.create_task(bot.run())
+    _fire_task(bot.run(), name="bot.run")
     if _db_connected:
         try:
             accounts = await get_active_accounts()
             for acct in accounts:
-                asyncio.create_task(
+                _fire_task(
                     _try_start_user_bot(
                         ident=acct["identifier"],
                         api_key=acct["api_key"],
                         password=acct["password"],
                         demo=bool(acct.get("demo", True)),
-                    )
+                    ),
+                    name=f"user_bot_{acct.get('identifier', '?')}",
                 )
             if accounts:
                 bot.logger.info(f"Scheduled {len(accounts)} user bot(s) for restoration")

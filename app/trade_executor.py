@@ -8,12 +8,12 @@ class TradeExecutor:
         self.mt5 = client
         self.logger = logger
 
-    def open_market(self, symbol: str, direction: str,
-                    volume: float, magic: int = cfg.MAGIC_NUMBER,
-                    comment: str = cfg.COMMENT,
-                    slippage: int = cfg.MAX_SLIPPAGE_PIPS) -> Optional[Any]:
+    async def open_market(self, symbol: str, direction: str,
+                          volume: float, magic: int = cfg.MAGIC_NUMBER,
+                          comment: str = cfg.COMMENT,
+                          slippage: int = cfg.MAX_SLIPPAGE_PIPS) -> Optional[Any]:
 
-        ticket = self.mt5.open_position(
+        ticket = await self.mt5.open_position(
             symbol=symbol, direction=direction, volume=volume,
             magic=magic, comment=comment, slippage=slippage
         )
