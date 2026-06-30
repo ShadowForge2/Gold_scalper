@@ -395,6 +395,10 @@ class Bot:
 
         # Shared entry logic
         effective_threshold = getattr(self, '_signal_entry_threshold_override', None) or (self.meta.current_threshold if self.meta else cfg.SIGNAL_ENTRY_THRESHOLD)
+        if signal:
+            atr_thresh = signal.get("atr_entry_threshold")
+            if atr_thresh is not None:
+                effective_threshold = max(atr_thresh, effective_threshold)
         if signal and signal["score"] >= effective_threshold:
             can_enter, reason = self.risk_manager.can_enter_trade(
                 symbol_info, datetime.now()
