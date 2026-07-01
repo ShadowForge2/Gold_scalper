@@ -395,9 +395,9 @@ class CapitalClient:
                     mkt = pos_data.get("market", {})
                     epic = mkt.get("epic", "")
                     deal_id = p.get("dealId", "")
-                    comment = p.get("reference", "")
+                    comment = p.get("reference", "") or p.get("dealReference", "")
                     if magic is not None:
-                        if not comment.startswith(str(magic)) or epic != target_epic:
+                        if epic != target_epic:
                             continue
                     result.append({
                         "ticket": deal_id,
