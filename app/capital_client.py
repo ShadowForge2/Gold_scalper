@@ -546,17 +546,17 @@ class CapitalClient:
                     f"cannot open {direction.upper()}"
                 )
                 return None
+        existing_tickets = {str(p["ticket"]) for p in positions if p.get("ticket")}
         result = await self._open_position_raw(epic, direction, volume, stop_loss, take_profit, reference=reference)
         if result is None:
             return None
-        deal_ref = result.get("dealReference", "")
-        expected_prefix = str(magic)
         for _ in range(24):
             await asyncio.sleep(0.5)
             fresh = self.get_positions()
             for p in fresh:
-                if p.get("comment", "").startswith(expected_prefix):
-                    return p.get("ticket")
+                ticket = p.get("ticket")
+                if ticket and str(ticket) not in existing_tickets:
+                    return ticket
         self._last_order_error = "Order submitted but position not confirmed"
         return None
 
