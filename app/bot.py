@@ -538,7 +538,7 @@ class Bot:
         now = time.monotonic()
         key = (
             f"{reason}|{context.get('bias')}|{context.get('direction')}|"
-            f"{context.get('score')}|{context.get('h1_high')}|{context.get('h1_low')}"
+            f"{context.get('h1_high')}|{context.get('h1_low')}"
         )
         if key == self._last_signal_diag_key and now - self._last_signal_diag_time < 30:
             return
