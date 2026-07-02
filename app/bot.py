@@ -408,13 +408,14 @@ class Bot:
         self._current_signal = signal
 
         if signal:
+            ml_tag = " [ML OVERRIDE]" if signal.get("ml_override") else ""
             reason = (
                 f"Price broke above H1 high (${h1_high:.2f}) with bullish momentum"
                 if signal['direction'] == 'BUY'
                 else f"Price broke below H1 low (${h1_low:.2f}) with bearish momentum"
             )
             self.logger.signal(
-                f"Signal found: {signal['direction']} | {reason} "
+                f"Signal found: {signal['direction']}{ml_tag} | {reason} "
                 f"(score={signal['score']:.3f})"
             )
         else:
@@ -619,6 +620,14 @@ class Bot:
                 exit_mode=effective_exit_mode, exit_threshold=exit_thresh,
                 signal=self._current_signal,
             )
+
+        if not should_exit and reason == "ml_hold":
+            now_t = time.time()
+            if not hasattr(self, '_last_ml_hold_log'):
+                self._last_ml_hold_log = 0.0
+            if now_t - self._last_ml_hold_log >= 30.0:
+                self._last_ml_hold_log = now_t
+                self.logger.signal(f"ML hold: suppressing exit, ML still confident in {direction}")
 
         gemini_exit_advice = None
         if not should_exit:
