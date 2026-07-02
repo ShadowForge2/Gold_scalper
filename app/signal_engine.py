@@ -1,3 +1,4 @@
+import time as _time
 import pandas as pd
 import numpy as np
 from typing import Optional, Dict, Tuple
@@ -30,6 +31,8 @@ class SignalEngine:
         self._logger = logger
         self._last_ml_override_log_time = 0.0
         self._last_ml_override_result_value = None
+        self._last_slt_prob_log_time = 0.0
+        self._last_slt_prob_value = None
 
     def _reject(self, reason: str, **context) -> None:
         self.last_rejection = {
@@ -75,12 +78,18 @@ class SignalEngine:
             if self._slt_predictor is not None and expected_direction is not None:
                 if expected_direction == "BUY":
                     prob = self._slt_predictor.buy_win_prob(features)
-                    if self._logger:
+                    now_key = f"BUY_{prob:.3f}"
+                    if self._logger and (_time.monotonic() - self._last_slt_prob_log_time >= 30 or self._last_slt_prob_value != now_key):
+                        self._last_slt_prob_log_time = _time.monotonic()
+                        self._last_slt_prob_value = now_key
                         self._logger.info(f"[ML] SL/TP BUY prob={prob:.3f} threshold={cfg.ML_CONFIDENCE_THRESHOLD}")
                     return "BUY" if prob >= cfg.ML_CONFIDENCE_THRESHOLD else None
                 elif expected_direction == "SELL":
                     prob = self._slt_predictor.sell_win_prob(features)
-                    if self._logger:
+                    now_key = f"SELL_{prob:.3f}"
+                    if self._logger and (_time.monotonic() - self._last_slt_prob_log_time >= 30 or self._last_slt_prob_value != now_key):
+                        self._last_slt_prob_log_time = _time.monotonic()
+                        self._last_slt_prob_value = now_key
                         self._logger.info(f"[ML] SL/TP SELL prob={prob:.3f} threshold={cfg.ML_CONFIDENCE_THRESHOLD}")
                     return "SELL" if prob >= cfg.ML_CONFIDENCE_THRESHOLD else None
 
