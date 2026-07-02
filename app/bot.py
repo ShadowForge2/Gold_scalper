@@ -462,7 +462,7 @@ class Bot:
                 effective_threshold = max(atr_thresh, effective_threshold)
         if signal and signal["score"] >= effective_threshold:
             can_enter, reason = self.risk_manager.can_enter_trade(
-                symbol_info, datetime.now()
+                symbol_info, datetime.utcnow()
             )
             if not can_enter:
                 bk_key = f"blocked_{signal['direction']}|{reason}|{signal.get('ml_override')}"

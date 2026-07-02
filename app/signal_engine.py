@@ -233,7 +233,7 @@ class SignalEngine:
         # ML bias override: if ML confidently predicts opposite direction, trust ML
         ml_override = False
         if (self._direction_predictor is not None or self._slt_predictor is not None) and _HAS_ML:
-            today = datetime.now().day
+            today = datetime.utcnow().day
             if today != self._ml_override_day:
                 self._ml_override_count = 0
                 self._ml_override_day = today
