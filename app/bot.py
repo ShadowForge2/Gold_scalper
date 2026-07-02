@@ -96,6 +96,10 @@ class Bot:
         self._last_tick: Optional[Dict] = None
         self._last_signal_diag_key: Optional[str] = None
         self._last_signal_diag_time = 0.0
+        self._last_signal_found_key: Optional[str] = None
+        self._last_signal_found_time = 0.0
+        self._last_signal_blocked_key: Optional[str] = None
+        self._last_signal_blocked_time = 0.0
 
         self._accounts_file: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "accounts.json")
         self._account_id: Optional[str] = None
@@ -433,10 +437,15 @@ class Bot:
                 if signal['direction'] == 'BUY'
                 else f"Price broke below H1 low (${h1_low:.2f}) with bearish momentum"
             )
-            self.logger.signal(
-                f"Signal found: {signal['direction']}{ml_tag} | {reason} "
-                f"(score={signal['score']:.3f})"
-            )
+            sf_key = f"{signal['direction']}|{signal.get('ml_override')}|{signal['score']:.2f}"
+            sf_now = time.monotonic()
+            if sf_key != self._last_signal_found_key or sf_now - self._last_signal_found_time >= 30:
+                self._last_signal_found_key = sf_key
+                self._last_signal_found_time = sf_now
+                self.logger.signal(
+                    f"Signal found: {signal['direction']}{ml_tag} | {reason} "
+                    f"(score={signal['score']:.3f})"
+                )
         else:
             rejection = self.signal_engine.last_rejection or {}
             self._log_signal_diagnostic(
@@ -456,12 +465,17 @@ class Bot:
                 symbol_info, datetime.now()
             )
             if not can_enter:
-                self.logger.signal(
-                    f"Signal {signal['direction']} (score={signal['score']:.2f}) "
-                    f"blocked: {reason} | "
-                    f"price={current_price:.2f} "
-                    f"spread={symbol_info.get('spread', 0)}"
-                )
+                bk_key = f"blocked_{signal['direction']}|{reason}|{signal.get('ml_override')}"
+                bk_now = time.monotonic()
+                if bk_key != self._last_signal_blocked_key or bk_now - self._last_signal_blocked_time >= 30:
+                    self._last_signal_blocked_key = bk_key
+                    self._last_signal_blocked_time = bk_now
+                    self.logger.signal(
+                        f"Signal {signal['direction']} (score={signal['score']:.2f}) "
+                        f"blocked: {reason} | "
+                        f"price={current_price:.2f} "
+                        f"spread={symbol_info.get('spread', 0)}"
+                    )
                 return
 
             gemini_advice = await self.gemini_advisor.advise_entry({
