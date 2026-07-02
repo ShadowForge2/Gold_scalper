@@ -584,8 +584,9 @@ class Bot:
             self._enter_cooldown()
             return
 
+        m1_count = cfg.ML_M1_HISTORY_BARS if (hasattr(self, '_direction_predictor') and self._direction_predictor is not None) else 20
         m1_data = self.client.get_rates(
-            self.symbol, cfg.SIGNAL_TIMEFRAME, 20
+            self.symbol, cfg.SIGNAL_TIMEFRAME, m1_count
         )
         if m1_data is None:
             return

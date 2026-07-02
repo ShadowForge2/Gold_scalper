@@ -84,6 +84,53 @@ class SignalEngine:
 
         return None
 
+    def _get_ml_unbiased_prediction(self, features: pd.DataFrame) -> Tuple[Optional[str], float]:
+        """Get ML prediction without bias filtering. Returns (direction, confidence) or (None, 0.0)."""
+        if features is None or len(features) == 0:
+            return None, 0.0
+        try:
+            override_threshold = getattr(cfg, 'ML_BIAS_OVERRIDE_THRESHOLD', 0.70)
+            if self._slt_predictor is not None:
+                buy_p = self._slt_predictor.buy_win_prob(features)
+                sell_p = self._slt_predictor.sell_win_prob(features)
+                if buy_p >= override_threshold and buy_p > sell_p:
+                    return "BUY", buy_p
+                if sell_p >= override_threshold and sell_p > buy_p:
+                    return "SELL", sell_p
+            if self._direction_predictor is not None:
+                prob_down, prob_up = self._direction_predictor.predict_proba(features)
+                if prob_up >= override_threshold and prob_up > prob_down:
+                    return "BUY", prob_up
+                if prob_down >= override_threshold and prob_down > prob_up:
+                    return "SELL", prob_down
+        except Exception:
+            pass
+        return None, 0.0
+
+    def _get_ml_exit_signal(self, features: pd.DataFrame, trade_direction: str) -> Optional[str]:
+        """ML-guided exit: 'hold' (ML agrees, suppress other exit signals),
+        'exit' (ML reversal, exit now), or None (undecided, use normal logic)."""
+        if features is None or len(features) == 0:
+            return None
+        try:
+            if self._direction_predictor is not None:
+                prob_down, prob_up = self._direction_predictor.predict_proba(features)
+                hold_threshold = getattr(cfg, 'ML_HOLD_CONFIDENCE', 0.50)
+                exit_threshold = getattr(cfg, 'ML_BIAS_OVERRIDE_THRESHOLD', 0.70)
+                if trade_direction == "BUY":
+                    if prob_up >= hold_threshold:
+                        return "hold"
+                    if prob_down >= exit_threshold:
+                        return "exit"
+                else:
+                    if prob_down >= hold_threshold:
+                        return "hold"
+                    if prob_up >= exit_threshold:
+                        return "exit"
+        except Exception:
+            pass
+        return None
+
     def evaluate(self, m1_data: pd.DataFrame, bias: Dict,
                  current_price: float,
                  h1_high: float = None, h1_low: float = None) -> Optional[Dict]:
@@ -123,64 +170,90 @@ class SignalEngine:
         atr = self._compute_atr(m1_data, cfg.ATR_PERIOD)
         atr_entry_threshold = round(atr * cfg.ATR_MULTIPLIER / range_size, 4) if range_size > 0 and atr > 0 else None
 
+        # ML bias override: if ML confidently predicts opposite direction, trust ML
+        ml_override = False
+        if (self._direction_predictor is not None or self._slt_predictor is not None) and _HAS_ML:
+            ml_features = self._get_features(m1_data)
+            if ml_features is not None and len(ml_features) > 0:
+                ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
+                if ml_dir is not None and ml_dir != direction:
+                    direction = ml_dir
+                    ml_override = True
+
         if direction == "BUY":
-            breakout_dist = current_price - h1_high
-            score = breakout_dist / range_size if range_size > 0 else 0.0
-            if current_price <= h1_high:
-                return self._reject(
-                    "buy_price_not_above_h1_high",
-                    direction=direction,
-                    bias=bias_dir,
-                    price=current_price,
-                    h1_high=h1_high,
-                    h1_low=h1_low,
-                    breakout_dist=round(breakout_dist, 2),
-                    range_size=round(range_size, 2),
-                    score=round(score, 3),
-                )
-            lookback = max(2, cfg.RECENT_PULLBACK_LOOKBACK + 1)
-            recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(lookback, len(closes))))
-            if cfg.REQUIRE_RECENT_PULLBACK and not recent_in_range:
-                return self._reject(
-                    "buy_no_recent_pullback_inside_h1_range",
-                    direction=direction,
-                    bias=bias_dir,
-                    price=current_price,
-                    h1_high=h1_high,
-                    h1_low=h1_low,
-                    breakout_dist=round(breakout_dist, 2),
-                    range_size=round(range_size, 2),
-                    score=round(score, 3),
-                )
+            if ml_override:
+                breakout_dist = current_price - h1_low
+                score = breakout_dist / range_size if range_size > 0 else 0.0
+                if breakout_dist <= 0:
+                    return self._reject(
+                        "buy_price_at_or_below_h1_low",
+                        direction=direction, bias=bias_dir,
+                        price=current_price, h1_high=h1_high, h1_low=h1_low,
+                        breakout_dist=round(breakout_dist, 2),
+                        range_size=round(range_size, 2),
+                        score=round(score, 3),
+                        ml_override=True,
+                    )
+            else:
+                breakout_dist = current_price - h1_high
+                score = breakout_dist / range_size if range_size > 0 else 0.0
+                if current_price <= h1_high:
+                    return self._reject(
+                        "buy_price_not_above_h1_high",
+                        direction=direction, bias=bias_dir,
+                        price=current_price, h1_high=h1_high, h1_low=h1_low,
+                        breakout_dist=round(breakout_dist, 2),
+                        range_size=round(range_size, 2),
+                        score=round(score, 3),
+                    )
+                lookback = max(2, cfg.RECENT_PULLBACK_LOOKBACK + 1)
+                recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(lookback, len(closes))))
+                if cfg.REQUIRE_RECENT_PULLBACK and not recent_in_range:
+                    return self._reject(
+                        "buy_no_recent_pullback_inside_h1_range",
+                        direction=direction, bias=bias_dir,
+                        price=current_price, h1_high=h1_high, h1_low=h1_low,
+                        breakout_dist=round(breakout_dist, 2),
+                        range_size=round(range_size, 2),
+                        score=round(score, 3),
+                    )
         else:
-            breakout_dist = h1_low - current_price
-            score = breakout_dist / range_size if range_size > 0 else 0.0
-            if current_price >= h1_low:
-                return self._reject(
-                    "sell_price_not_below_h1_low",
-                    direction=direction,
-                    bias=bias_dir,
-                    price=current_price,
-                    h1_high=h1_high,
-                    h1_low=h1_low,
-                    breakout_dist=round(breakout_dist, 2),
-                    range_size=round(range_size, 2),
-                    score=round(score, 3),
-                )
-            lookback = max(2, cfg.RECENT_PULLBACK_LOOKBACK + 1)
-            recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(lookback, len(closes))))
-            if cfg.REQUIRE_RECENT_PULLBACK and not recent_in_range:
-                return self._reject(
-                    "sell_no_recent_pullback_inside_h1_range",
-                    direction=direction,
-                    bias=bias_dir,
-                    price=current_price,
-                    h1_high=h1_high,
-                    h1_low=h1_low,
-                    breakout_dist=round(breakout_dist, 2),
-                    range_size=round(range_size, 2),
-                    score=round(score, 3),
-                )
+            if ml_override:
+                breakout_dist = h1_high - current_price
+                score = breakout_dist / range_size if range_size > 0 else 0.0
+                if breakout_dist <= 0:
+                    return self._reject(
+                        "sell_price_at_or_above_h1_high",
+                        direction=direction, bias=bias_dir,
+                        price=current_price, h1_high=h1_high, h1_low=h1_low,
+                        breakout_dist=round(breakout_dist, 2),
+                        range_size=round(range_size, 2),
+                        score=round(score, 3),
+                        ml_override=True,
+                    )
+            else:
+                breakout_dist = h1_low - current_price
+                score = breakout_dist / range_size if range_size > 0 else 0.0
+                if current_price >= h1_low:
+                    return self._reject(
+                        "sell_price_not_below_h1_low",
+                        direction=direction, bias=bias_dir,
+                        price=current_price, h1_high=h1_high, h1_low=h1_low,
+                        breakout_dist=round(breakout_dist, 2),
+                        range_size=round(range_size, 2),
+                        score=round(score, 3),
+                    )
+                lookback = max(2, cfg.RECENT_PULLBACK_LOOKBACK + 1)
+                recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(lookback, len(closes))))
+                if cfg.REQUIRE_RECENT_PULLBACK and not recent_in_range:
+                    return self._reject(
+                        "sell_no_recent_pullback_inside_h1_range",
+                        direction=direction, bias=bias_dir,
+                        price=current_price, h1_high=h1_high, h1_low=h1_low,
+                        breakout_dist=round(breakout_dist, 2),
+                        range_size=round(range_size, 2),
+                        score=round(score, 3),
+                    )
 
         score = min(breakout_dist / range_size, 1.0)
         if score < cfg.MIN_BREAKOUT_SCORE:
@@ -197,8 +270,8 @@ class SignalEngine:
                 threshold=cfg.MIN_BREAKOUT_SCORE,
             )
 
-        # ML direction validation
-        if (self._direction_predictor is not None or self._slt_predictor is not None) and _HAS_ML:
+        # ML direction validation (skip if already overridden by ML)
+        if not ml_override and (self._direction_predictor is not None or self._slt_predictor is not None) and _HAS_ML:
             ml_direction = self._get_ml_direction(m1_data, expected_direction=direction)
             if ml_direction is None:
                 return self._reject(
@@ -248,6 +321,7 @@ class SignalEngine:
             "tp2": round(tp2, 2),
             "tp3": round(tp3, 2),
             "atr_value": round(atr_val, 4),
+            "ml_override": ml_override,
             "timestamp": datetime.now().isoformat(),
         }
 
@@ -427,6 +501,7 @@ class SignalEngine:
         """
         Peak-harvest exit — no hard stop loss, trail only after significant profit,
         close when directional confidence breaks down.
+        ML-guided: if ML still predicts same direction, suppress momentum_decay/direction_loss.
         """
         momentum = self.compute_momentum(df)
         atr = self._compute_atr(df, 14)
@@ -442,6 +517,27 @@ class SignalEngine:
         else:
             peak = float(np.max(entry - df["low"].values))
 
+        # --- ML exit signal ---
+        ml_features = self._get_features(df)
+        ml_signal = self._get_ml_exit_signal(ml_features, direction)
+        if ml_signal == "exit":
+            return True, 0.90, "ml_reversal"
+        if ml_signal == "hold":
+            # ML still confident in direction — suppress momentum/direction exits
+            # Only allow trail_stop and max_hold as hard limits
+            confidence = entry_score if entry_score is not None else 0.7
+            patience = 1.0 + (1.0 - confidence)
+            trail_trigger = atr * cfg.PEAK_HARVEST_TRAIL_TRIGGER * patience
+            trail_active = peak >= trail_trigger
+            if trail_active and diff > 0:
+                pullback = peak - diff
+                if pullback / peak > cfg.PEAK_HARVEST_TRAIL_RETRACE:
+                    return True, 0.85, "trail_stop"
+            if bars > cfg.PEAK_HARVEST_MAX_HOLD_BARS:
+                return True, 0.50, "max_hold"
+            return False, 0.0, "ml_hold"
+
+        # --- Normal (non-ML) exit logic ---
         confidence = entry_score if entry_score is not None else 0.7
         patience = 1.0 + (1.0 - confidence)
 

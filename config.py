@@ -143,6 +143,8 @@ ML_MODEL_PATH = _env_str("ML_MODEL_PATH", "models/direction_xgb_m5.joblib")
 ML_BUY_MODEL_PATH = _env_str("ML_BUY_MODEL_PATH", "models/buy_sltp_xgb.joblib")
 ML_SELL_MODEL_PATH = _env_str("ML_SELL_MODEL_PATH", "models/sell_sltp_xgb.joblib")
 ML_M1_HISTORY_BARS = _env_int("ML_M1_HISTORY_BARS", 500)
+ML_BIAS_OVERRIDE_THRESHOLD = _env_float("ML_BIAS_OVERRIDE_THRESHOLD", 0.70)
+ML_HOLD_CONFIDENCE = _env_float("ML_HOLD_CONFIDENCE", 0.50)  # min ML confidence to hold exit (suppress momentum_decay/direction_loss)
 
 # Adaptive confirmation (vreg_vtight)
 ADAPTIVE_CONFIRMATION_ENABLED = _env_bool("ADAPTIVE_CONFIRMATION_ENABLED", True)
