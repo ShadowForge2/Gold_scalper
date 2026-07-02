@@ -5,12 +5,25 @@ from datetime import datetime
 
 import config as cfg
 
+try:
+    from app.direction_predictor import DirectionPredictor, SLTPredictor, compute_features
+    _HAS_ML = True
+except ImportError:
+    DirectionPredictor = None
+    SLTPredictor = None
+    compute_features = None
+    _HAS_ML = False
+
 
 class SignalEngine:
-    def __init__(self):
+    def __init__(self,
+                 direction_predictor: Optional["DirectionPredictor"] = None,
+                 slt_predictor: Optional["SLTPredictor"] = None):
         self.current_signal: Optional[Dict] = None
         self.last_signal_time: Optional[datetime] = None
         self.last_rejection: Optional[Dict] = None
+        self._direction_predictor = direction_predictor
+        self._slt_predictor = slt_predictor
 
     def _reject(self, reason: str, **context) -> None:
         self.last_rejection = {
@@ -18,6 +31,54 @@ class SignalEngine:
             "timestamp": datetime.now().isoformat(),
             **context,
         }
+        return None
+
+    def _get_features(self, m1_data: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """Resample M1 to M5+H1, compute features. Returns feature DataFrame or None."""
+        try:
+            if "time" in m1_data.columns:
+                m1_idx = m1_data.set_index("time")
+            else:
+                m1_idx = m1_data
+            if len(m1_idx) < 10:
+                return None
+            m5 = m1_idx.resample("5min").agg({
+                "open": "first", "high": "max", "low": "min", "close": "last",
+                "tick_volume": "sum",
+            }).dropna()
+            if len(m5) < 5:
+                return None
+            h1 = m1_idx.resample("1h").agg({
+                "open": "first", "high": "max", "low": "min", "close": "last",
+            }).dropna()
+            return compute_features(m5, h1)
+        except Exception:
+            return None
+
+    def _get_ml_direction(self, m1_data: pd.DataFrame, expected_direction: str = None) -> Optional[str]:
+        """Use ML model to predict trade viability. Returns 'BUY', 'SELL', or None.
+        - If SL/TP model available: checks if expected direction will hit TP before SL
+        - Falls back to direction model: checks if price direction matches expected
+        """
+        features = self._get_features(m1_data)
+        if features is None or len(features) == 0:
+            return None
+
+        # SL/TP model: directly predicts trade outcome
+        if self._slt_predictor is not None and expected_direction is not None:
+            if expected_direction == "BUY":
+                prob = self._slt_predictor.buy_win_prob(features)
+                return "BUY" if prob >= cfg.ML_CONFIDENCE_THRESHOLD else None
+            elif expected_direction == "SELL":
+                prob = self._slt_predictor.sell_win_prob(features)
+                return "SELL" if prob >= cfg.ML_CONFIDENCE_THRESHOLD else None
+
+        # Fallback: direction model predicts generic price direction
+        if self._direction_predictor is not None:
+            return self._direction_predictor.predict(
+                features, confidence_threshold=cfg.ML_CONFIDENCE_THRESHOLD
+            )
+
         return None
 
     def evaluate(self, m1_data: pd.DataFrame, bias: Dict,
@@ -132,6 +193,31 @@ class SignalEngine:
                 score=round(score, 3),
                 threshold=cfg.MIN_BREAKOUT_SCORE,
             )
+
+        # ML direction validation
+        if (self._direction_predictor is not None or self._slt_predictor is not None) and _HAS_ML:
+            ml_direction = self._get_ml_direction(m1_data, expected_direction=direction)
+            if ml_direction is None:
+                return self._reject(
+                    "ml_confidence_too_low",
+                    direction=direction,
+                    bias=bias_dir,
+                    price=current_price,
+                    h1_high=h1_high,
+                    h1_low=h1_low,
+                    score=round(score, 3),
+                )
+            if ml_direction != direction:
+                return self._reject(
+                    "ml_direction_conflict",
+                    direction=direction,
+                    ml_direction=ml_direction,
+                    bias=bias_dir,
+                    price=current_price,
+                    h1_high=h1_high,
+                    h1_low=h1_low,
+                    score=round(score, 3),
+                )
 
         atr_val = atr if atr > 0 else (current_price * 0.001)
         if direction == "BUY":

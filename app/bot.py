@@ -15,6 +15,15 @@ from app.trade_executor import TradeExecutor
 from app.position_manager import PositionManager
 from app.gemini_advisor import GeminiAdvisor
 from app.meta_strategy import MetaStrategy
+from app.adaptive_confirmation import AdaptiveConfirmation
+
+try:
+    from app.direction_predictor import DirectionPredictor, SLTPredictor
+    _HAS_ML = True
+except ImportError:
+    DirectionPredictor = None
+    SLTPredictor = None
+    _HAS_ML = False
 
 
 class Bot:
@@ -35,13 +44,34 @@ class Bot:
         self.logger = logger or BotLogger()
         self.client: object = None
         self.bias_engine = BiasEngine()
-        self.signal_engine = SignalEngine()
+        self._direction_predictor = None
+        self._slt_predictor = None
+        if _HAS_ML:
+            try:
+                if os.path.exists(cfg.ML_MODEL_PATH):
+                    self._direction_predictor = DirectionPredictor.load(cfg.ML_MODEL_PATH)
+                    self.logger.info(f"Direction model loaded from {cfg.ML_MODEL_PATH}")
+            except Exception as e:
+                self.logger.warning(f"Failed to load direction model: {e}")
+            try:
+                buy_path = cfg.ML_BUY_MODEL_PATH
+                sell_path = cfg.ML_SELL_MODEL_PATH
+                if os.path.exists(buy_path) and os.path.exists(sell_path):
+                    self._slt_predictor = SLTPredictor(buy_model_path=buy_path, sell_model_path=sell_path)
+                    self.logger.info(f"SL/TP models loaded (buy={buy_path}, sell={sell_path})")
+            except Exception as e:
+                self.logger.warning(f"Failed to load SL/TP models: {e}")
+        self.signal_engine = SignalEngine(
+            direction_predictor=self._direction_predictor,
+            slt_predictor=self._slt_predictor,
+        )
         self.risk_manager = RiskManager()
         self.scaler = EquityScaler()
         self.meta = MetaStrategy() if cfg.META_ENABLED else None
         self.gemini_advisor = GeminiAdvisor()
         if self.gemini_advisor.enabled:
             self.logger.info("Gemini advisor enabled")
+        self.adaptive_conf = AdaptiveConfirmation()
 
         self.state: str = self.STATES["IDLE"]
         self.symbol: str = cfg.SYMBOL
@@ -283,7 +313,7 @@ class Bot:
         if self._winding_down:
             return
 
-        m1_count = 100
+        m1_count = cfg.ML_M1_HISTORY_BARS
         m1_data = self.client.get_rates(
             self.symbol, cfg.SIGNAL_TIMEFRAME, m1_count
         )
@@ -293,6 +323,8 @@ class Bot:
                 {"bars": 0 if m1_data is None else len(m1_data)},
             )
             return
+
+        self.adaptive_conf.update(m1_data)
 
         symbol_info = self.client.get_symbol_info(self.symbol)
         if symbol_info is None:
@@ -451,6 +483,13 @@ class Bot:
                             signal["tp3"] - signal["entry_price"]
                         ) * tp_mod
 
+            if not self.adaptive_conf.should_enter():
+                self.logger.signal(
+                    f"Signal {signal['direction']} score={signal['score']:.2f} "
+                    f"blocked: adaptive confirmation (low vol filter)"
+                )
+                return
+
             self.logger.signal(
                 f"Signal triggered: {signal['direction']} "
                 f"score={signal['score']:.2f}"
@@ -510,6 +549,10 @@ class Bot:
 
     async def _handle_in_trade(self, pnl_data: Dict):
         if pnl_data["open_count"] == 0:
+            # Grace period: if we just entered, API may not show positions yet
+            if self.position_manager._event_start_ts is not None and time.time() - self.position_manager._event_start_ts < 10:
+                self.logger.debug("Waiting for positions to appear (API delay grace period)")
+                return
             self.risk_manager.record_exit(pnl_data["event_pnl"])
             if self.meta:
                 self.meta.record_trade(pnl_data["event_pnl"], self._bias_summary.get("strength", 0))
@@ -699,6 +742,21 @@ class Bot:
         lot_mult = getattr(self, '_lot_multiplier_override', cfg.LOT_MULTIPLIER)
         if self.meta:
             lot_mult = self.meta.current_lot_mult
+
+        if cfg.AGGRESSIVE_SIZING_ENABLED:
+            if score >= cfg.AGGRESSIVE_VERY_STRONG_THRESHOLD:
+                lot_mult *= cfg.AGGRESSIVE_VERY_STRONG_LOT_MULT
+                self.logger.info(
+                    f"Aggressive LOT: score={score:.2f} >= {cfg.AGGRESSIVE_VERY_STRONG_THRESHOLD} "
+                    f"→ lot_mult={lot_mult:.1f}x"
+                )
+            elif score >= cfg.AGGRESSIVE_STRONG_THRESHOLD:
+                lot_mult *= cfg.AGGRESSIVE_STRONG_LOT_MULT
+                self.logger.info(
+                    f"Aggressive LOT: score={score:.2f} >= {cfg.AGGRESSIVE_STRONG_THRESHOLD} "
+                    f"→ lot_mult={lot_mult:.1f}x"
+                )
+
         lot = min(self.scaler.get_lot(balance) * lot_mult, cfg.MAX_LOT)
         vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
         lot = round(lot / vol_step) * vol_step
@@ -766,6 +824,7 @@ class Bot:
             f"({self.scaler.growth_pct(balance):.1f}% growth)"
         )
 
+        any_opened = False
         for i in range(max_trades):
             can_add, add_msg = self.risk_manager.can_add_to_event()
             if not can_add:
@@ -775,6 +834,7 @@ class Bot:
                 self.symbol, direction, lot
             )
             if ticket is not None:
+                any_opened = True
                 self.risk_manager.record_entry()
                 await asyncio.sleep(0.2)
             else:
@@ -786,13 +846,14 @@ class Bot:
             self.scaler.update_peak(fresh_acct["balance"])
         self.position_manager.refresh()
 
-        if self.position_manager.in_event:
+        if self.position_manager.in_event or any_opened:
             self.state = self.STATES["IN_TRADE"]
             if self.position_manager._event_start_ts is None:
                 self.position_manager._event_start_ts = time.time()
+            open_cnt = self.position_manager.open_count or max_trades
             self.logger.info(
                 f"Entered {direction} mode with "
-                f"{self.position_manager.open_count} position(s)"
+                f"{open_cnt} position(s)"
             )
             await self._notify(
                 "trade_open",
