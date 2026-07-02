@@ -64,7 +64,19 @@ class Bot:
         self.signal_engine = SignalEngine(
             direction_predictor=self._direction_predictor,
             slt_predictor=self._slt_predictor,
+            logger=self.logger,
         )
+        ml_status = []
+        if self._direction_predictor:
+            ml_status.append("Direction model loaded")
+        if self._slt_predictor:
+            ml_status.append("SL/TP models loaded")
+        if ml_status:
+            self.logger.info(f"[ML] Active: {', '.join(ml_status)} | "
+                             f"confidence_threshold={cfg.ML_CONFIDENCE_THRESHOLD} "
+                             f"override_max={getattr(cfg, 'ML_OVERRIDE_MAX_PER_SESSION', 3)}")
+        else:
+            self.logger.info("[ML] Not available")
         self.risk_manager = RiskManager()
         self.scaler = EquityScaler()
         self.meta = MetaStrategy() if cfg.META_ENABLED else None
@@ -96,6 +108,7 @@ class Bot:
         self._can_trade_cb = None
         self._winding_down = False
         self._last_sub_check = 0.0
+        self._ml_heartbeat_ticks = 0
 
 
     async def _notify(self, ntype: str, title: str, message: str, data: Optional[Dict] = None):
@@ -297,6 +310,12 @@ class Bot:
         elif self.state == self.STATES["MARKET_CLOSED"]:
             self.logger.info("Market reopened, resuming normal operation")
             self.state = self.STATES["IDLE"]
+
+        self._ml_heartbeat_ticks += 1
+        if self._ml_heartbeat_ticks >= 100 and self._direction_predictor is not None:
+            self._ml_heartbeat_ticks = 0
+            n_override = getattr(self.signal_engine, '_ml_override_count', 0)
+            self.logger.info(f"[ML] Heartbeat: overrides today={n_override} | models=active")
 
         if self.state == self.STATES["IN_TRADE"]:
             await self._handle_in_trade(pnl_data)

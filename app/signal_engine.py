@@ -18,7 +18,8 @@ except ImportError:
 class SignalEngine:
     def __init__(self,
                  direction_predictor: Optional["DirectionPredictor"] = None,
-                 slt_predictor: Optional["SLTPredictor"] = None):
+                 slt_predictor: Optional["SLTPredictor"] = None,
+                 logger=None):
         self.current_signal: Optional[Dict] = None
         self.last_signal_time: Optional[datetime] = None
         self.last_rejection: Optional[Dict] = None
@@ -26,6 +27,7 @@ class SignalEngine:
         self._slt_predictor = slt_predictor
         self._ml_override_count = 0
         self._ml_override_day = None
+        self._logger = logger
 
     def _reject(self, reason: str, **context) -> None:
         self.last_rejection = {
@@ -71,18 +73,26 @@ class SignalEngine:
             if self._slt_predictor is not None and expected_direction is not None:
                 if expected_direction == "BUY":
                     prob = self._slt_predictor.buy_win_prob(features)
+                    if self._logger:
+                        self._logger.info(f"[ML] SL/TP BUY prob={prob:.3f} threshold={cfg.ML_CONFIDENCE_THRESHOLD}")
                     return "BUY" if prob >= cfg.ML_CONFIDENCE_THRESHOLD else None
                 elif expected_direction == "SELL":
                     prob = self._slt_predictor.sell_win_prob(features)
+                    if self._logger:
+                        self._logger.info(f"[ML] SL/TP SELL prob={prob:.3f} threshold={cfg.ML_CONFIDENCE_THRESHOLD}")
                     return "SELL" if prob >= cfg.ML_CONFIDENCE_THRESHOLD else None
 
             # Fallback: direction model predicts generic price direction
             if self._direction_predictor is not None:
-                return self._direction_predictor.predict(
+                result = self._direction_predictor.predict(
                     features, confidence_threshold=cfg.ML_CONFIDENCE_THRESHOLD
                 )
-        except Exception:
-            pass
+                if self._logger:
+                    self._logger.info(f"[ML] Direction prediction: {result} threshold={cfg.ML_CONFIDENCE_THRESHOLD}")
+                return result
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"[ML] Prediction error: {e}")
 
         return None
 
@@ -95,18 +105,31 @@ class SignalEngine:
             if self._slt_predictor is not None:
                 buy_p = self._slt_predictor.buy_win_prob(features)
                 sell_p = self._slt_predictor.sell_win_prob(features)
+                if self._logger:
+                    self._logger.info(f"[ML] Override check: BUY prob={buy_p:.3f} SELL prob={sell_p:.3f} threshold={override_threshold}")
                 if buy_p >= override_threshold and buy_p > sell_p:
+                    if self._logger:
+                        self._logger.info(f"[ML] Override: BUY (conf={buy_p:.3f})")
                     return "BUY", buy_p
                 if sell_p >= override_threshold and sell_p > buy_p:
+                    if self._logger:
+                        self._logger.info(f"[ML] Override: SELL (conf={sell_p:.3f})")
                     return "SELL", sell_p
             if self._direction_predictor is not None:
                 prob_down, prob_up = self._direction_predictor.predict_proba(features)
+                if self._logger:
+                    self._logger.info(f"[ML] Override check: DOWN prob={prob_down:.3f} UP prob={prob_up:.3f} threshold={override_threshold}")
                 if prob_up >= override_threshold and prob_up > prob_down:
+                    if self._logger:
+                        self._logger.info(f"[ML] Override: BUY (conf={prob_up:.3f})")
                     return "BUY", prob_up
                 if prob_down >= override_threshold and prob_down > prob_up:
+                    if self._logger:
+                        self._logger.info(f"[ML] Override: SELL (conf={prob_down:.3f})")
                     return "SELL", prob_down
-        except Exception:
-            pass
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"[ML] Override error: {e}")
         return None, 0.0
 
     def _get_ml_exit_signal(self, features: pd.DataFrame, trade_direction: str) -> Optional[str]:
@@ -119,18 +142,25 @@ class SignalEngine:
                 prob_down, prob_up = self._direction_predictor.predict_proba(features)
                 hold_threshold = getattr(cfg, 'ML_HOLD_CONFIDENCE', 0.50)
                 exit_threshold = getattr(cfg, 'ML_BIAS_OVERRIDE_THRESHOLD', 0.70)
+                result = None
                 if trade_direction == "BUY":
                     if prob_up >= hold_threshold:
-                        return "hold"
+                        result = "hold"
                     if prob_down >= exit_threshold:
-                        return "exit"
+                        result = "exit"
                 else:
                     if prob_down >= hold_threshold:
-                        return "hold"
+                        result = "hold"
                     if prob_up >= exit_threshold:
-                        return "exit"
-        except Exception:
-            pass
+                        result = "exit"
+                if self._logger:
+                    self._logger.info(f"[ML] Exit signal: {result} | {trade_direction} "
+                                      f"DOWN={prob_down:.3f} UP={prob_up:.3f} "
+                                      f"hold_thr={hold_threshold} exit_thr={exit_threshold}")
+                return result
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"[ML] Exit signal error: {e}")
         return None
 
     def reset_ml_override_count(self):
