@@ -28,6 +28,7 @@ class SignalEngine:
         self._ml_override_count = 0
         self._ml_override_day = None
         self._logger = logger
+        self._last_ml_override_log_time = 0.0
 
     def _reject(self, reason: str, **context) -> None:
         self.last_rejection = {
@@ -101,11 +102,13 @@ class SignalEngine:
         if features is None or len(features) == 0:
             return None, 0.0
         try:
+            import time as _time
             override_threshold = getattr(cfg, 'ML_BIAS_OVERRIDE_THRESHOLD', 0.70)
             if self._slt_predictor is not None:
                 buy_p = self._slt_predictor.buy_win_prob(features)
                 sell_p = self._slt_predictor.sell_win_prob(features)
-                if self._logger:
+                if self._logger and _time.monotonic() - self._last_ml_override_log_time >= 30:
+                    self._last_ml_override_log_time = _time.monotonic()
                     self._logger.info(f"[ML] Override check: BUY prob={buy_p:.3f} SELL prob={sell_p:.3f} threshold={override_threshold}")
                 if buy_p >= override_threshold and buy_p > sell_p:
                     if self._logger:
@@ -117,7 +120,8 @@ class SignalEngine:
                     return "SELL", sell_p
             if self._direction_predictor is not None:
                 prob_down, prob_up = self._direction_predictor.predict_proba(features)
-                if self._logger:
+                if self._logger and _time.monotonic() - self._last_ml_override_log_time >= 30:
+                    self._last_ml_override_log_time = _time.monotonic()
                     self._logger.info(f"[ML] Override check: DOWN prob={prob_down:.3f} UP prob={prob_up:.3f} threshold={override_threshold}")
                 if prob_up >= override_threshold and prob_up > prob_down:
                     if self._logger:
