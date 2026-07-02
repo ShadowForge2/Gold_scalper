@@ -217,7 +217,7 @@ class SignalEngine:
             if today != self._ml_override_day:
                 self._ml_override_count = 0
                 self._ml_override_day = today
-            if self._ml_override_count < getattr(cfg, 'ML_OVERRIDE_MAX_PER_SESSION', 3):
+            if self._ml_override_count < 20:
                 ml_features = self._get_features(m1_data)
                 if ml_features is not None and len(ml_features) > 0:
                     ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)

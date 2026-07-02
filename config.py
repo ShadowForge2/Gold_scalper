@@ -145,7 +145,7 @@ ML_SELL_MODEL_PATH = _env_str("ML_SELL_MODEL_PATH", "models/sell_sltp_xgb.joblib
 ML_M1_HISTORY_BARS = _env_int("ML_M1_HISTORY_BARS", 500)
 ML_BIAS_OVERRIDE_THRESHOLD = _env_float("ML_BIAS_OVERRIDE_THRESHOLD", 0.70)
 ML_HOLD_CONFIDENCE = _env_float("ML_HOLD_CONFIDENCE", 0.50)  # min ML confidence to hold exit (suppress momentum_decay/direction_loss)
-ML_OVERRIDE_MAX_PER_SESSION = _env_int("ML_OVERRIDE_MAX_PER_SESSION", 20)  # max override entries per session
+
 
 # Adaptive confirmation (vreg_vtight)
 ADAPTIVE_CONFIRMATION_ENABLED = _env_bool("ADAPTIVE_CONFIRMATION_ENABLED", True)
