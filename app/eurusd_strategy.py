@@ -126,7 +126,8 @@ class EURUSDStrategy:
                 return self._reject("buy_no_volume")
             entry_mode = "crossover" if crossover else "retest"
             sl_price = ask - atr * c["sl_atr_mult"]
-            tp = ask + atr * c["tp_atr_mult"]
+            tp1 = ask + atr * c["tp_atr_mult"]
+            tp2 = ask + atr * c["tp_atr_mult"] * 2
         else:
             if c["use_candle_filter"] and not ((not c1_dir) or (not c2_dir)):
                 return self._reject("sell_bullish_candle_streak")
@@ -142,7 +143,8 @@ class EURUSDStrategy:
                 return self._reject("sell_no_volume")
             entry_mode = "crossover" if crossover else "retest"
             sl_price = bid + atr * c["sl_atr_mult"]
-            tp = bid - atr * c["tp_atr_mult"]
+            tp1 = bid - atr * c["tp_atr_mult"]
+            tp2 = bid - atr * c["tp_atr_mult"] * 2
 
         direction = "BUY" if trend == "BULLISH" else "SELL"
         entry_price = ask if direction == "BUY" else bid
@@ -155,8 +157,8 @@ class EURUSDStrategy:
             "score": round(score, 3),
             "entry_price": round(entry_price, 5),
             "sl": round(sl_price, 5),
-            "tp1": round(tp, 5),
-            "tp2": round(tp, 5),
+            "tp1": round(tp1, 5),
+            "tp2": round(tp2, 5),
             "atr_pips": round(sl_pips, 1),
             "tp1_pips": round(tp_pips, 1),
             "tp2_pips": round(tp_pips, 1),

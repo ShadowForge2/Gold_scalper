@@ -50,9 +50,9 @@ class EquityScaler:
         tier_mults = [1.0, 1.5, 2.0, 3.0, 5.0, 10.0]
         tm = tier_mults[min(t, len(tier_mults) - 1)]
 
-        if signal_score >= 0.85:
+        if signal_score >= 0.50:
             cm = 2.0
-        elif signal_score >= 0.75:
+        elif signal_score >= 0.30:
             cm = 1.5
         else:
             cm = 1.0
