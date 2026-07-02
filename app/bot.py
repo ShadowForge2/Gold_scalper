@@ -74,7 +74,7 @@ class Bot:
         if ml_status:
             self.logger.info(f"[ML] Active: {', '.join(ml_status)} | "
                              f"confidence_threshold={cfg.ML_CONFIDENCE_THRESHOLD} "
-                             f"override_max={getattr(cfg, 'ML_OVERRIDE_MAX_PER_SESSION', 3)}")
+                             f"override_max=20")
         else:
             self.logger.info("[ML] Not available")
         self.risk_manager = RiskManager()

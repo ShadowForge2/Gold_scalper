@@ -29,6 +29,7 @@ class SignalEngine:
         self._ml_override_day = None
         self._logger = logger
         self._last_ml_override_log_time = 0.0
+        self._last_ml_override_result_value = None
 
     def _reject(self, reason: str, **context) -> None:
         self.last_rejection = {
@@ -107,29 +108,39 @@ class SignalEngine:
             if self._slt_predictor is not None:
                 buy_p = self._slt_predictor.buy_win_prob(features)
                 sell_p = self._slt_predictor.sell_win_prob(features)
-                if self._logger and _time.monotonic() - self._last_ml_override_log_time >= 30:
+                should_log = self._logger and _time.monotonic() - self._last_ml_override_log_time >= 30
+                if should_log:
                     self._last_ml_override_log_time = _time.monotonic()
                     self._logger.info(f"[ML] Override check: BUY prob={buy_p:.3f} SELL prob={sell_p:.3f} threshold={override_threshold}")
                 if buy_p >= override_threshold and buy_p > sell_p:
-                    if self._logger:
-                        self._logger.info(f"[ML] Override: BUY (conf={buy_p:.3f})")
+                    if should_log or self._last_ml_override_result_value != f"BUY_{buy_p:.3f}":
+                        self._last_ml_override_result_value = f"BUY_{buy_p:.3f}"
+                        if self._logger:
+                            self._logger.info(f"[ML] Override: BUY (conf={buy_p:.3f})")
                     return "BUY", buy_p
                 if sell_p >= override_threshold and sell_p > buy_p:
-                    if self._logger:
-                        self._logger.info(f"[ML] Override: SELL (conf={sell_p:.3f})")
+                    if should_log or self._last_ml_override_result_value != f"SELL_{sell_p:.3f}":
+                        self._last_ml_override_result_value = f"SELL_{sell_p:.3f}"
+                        if self._logger:
+                            self._logger.info(f"[ML] Override: SELL (conf={sell_p:.3f})")
                     return "SELL", sell_p
             if self._direction_predictor is not None:
                 prob_down, prob_up = self._direction_predictor.predict_proba(features)
-                if self._logger and _time.monotonic() - self._last_ml_override_log_time >= 30:
+                should_log = self._logger and _time.monotonic() - self._last_ml_override_log_time >= 30
+                if should_log:
                     self._last_ml_override_log_time = _time.monotonic()
                     self._logger.info(f"[ML] Override check: DOWN prob={prob_down:.3f} UP prob={prob_up:.3f} threshold={override_threshold}")
                 if prob_up >= override_threshold and prob_up > prob_down:
-                    if self._logger:
-                        self._logger.info(f"[ML] Override: BUY (conf={prob_up:.3f})")
+                    if should_log or self._last_ml_override_result_value != f"UP_{prob_up:.3f}":
+                        self._last_ml_override_result_value = f"UP_{prob_up:.3f}"
+                        if self._logger:
+                            self._logger.info(f"[ML] Override: BUY (conf={prob_up:.3f})")
                     return "BUY", prob_up
                 if prob_down >= override_threshold and prob_down > prob_up:
-                    if self._logger:
-                        self._logger.info(f"[ML] Override: SELL (conf={prob_down:.3f})")
+                    if should_log or self._last_ml_override_result_value != f"DOWN_{prob_down:.3f}":
+                        self._last_ml_override_result_value = f"DOWN_{prob_down:.3f}"
+                        if self._logger:
+                            self._logger.info(f"[ML] Override: SELL (conf={prob_down:.3f})")
                     return "SELL", prob_down
         except Exception as e:
             if self._logger:
