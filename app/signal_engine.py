@@ -24,6 +24,8 @@ class SignalEngine:
         self.last_rejection: Optional[Dict] = None
         self._direction_predictor = direction_predictor
         self._slt_predictor = slt_predictor
+        self._ml_override_count = 0
+        self._ml_override_day = None
 
     def _reject(self, reason: str, **context) -> None:
         self.last_rejection = {
@@ -131,6 +133,10 @@ class SignalEngine:
             pass
         return None
 
+    def reset_ml_override_count(self):
+        self._ml_override_count = 0
+        self._ml_override_day = None
+
     def evaluate(self, m1_data: pd.DataFrame, bias: Dict,
                  current_price: float,
                  h1_high: float = None, h1_low: float = None) -> Optional[Dict]:
@@ -173,12 +179,17 @@ class SignalEngine:
         # ML bias override: if ML confidently predicts opposite direction, trust ML
         ml_override = False
         if (self._direction_predictor is not None or self._slt_predictor is not None) and _HAS_ML:
-            ml_features = self._get_features(m1_data)
-            if ml_features is not None and len(ml_features) > 0:
-                ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
-                if ml_dir is not None and ml_dir != direction:
-                    direction = ml_dir
-                    ml_override = True
+            today = datetime.now().day
+            if today != self._ml_override_day:
+                self._ml_override_count = 0
+                self._ml_override_day = today
+            if self._ml_override_count < getattr(cfg, 'ML_OVERRIDE_MAX_PER_SESSION', 3):
+                ml_features = self._get_features(m1_data)
+                if ml_features is not None and len(ml_features) > 0:
+                    ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
+                    if ml_dir is not None and ml_dir != direction:
+                        direction = ml_dir
+                        ml_override = True
 
         if direction == "BUY":
             if ml_override:
@@ -327,6 +338,8 @@ class SignalEngine:
 
         self.current_signal = signal
         self.last_rejection = None
+        if ml_override:
+            self._ml_override_count += 1
         return signal
 
     def evaluate_exit(self, m1_data: pd.DataFrame,
