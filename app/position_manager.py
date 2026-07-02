@@ -35,7 +35,7 @@ class PositionManager:
             self.closed_history[:100] = []
 
     def refresh(self) -> Dict:
-        raw_positions = self.client.get_positions(magic=self.magic)
+        raw_positions = self.client.get_positions(magic=self.magic) or []
         now = time.time()
         cutoff = now - 30.0
         self._closed_tickets = {
@@ -44,10 +44,10 @@ class PositionManager:
         }
         self.open_positions = [
             p for p in raw_positions
-            if str(p["ticket"]) not in self._closed_tickets
+            if str(p.get("ticket", "")) not in self._closed_tickets
         ]
-        self.event_pnl = sum(p["profit"] for p in self.open_positions)
-        self.daily_pnl = self.client.get_total_daily_pnl(self.magic)
+        self.event_pnl = sum(p.get("profit", 0) for p in self.open_positions)
+        self.daily_pnl = self.client.get_total_daily_pnl(self.magic) or 0.0
         self.in_event = len(self.open_positions) > 0
         self.open_count = len(self.open_positions)
         return self.summary()

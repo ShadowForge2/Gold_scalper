@@ -121,11 +121,11 @@ class MetaStrategy:
             return "TRENDING_STRONG"
         if strength >= 0.4 and wr >= 0.35 and pf >= 1.2:
             return "TRENDING_WEAK"
-        if strength < 0.4 or (wr < 0.3 and pf < 1.0):
-            return "CHOPPY"
-
         if self.dd_pct(balance) > 15:
             return "DRAWDOWN"
+
+        if strength < 0.4 or (wr < 0.3 and pf < 1.0):
+            return "CHOPPY"
 
         return "RANGING"
 

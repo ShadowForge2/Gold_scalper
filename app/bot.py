@@ -550,7 +550,7 @@ class Bot:
     async def _handle_in_trade(self, pnl_data: Dict):
         if pnl_data["open_count"] == 0:
             # Grace period: if we just entered, API may not show positions yet
-            if self.position_manager._event_start_ts is not None and time.time() - self.position_manager._event_start_ts < 10:
+            if getattr(self.position_manager, "_event_start_ts", None) is not None and time.time() - self.position_manager._event_start_ts < 10:
                 self.logger.debug("Waiting for positions to appear (API delay grace period)")
                 return
             self.risk_manager.record_exit(pnl_data["event_pnl"])
@@ -559,7 +559,6 @@ class Bot:
                 balance = (self.client.get_account_info() or {}).get("balance", 0)
                 self.meta.update(balance, self._bias_summary)
             self._enter_cooldown()
-            self.state = self.STATES["IDLE"]
             return
 
         acct = self.client.get_account_info()

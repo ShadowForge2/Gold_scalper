@@ -25,19 +25,24 @@ class TradeExecutor:
             return ticket
         else:
             detail = ""
-            if hasattr(self.client, "last_order_error"):
-                detail = self.client.last_order_error()
+            err_attr = getattr(self.client, "last_order_error", None)
+            if err_attr is not None:
+                detail = err_attr() if callable(err_attr) else str(err_attr)
             suffix = f": {detail}" if detail else ""
             self.logger.error(f"Order failed for {symbol} {direction}{suffix}")
             return None
 
     def close_position(self, ticket: int) -> bool:
-        success = self.client.close_position(ticket)
-        if not success:
-            self.logger.warning(f"Position {ticket} not found or close failed")
+        try:
+            success = self.client.close_position(ticket)
+            if not success:
+                self.logger.warning(f"Position {ticket} not found or close failed")
+                return False
+            self.logger.trade(f"Closed position {ticket}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Exception closing position {ticket}: {e}")
             return False
-        self.logger.trade(f"Closed position {ticket}")
-        return True
 
     def close_all_bot_positions(self) -> List[Dict]:
         positions = self.client.get_positions(magic=cfg.MAGIC_NUMBER) or []
@@ -50,9 +55,9 @@ class TradeExecutor:
         return closed
 
     def close_all_positions(self, symbol: Optional[str] = None) -> int:
-        positions = self.client.get_positions()
+        positions = self.client.get_positions() or []
         if symbol:
-            positions = [p for p in positions if p["symbol"] == symbol]
+            positions = [p for p in positions if p.get("symbol") == symbol]
         closed = 0
         for pos in positions:
             if self.close_position(pos["ticket"]):

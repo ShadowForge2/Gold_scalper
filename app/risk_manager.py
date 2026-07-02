@@ -48,7 +48,7 @@ class EquityScaler:
     def get_trades_per_event(self, balance: float, signal_score: float) -> int:
         t = self._tier(balance)
         tier_mults = [1.0, 1.5, 2.0, 3.0, 5.0, 10.0]
-        tm = tier_mults[min(t, len(tier_mults) - 1)]
+        tm = tier_mults[min(t - 1, len(tier_mults) - 1)]
 
         if signal_score >= 0.50:
             cm = 2.0
@@ -169,7 +169,8 @@ class RiskManager:
 
     def record_exit(self, profit: float):
         self.last_exit_time = datetime.now()
-        self.event_trades = 0
+        if self.event_trades > 0:
+            self.event_trades -= 1
         if profit < 0:
             self.consecutive_losses += 1
         else:

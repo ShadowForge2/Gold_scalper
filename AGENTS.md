@@ -148,3 +148,22 @@ All documented in prior conversation. Key fixes:
 - `models/direction_xgb_m5.joblib` — trained direction model
 - `models/buy_sltp_xgb.joblib` — trained BUY SL/TP model
 - `models/sell_sltp_xgb.joblib` — trained SELL SL/TP model
+
+### Session 2026-07-02b: Codebase Audit Fixes
+**Discovered**: Systematic code review during H1 data debugging identified 11 additional bugs across 6 files.
+
+**Fixes applied:**
+
+| # | File | Line | Bug | Fix |
+|---|---|---|---|---|
+| 1 | `risk_manager.py` | 51 | Tier indexing off-by-one (`t` used as 0-based) | `t - 1` |
+| 2 | `risk_manager.py` | 172 | `event_trades` reset to 0 on single exit breaks event limit | `-= 1` |
+| 3 | `signal_engine.py` | 58-82 | ML predict exception kills signal evaluation | `try/except` |
+| 4 | `meta_strategy.py` | 124-128 | DRAWDOWN regime unreachable (CHOPPY checked first) | Swap order |
+| 5 | `capital_client.py` | 107-119 | Zombie session on ping failure (non-200 silently ignored) | `self.connected = False` |
+| 6 | `capital_client.py` | 178-181 | `reconnect()` passed stale `api_key` from init | Optional `api_key` param |
+| 7 | `capital_client.py` | 142-147 | 429 rate-limit retry exhausts loop, returns `None` | Return response on last attempt |
+| 8 | `trade_executor.py` | 34-41 | `close_position()` crashes on exception | `try/except` |
+| 9 | `trade_executor.py` | 53-55 | `get_positions()` returns `None` → crash | `or []`, `.get("symbol")` |
+| 10 | `trade_executor.py` | 28-30 | `last_order_error()` called as function but might be property | `callable` guard |
+| 11 | `bot.py` | 553 | `_event_start_ts` access crashes if `position_manager` replaced | `getattr` guard |

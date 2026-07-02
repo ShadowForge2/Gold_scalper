@@ -64,20 +64,23 @@ class SignalEngine:
         if features is None or len(features) == 0:
             return None
 
-        # SL/TP model: directly predicts trade outcome
-        if self._slt_predictor is not None and expected_direction is not None:
-            if expected_direction == "BUY":
-                prob = self._slt_predictor.buy_win_prob(features)
-                return "BUY" if prob >= cfg.ML_CONFIDENCE_THRESHOLD else None
-            elif expected_direction == "SELL":
-                prob = self._slt_predictor.sell_win_prob(features)
-                return "SELL" if prob >= cfg.ML_CONFIDENCE_THRESHOLD else None
+        try:
+            # SL/TP model: directly predicts trade outcome
+            if self._slt_predictor is not None and expected_direction is not None:
+                if expected_direction == "BUY":
+                    prob = self._slt_predictor.buy_win_prob(features)
+                    return "BUY" if prob >= cfg.ML_CONFIDENCE_THRESHOLD else None
+                elif expected_direction == "SELL":
+                    prob = self._slt_predictor.sell_win_prob(features)
+                    return "SELL" if prob >= cfg.ML_CONFIDENCE_THRESHOLD else None
 
-        # Fallback: direction model predicts generic price direction
-        if self._direction_predictor is not None:
-            return self._direction_predictor.predict(
-                features, confidence_threshold=cfg.ML_CONFIDENCE_THRESHOLD
-            )
+            # Fallback: direction model predicts generic price direction
+            if self._direction_predictor is not None:
+                return self._direction_predictor.predict(
+                    features, confidence_threshold=cfg.ML_CONFIDENCE_THRESHOLD
+                )
+        except Exception:
+            pass
 
         return None
 

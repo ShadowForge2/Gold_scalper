@@ -113,8 +113,12 @@ class CapitalClient:
                 )
                 if r.status_code in (401, 403):
                     self._login()
+                elif r.status_code != 200:
+                    self.connected = False
+                    return False
             except Exception:
-                pass
+                self.connected = False
+                return False
         self._last_activity = time.time()
         return self.connected
 
@@ -134,13 +138,15 @@ class CapitalClient:
         for attempt in range(2):
             try:
                 r = self._session.request(method, url, **kwargs)
-                # 429: rate limited — sleep Retry-After then retry
+                # 429: rate limited — sleep Retry-After then retry once
                 if r.status_code == 429:
                     retry_after = int(r.headers.get("Retry-After", 5))
                     self._last_order_error = f"HTTP 429: rate limited, retrying after {retry_after}s"
                     time.sleep(retry_after)
                     self._throttle()
-                    continue
+                    if attempt == 0:
+                        continue
+                    return r
                 # 401: session expired — re-login and retry once
                 if r.status_code == 401 and attempt == 0:
                     self._last_order_error = "HTTP 401: unauthorized, re-authenticating"
@@ -171,10 +177,10 @@ class CapitalClient:
     def is_connected(self) -> bool:
         return self.connected
 
-    def reconnect(self, server: str, account: str, password: str) -> bool:
+    def reconnect(self, server: str, account: str, password: str, api_key: Optional[str] = None) -> bool:
         self.shutdown()
-        self.demo = "demo" in server.lower() or "DEMO" in server
-        return self.initialize(self.api_key, account, password)
+        self.demo = "demo" in server.lower()
+        return self.initialize(api_key or self.api_key, account, password)
 
     def last_error(self) -> Tuple[int, str]:
         return 0, self._last_order_error or "No error"
