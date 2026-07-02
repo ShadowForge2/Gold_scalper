@@ -74,7 +74,7 @@ ATR_MULTIPLIER = _env_float("ATR_MULTIPLIER", 1.0)
 ATR_PERIOD = _env_int("ATR_PERIOD", 14)
 
 # Exit mode and thresholds
-EXIT_MODE = _env_int("EXIT_MODE", 6)  # 5=peak harvest, 6=multi-TP zone
+EXIT_MODE = _env_int("EXIT_MODE", 5)  # 5=peak harvest (no hard SL), 6=multi-TP zone
 EXIT_THRESHOLD_TIGHT = _env_float("EXIT_THRESHOLD_TIGHT", 0.50)
 EXIT_MOMENTUM_THRESHOLD = _env_float("EXIT_MOMENTUM_THRESHOLD", 0.30)
 
