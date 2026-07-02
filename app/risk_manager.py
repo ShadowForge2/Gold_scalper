@@ -188,8 +188,8 @@ class RiskManager:
 
         sessions = {
             "ASIA": (0, 8),
-            "LONDON": (8, 17),
-            "NEW_YORK": (13, 22),
+            "LONDON": (7, 17),
+            "NEW_YORK": (12, 22),
         }
 
         allowed = getattr(self, 'allowed_sessions', None)
