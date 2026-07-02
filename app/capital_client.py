@@ -335,7 +335,7 @@ class CapitalClient:
     @staticmethod
     def _extract_price(price_field, side: str = "bid") -> float:
         if isinstance(price_field, dict):
-            return float(price_field.get(side if side == "bid" else "offer", 0))
+            return float(price_field.get(side if side == "bid" else "ask", 0))
         try:
             return float(price_field)
         except (TypeError, ValueError):
