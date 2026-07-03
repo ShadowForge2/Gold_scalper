@@ -178,9 +178,12 @@ class CapitalClient:
     def is_connected(self) -> bool:
         return self.connected
 
-    def reconnect(self, server: str, account: str, password: str, api_key: Optional[str] = None) -> bool:
+    def reconnect(self, server: str, account: str, password: str, api_key: Optional[str] = None, demo: Optional[bool] = None) -> bool:
         self.shutdown()
-        self.demo = "demo" in server.lower()
+        if demo is not None:
+            self.demo = demo
+        else:
+            self.demo = "demo" in server.lower()
         return self.initialize(api_key or self.api_key, account, password)
 
     def last_error(self) -> Tuple[int, str]:
@@ -393,7 +396,8 @@ class CapitalClient:
         if not self._ensure_session():
             return []
         try:
-            target_epic = self._resolve_epic(symbol or cfg.SYMBOL) if magic is not None else None
+            filter_symbol = symbol or cfg.SYMBOL
+            target_epic = self._resolve_epic(filter_symbol) if magic is not None else None
             r = self._request("GET", f"{self.base_url}/api/v1/positions", headers=self._auth_headers())
             if r.ok:
                 result = []

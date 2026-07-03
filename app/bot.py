@@ -541,13 +541,13 @@ class Bot:
 
     def _current_session(self) -> str:
         h = datetime.utcnow().hour
-        if 6 <= h < 14:
+        if 0 <= h < 8:
             return "ASIA"
-        if 14 <= h < 20:
+        if 8 <= h < 17:
             return "LONDON"
-        if 20 <= h < 24 or h < 2:
+        if 12 <= h < 22:
             return "NEW_YORK"
-        return "OVERLAP"
+        return "OUTSIDE"
 
     def _log_signal_diagnostic(self, reason: str, context: Dict):
         now = time.monotonic()
@@ -651,10 +651,12 @@ class Bot:
 
         exit_thresh = getattr(self, '_exit_threshold_override', cfg.EXIT_THRESHOLD_TIGHT)
         effective_exit_mode = getattr(self, '_exit_mode_override', cfg.EXIT_MODE)
+        event_start = getattr(self.position_manager, '_event_start_ts', None)
+        bars_since_entry = max(0, int((time.time() - event_start) / 300)) if event_start else 0
         should_exit, exit_score, reason = self.signal_engine.evaluate_exit(
                 m1_data, entry_price, direction, entry_score,
                 exit_mode=effective_exit_mode, exit_threshold=exit_thresh,
-                signal=self._current_signal,
+                signal=self._current_signal, bars_since_entry=bars_since_entry,
             )
 
         if not should_exit and reason == "ml_hold":

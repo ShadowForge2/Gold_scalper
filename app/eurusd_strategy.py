@@ -129,7 +129,7 @@ class EURUSDStrategy:
             tp1 = ask + atr * c["tp_atr_mult"]
             tp2 = ask + atr * c["tp_atr_mult"] * 2
         else:
-            if c["use_candle_filter"] and not ((not c1_dir) or (not c2_dir)):
+            if c["use_candle_filter"] and bullish_candles >= look:
                 return self._reject("sell_bullish_candle_streak")
             crossover = ema_fast[-1] < ema_slow[-1] and ema_fast[-2] >= ema_slow[-2]
             retest = (ema_fast[-1] < ema_slow[-1] and

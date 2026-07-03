@@ -45,20 +45,21 @@ def compute_features(df: pd.DataFrame, h1_df: Optional[pd.DataFrame] = None) -> 
 
     features = pd.DataFrame(index=df.index)
 
-    features["return_1"] = np.log(closes / np.roll(closes, 1))
-    features["return_2"] = np.log(closes / np.roll(closes, 2))
-    features["return_3"] = np.log(closes / np.roll(closes, 3))
-    features["return_5"] = np.log(closes / np.roll(closes, 5))
-    features["return_10"] = np.log(closes / np.roll(closes, 10))
-    features["return_20"] = np.log(closes / np.roll(closes, 20))
+    features["return_1"] = np.log(closes / np.concatenate([[np.nan], closes[:-1]]))
+    features["return_2"] = np.log(closes / np.concatenate([[np.nan, np.nan], closes[:-2]]))
+    features["return_3"] = np.log(closes / np.concatenate([[np.nan, np.nan, np.nan], closes[:-3]]))
+    features["return_5"] = np.log(closes / np.concatenate([[np.nan] * 5, closes[:-5]]))
+    features["return_10"] = np.log(closes / np.concatenate([[np.nan] * 10, closes[:-10]]))
+    features["return_20"] = np.log(closes / np.concatenate([[np.nan] * 20, closes[:-20]]))
 
     features["hl_ratio"] = (highs - lows) / closes
 
+    prev_close = np.concatenate([[np.nan], closes[:-1]])
     tr = np.maximum(
         highs - lows,
         np.maximum(
-            np.abs(highs - np.roll(closes, 1)),
-            np.abs(lows - np.roll(closes, 1)),
+            np.abs(highs - prev_close),
+            np.abs(lows - prev_close),
         ),
     )
     atr_series = pd.Series(tr, index=df.index).rolling(14, min_periods=2).mean()
@@ -237,7 +238,7 @@ class DirectionPredictor:
     def predict(self, features: pd.DataFrame, confidence_threshold: float = 0.55) -> Optional[str]:
         """Return 'BUY' or 'SELL' if confidence exceeds threshold, else None."""
         prob_down, prob_up = self.predict_proba(features)
-        if prob_up >= confidence_threshold:
+        if prob_up >= confidence_threshold and prob_up >= prob_down:
             return "BUY"
         if prob_down >= confidence_threshold:
             return "SELL"

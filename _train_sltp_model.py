@@ -153,9 +153,8 @@ def train_and_test(name, target, ft, train_m5):
     for ty in [2022, 2023, 2024, 2025]:
         tm5, th1 = load_year_data(ty)
         tft = compute_features(tm5, th1)
-        tgt, _ = create_sltp_target(tm5) if "BUY" in name else (None, None)
-        if "SELL" in name:
-            _, tgt = create_sltp_target(tm5)
+        buy_tgt, sell_tgt = create_sltp_target(tm5)
+        tgt = buy_tgt if "BUY" in name else sell_tgt
         tdata = tft.copy()
         tdata["target"] = tgt
         tdata = tdata.dropna(subset=["target"])

@@ -35,7 +35,7 @@ class PositionManager:
             self.closed_history[:100] = []
 
     def refresh(self) -> Dict:
-        raw_positions = self.client.get_positions(magic=self.magic) or []
+        raw_positions = self.client.get_positions(symbol=cfg.SYMBOL) or []
         now = time.time()
         cutoff = now - 30.0
         self._closed_tickets = {

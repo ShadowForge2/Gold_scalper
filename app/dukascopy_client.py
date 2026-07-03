@@ -79,7 +79,7 @@ class DukascopyClient:
 
         df = df.reset_index()
         df.rename(columns={"timestamp": "time"}, inplace=True)
-        df["time"] = df["time"].dt.tz_localize(None)
+        df["time"] = df["time"].dt.tz_convert("UTC").dt.tz_localize(None)
         df["tick_volume"] = (df["volume"] * 1000).astype(np.int32)
         df["spread"] = 0
         df["real_volume"] = 0

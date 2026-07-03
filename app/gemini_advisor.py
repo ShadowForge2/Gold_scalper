@@ -5,7 +5,7 @@ from typing import Optional
 import config as cfg
 
 try:
-    import google.generativeai as genai
+    from google import genai
     _HAS_GEMINI = True
 except ImportError:
     _HAS_GEMINI = False
@@ -45,17 +45,17 @@ class GeminiAdvisor:
             and cfg.GEMINI_ENABLED
             and bool(cfg.GEMINI_API_KEY)
         )
-        self.model = None
+        self.client = None
+        self.model_name = cfg.GEMINI_MODEL
         if self.enabled:
-            genai.configure(api_key=cfg.GEMINI_API_KEY)
-            self.model = genai.GenerativeModel(cfg.GEMINI_MODEL)
+            self.client = genai.Client(api_key=cfg.GEMINI_API_KEY)
 
     async def advise_entry(self, setup: dict) -> Optional[dict]:
         if not self.enabled:
             return None
         prompt = self._build_entry_prompt(setup)
         try:
-            response = await self.model.generate_content_async(prompt)
+            response = await self.client.aio.models.generate_content(model=self.model_name, contents=prompt)
             return self._parse(response.text)
         except Exception:
             return None
@@ -65,7 +65,7 @@ class GeminiAdvisor:
             return None
         prompt = self._build_exit_prompt(context)
         try:
-            response = await self.model.generate_content_async(prompt)
+            response = await self.client.aio.models.generate_content(model=self.model_name, contents=prompt)
             return self._parse(response.text)
         except Exception:
             return None

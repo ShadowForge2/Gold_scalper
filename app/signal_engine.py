@@ -406,7 +406,8 @@ class SignalEngine:
                       trail_trigger_mult: float = None,
                       trail_retrace: float = None,
                       trail_to_breakeven: bool = True,
-                      signal: dict = None) -> Tuple[bool, float, str]:
+                      signal: dict = None,
+                      bars_since_entry: int = 0) -> Tuple[bool, float, str]:
 
         if m1_data is None or len(m1_data) < 5:
             return False, 0.0, "insufficient_data"
@@ -414,7 +415,7 @@ class SignalEngine:
         if exit_mode == 6:
             return self._exit_mode_multi_tp(m1_data, entry_price, direction, entry_score, signal)
         if exit_mode == 5:
-            return self._exit_mode_peak_harvest(m1_data, entry_price, direction, entry_score)
+            return self._exit_mode_peak_harvest(m1_data, entry_price, direction, entry_score, bars_since_entry)
         if exit_mode == 4:
             return self._exit_mode_breakout(m1_data, entry_price, direction, entry_score)
         if exit_mode == 1:
@@ -564,7 +565,7 @@ class SignalEngine:
             return True, round(exit_score, 3), "momentum_decay"
         return False, round(exit_score, 3), "holding"
 
-    def _exit_mode_peak_harvest(self, df, entry, direction, entry_score):
+    def _exit_mode_peak_harvest(self, df, entry, direction, entry_score, bars_since_entry=0):
         """
         Peak-harvest exit — no hard stop loss, trail only after significant profit,
         close when directional confidence breaks down.
@@ -574,7 +575,7 @@ class SignalEngine:
         atr = self._compute_atr(df, 14)
         px = df["close"].iloc[-1]
         diff = px - entry if direction == "BUY" else entry - px
-        bars = len(df)
+        bars = bars_since_entry or len(df)
 
         if atr <= 0:
             return False, 0.0, "holding"

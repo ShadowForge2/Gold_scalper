@@ -55,7 +55,7 @@ class AdaptiveConfirmation:
         if not cfg.ADAPTIVE_CONFIRMATION_ENABLED:
             return True
 
-        if len(self.br_window) < 10 or len(self.atr_window) < 50:
+        if len(self.br_window) < 20 or len(self.atr_window) < 100:
             return True
 
         lo = float(np.percentile(self.atr_window, 25))

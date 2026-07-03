@@ -120,10 +120,10 @@ MAX_SLIPPAGE_PIPS = _env_int("MAX_SLIPPAGE_PIPS", 10)
 API_HOST = _env_str("API_HOST", "0.0.0.0")
 API_PORT = _env_int("API_PORT", 8000)
 
-# Timeframes used by the system
-BIAS_TIMEFRAME = _env_int("BIAS_TIMEFRAME", 16385)  # H1
-SIGNAL_TIMEFRAME = _env_int("SIGNAL_TIMEFRAME", 1)  # M1
-STRUCTURE_TIMEFRAMES = [16385, 16408]  # H1, H4
+# Timeframes used by the system (Capital.com API IDs: 16385=HOUR, 16408=4HOUR)
+BIAS_TIMEFRAME = _env_int("BIAS_TIMEFRAME", 16385)
+SIGNAL_TIMEFRAME = _env_int("SIGNAL_TIMEFRAME", 1)
+STRUCTURE_TIMEFRAMES = [16385, 16408]
 
 # Market hours (spot gold: Sun 23:00 UTC - Fri 22:00 UTC)
 MARKET_OPEN_SUNDAY_UTC = _env_int("MARKET_OPEN_SUNDAY_UTC", 23)

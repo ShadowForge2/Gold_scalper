@@ -45,7 +45,7 @@ class TradeExecutor:
             return False
 
     def close_all_bot_positions(self) -> List[Dict]:
-        positions = self.client.get_positions(magic=cfg.MAGIC_NUMBER) or []
+        positions = self.client.get_positions(symbol=cfg.SYMBOL) or []
         closed = []
         for pos in positions:
             if self.close_position(pos["ticket"]):
