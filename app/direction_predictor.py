@@ -224,7 +224,7 @@ class DirectionPredictor:
 
     def predict_proba(self, features: pd.DataFrame) -> Tuple[float, float]:
         """Return (prob_down, prob_up) for the most recent bar."""
-        if self.model is None:
+        if self.model is None or features is None or len(features) == 0:
             return 0.5, 0.5
         missing = [c for c in self._feature_cols if c not in features.columns]
         if missing:
@@ -262,6 +262,8 @@ class SLTPredictor:
         self._feature_cols = FEATURE_COLS
 
     def _prepare(self, features: pd.DataFrame) -> np.ndarray:
+        if features is None or len(features) == 0:
+            return np.zeros((1, len(self._feature_cols)))
         missing = [c for c in self._feature_cols if c not in features.columns]
         if missing:
             features = features.copy()

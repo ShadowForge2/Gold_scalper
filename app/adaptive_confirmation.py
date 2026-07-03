@@ -20,6 +20,7 @@ class AdaptiveConfirmation:
         self.p_low = cfg.ADAPTIVE_CONF_P_LOW
         self.p_norm = cfg.ADAPTIVE_CONF_P_NORM
         self.p_high = cfg.ADAPTIVE_CONF_P_HIGH if cfg.ADAPTIVE_CONF_P_HIGH >= 0 else None
+        self._warmup_bars = min(self.max_window, 100)
 
     def update(self, m1_data):
         """Update rolling windows with latest M1 bar."""
@@ -28,7 +29,9 @@ class AdaptiveConfirmation:
 
         latest = m1_data.iloc[-1]
         rg = float(latest['high'] - latest['low'])
-        br = abs(float(latest['close'] - latest['open'])) / rg if rg > 0 else 0.0
+        if rg <= 0 or np.isnan(rg):
+            return
+        br = abs(float(latest['close'] - latest['open'])) / rg
         self.br_window.append(br)
         if len(self.br_window) > self.max_window:
             self.br_window.pop(0)
@@ -55,11 +58,11 @@ class AdaptiveConfirmation:
         if not cfg.ADAPTIVE_CONFIRMATION_ENABLED:
             return True
 
-        if len(self.br_window) < 20 or len(self.atr_window) < 100:
+        if len(self.br_window) < 20 or len(self.atr_window) < self._warmup_bars:
             return True
 
-        lo = float(np.percentile(self.atr_window, 25))
-        hi = float(np.percentile(self.atr_window, 75))
+        lo = float(np.nanpercentile(self.atr_window, 25))
+        hi = float(np.nanpercentile(self.atr_window, 75))
         current_atr = self.atr_window[-1]
         current_br = self.br_window[-1]
 
@@ -74,7 +77,7 @@ class AdaptiveConfirmation:
         if pct is None:
             return True
 
-        threshold = float(np.percentile(self.br_window, pct))
+        threshold = float(np.nanpercentile(self.br_window, pct))
         return current_br >= threshold
 
     def reset(self):

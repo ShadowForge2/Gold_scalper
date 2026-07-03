@@ -18,7 +18,9 @@ class PositionManager:
         self._event_start_ts: Optional[float] = None
 
     def note_closed(self, pos_data: Dict) -> None:
-        ticket = pos_data["ticket"]
+        ticket = pos_data.get("ticket")
+        if ticket is None:
+            return
         self._closed_tickets[str(ticket)] = time.time()
         self.closed_history.append({
             "ticket": ticket,
@@ -35,6 +37,8 @@ class PositionManager:
             self.closed_history[:100] = []
 
     def refresh(self) -> Dict:
+        if self.client is None:
+            return self.summary()
         raw_positions = self.client.get_positions(symbol=cfg.SYMBOL) or []
         now = time.time()
         cutoff = now - 30.0
@@ -62,24 +66,24 @@ class PositionManager:
         }
 
     def has_position(self, ticket: int) -> bool:
-        return any(p["ticket"] == ticket for p in self.open_positions)
+        return any(p.get("ticket") == ticket for p in self.open_positions)
 
     def get_total_volume(self) -> float:
-        return sum(p["volume"] for p in self.open_positions)
+        return sum(p.get("volume", 0) for p in self.open_positions)
 
     def get_direction_counts(self) -> Dict[str, int]:
-        buys = sum(1 for p in self.open_positions if p["type"] == "BUY")
-        sells = sum(1 for p in self.open_positions if p["type"] == "SELL")
+        buys = sum(1 for p in self.open_positions if p.get("type") == "BUY")
+        sells = sum(1 for p in self.open_positions if p.get("type") == "SELL")
         return {"BUY": buys, "SELL": sells}
 
     def get_average_entry(self, direction: str) -> Optional[float]:
         dir_positions = [
-            p for p in self.open_positions if p["type"] == direction
+            p for p in self.open_positions if p.get("type") == direction
         ]
         if not dir_positions:
             return None
-        total_vol = sum(p["volume"] for p in dir_positions)
+        total_vol = sum(p.get("volume", 0) for p in dir_positions)
         if total_vol == 0:
             return None
-        weighted = sum(p["price_open"] * p["volume"] for p in dir_positions)
+        weighted = sum(p.get("price_open", 0) * p.get("volume", 0) for p in dir_positions)
         return weighted / total_vol

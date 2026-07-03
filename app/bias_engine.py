@@ -36,6 +36,10 @@ class BiasEngine:
         if df is None or len(df) < lookback * 3:
             self._last_votes = None
             return "NEUTRAL"
+        for col in ("close", "high", "low"):
+            if col not in df.columns:
+                self._last_votes = None
+                return "NEUTRAL"
 
         close = df["close"].astype(float)
         fast = close.ewm(span=20, adjust=False).mean()

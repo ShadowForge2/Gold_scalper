@@ -260,6 +260,8 @@ class Bot:
                 f"(PnL=${pnl_data['event_pnl']:.2f}). Resuming management."
             )
             self.state = self.STATES["IN_TRADE"]
+            if not getattr(self.position_manager, '_event_start_ts', None):
+                self.position_manager._event_start_ts = time.time()
 
         if self.state == self.STATES["STOPPED"]:
             return
@@ -277,7 +279,7 @@ class Bot:
                 self.state = self.STATES["STOPPED"]
                 self._running = False
                 return
-            if getattr(self, '_shutdown_deadline', None) and now_t > self._shutdown_deadline:
+        if getattr(self, '_shutdown_deadline', None) and now_t > self._shutdown_deadline:
                 if pnl_data["open_count"] > 0:
                     self.logger.warning(
                         f"Shutdown deadline passed, force-closing {pnl_data['open_count']} position(s)"
@@ -358,7 +360,7 @@ class Bot:
         if self._winding_down:
             return
 
-        m1_count = cfg.ML_M1_HISTORY_BARS
+        m1_count = cfg.ML_M1_HISTORY_BARS if (hasattr(self, '_direction_predictor') and self._direction_predictor is not None) else 100
         m1_data = self.client.get_rates(
             self.symbol, cfg.SIGNAL_TIMEFRAME, m1_count
         )
@@ -450,13 +452,12 @@ class Bot:
             m1_data, self._bias_summary, current_price,
             h1_high=h1_high, h1_low=h1_low
         )
-        self._current_signal = signal
-
         if signal:
             ml_tag = " [ML OVERRIDE]" if signal.get("ml_override") else ""
+            sig_dir = signal.get('direction', 'UNKNOWN')
             reason = (
                 f"Price broke above H1 high (${h1_high:.2f}) with bullish momentum"
-                if signal['direction'] == 'BUY'
+                if sig_dir == 'BUY'
                 else f"Price broke below H1 low (${h1_low:.2f}) with bearish momentum"
             )
             sf_key = f"{signal['direction']}|{signal.get('ml_override')}|{signal['score']:.2f}"
@@ -494,16 +495,23 @@ class Bot:
                     self._last_signal_blocked_key = bk_key
                     self._last_signal_blocked_time = bk_now
                     self.logger.signal(
-                        f"Signal {signal['direction']} (score={signal['score']:.2f}) "
-                        f"blocked: {reason} | "
-                        f"price={current_price:.2f} "
-                        f"spread={symbol_info.get('spread', 0)}"
-                    )
+                f"Signal {signal.get('direction', 'UNKNOWN')} (score={signal['score']:.2f}) "
+                f"blocked: {reason} | "
+                f"price={current_price:.2f} "
+                f"spread={symbol_info.get('spread', 0)}"
+            )
+                return
+
+            if not self.adaptive_conf.should_enter():
+                self.logger.signal(
+                    f"Signal {signal.get('direction', 'UNKNOWN')} score={signal['score']:.2f} "
+                    f"blocked: adaptive confirmation (low vol filter)"
+                )
                 return
 
             gemini_advice = await self.gemini_advisor.advise_entry({
                 "bias": self._bias_summary.get("bias", "UNKNOWN"),
-                "direction": signal["direction"],
+                "direction": signal.get("direction", "UNKNOWN"),
                 "score": signal["score"],
                 "atr": signal.get("atr_value"),
                 "breakout_dist": signal.get("breakout_dist"),
@@ -540,15 +548,9 @@ class Bot:
                             signal["tp3"] - signal["entry_price"]
                         ) * tp_mod
 
-            if not self.adaptive_conf.should_enter():
-                self.logger.signal(
-                    f"Signal {signal['direction']} score={signal['score']:.2f} "
-                    f"blocked: adaptive confirmation (low vol filter)"
-                )
-                return
-
+            self._current_signal = signal
             self.logger.signal(
-                f"Signal triggered: {signal['direction']} "
+                f"Signal triggered: {signal.get('direction', 'UNKNOWN')} "
                 f"score={signal['score']:.2f}"
             )
             await self._execute_entry(signal, symbol_info)
@@ -619,7 +621,7 @@ class Bot:
             return
 
         acct = self.client.get_account_info()
-        balance = acct["balance"] if acct else 0
+        balance = acct.get("balance", 0) if acct else 0
 
         event_ok, event_msg = self.risk_manager.check_event_loss(
             pnl_data["event_pnl"]
@@ -632,7 +634,7 @@ class Bot:
                 realized_pnl += pos_data.get("profit", 0)
             self.risk_manager.record_exit(realized_pnl)
             if self.meta:
-                self.meta.record_trade(pnl_data["event_pnl"], self._bias_summary.get("strength", 0))
+                self.meta.record_trade(realized_pnl, self._bias_summary.get("strength", 0))
                 self.meta.update(balance, self._bias_summary)
             await self._notify(
                 "trade_close",
@@ -674,7 +676,7 @@ class Bot:
         exit_thresh = getattr(self, '_exit_threshold_override', cfg.EXIT_THRESHOLD_TIGHT)
         effective_exit_mode = getattr(self, '_exit_mode_override', cfg.EXIT_MODE)
         event_start = getattr(self.position_manager, '_event_start_ts', None)
-        bars_since_entry = max(0, int((time.time() - event_start) / 300)) if event_start else 0
+        bars_since_entry = max(0, int((time.time() - event_start) / (cfg.EXIT_CHECK_INTERVAL or 300))) if event_start else 0
         should_exit, exit_score, reason = self.signal_engine.evaluate_exit(
                 m1_data, entry_price, direction, entry_score,
                 exit_mode=effective_exit_mode, exit_threshold=exit_thresh,
@@ -695,8 +697,8 @@ class Bot:
                 "direction": direction,
                 "pnl": round(pnl_data["event_pnl"], 2),
                 "run_duration_min": round(
-                    (time.time() - self.position_manager._event_start_ts) / 60
-                ) if hasattr(self.position_manager, '_event_start_ts') and self.position_manager._event_start_ts else None,
+                    (time.time() - getattr(self.position_manager, '_event_start_ts', 0)) / 60
+                ) if getattr(self.position_manager, '_event_start_ts', None) else None,
                 "momentum": round(
                     self.signal_engine.compute_momentum(m1_data), 3
                 ) if hasattr(self.signal_engine, 'compute_momentum') else None,
@@ -707,7 +709,7 @@ class Bot:
                 ),
                 "tp1": self._current_signal.get("tp1") if self._current_signal else None,
                 "tp2": self._current_signal.get("tp2") if self._current_signal else None,
-                "spread": self.client.get_symbol_info(self.symbol).get("spread", 0)
+                "spread": (self.client.get_symbol_info(self.symbol) or {}).get("spread", 0)
                 if self.client else 0,
             })
             if gemini_exit_advice and gemini_exit_advice.get("action") == "exit_early":
@@ -814,9 +816,9 @@ class Bot:
 
         self.scaler.update_peak(balance)
 
-        lot_mult = getattr(self, '_lot_multiplier_override', cfg.LOT_MULTIPLIER)
-        if self.meta:
-            lot_mult = self.meta.current_lot_mult
+        lot_mult = getattr(self, '_lot_multiplier_override', None)
+        if lot_mult is None:
+            lot_mult = self.meta.current_lot_mult if self.meta else cfg.LOT_MULTIPLIER
 
         if cfg.AGGRESSIVE_SIZING_ENABLED:
             if score >= cfg.AGGRESSIVE_VERY_STRONG_THRESHOLD:

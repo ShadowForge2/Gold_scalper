@@ -143,7 +143,7 @@ ML_MODEL_PATH = _env_str("ML_MODEL_PATH", "models/direction_xgb_m5.joblib")
 ML_BUY_MODEL_PATH = _env_str("ML_BUY_MODEL_PATH", "models/buy_sltp_xgb.joblib")
 ML_SELL_MODEL_PATH = _env_str("ML_SELL_MODEL_PATH", "models/sell_sltp_xgb.joblib")
 ML_M1_HISTORY_BARS = _env_int("ML_M1_HISTORY_BARS", 500)
-ML_BIAS_OVERRIDE_THRESHOLD = _env_float("ML_BIAS_OVERRIDE_THRESHOLD", 0.70)
+ML_BIAS_OVERRIDE_THRESHOLD = _env_float("ML_BIAS_OVERRIDE_THRESHOLD", 0.60)
 ML_HOLD_CONFIDENCE = _env_float("ML_HOLD_CONFIDENCE", 0.50)  # min ML confidence to hold exit (suppress momentum_decay/direction_loss)
 
 
@@ -154,7 +154,7 @@ ADAPTIVE_CONF_P_LOW = _env_int("ADAPTIVE_CONF_P_LOW", 60)
 ADAPTIVE_CONF_P_NORM = _env_int("ADAPTIVE_CONF_P_NORM", 40)
 ADAPTIVE_CONF_P_HIGH = _env_int("ADAPTIVE_CONF_P_HIGH", -1)  # -1 = no filter
 
-ML_OVERRIDE_MAX_PER_SESSION = _env_int("ML_OVERRIDE_MAX_PER_SESSION", 20)
+ML_OVERRIDE_MAX_PER_SESSION = _env_int("ML_OVERRIDE_MAX_PER_SESSION", 999999)
 
 # Aggressive sizing (score-based lot boost)
 AGGRESSIVE_SIZING_ENABLED = _env_bool("AGGRESSIVE_SIZING_ENABLED", True)

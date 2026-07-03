@@ -109,6 +109,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
 
     @app.get("/api/account")
     async def get_account():
+        if bot.client is None:
+            return JSONResponse(status_code=503, content={"error": "Client not initialized"})
         info = bot.client.get_account_info()
         if info is None:
             return JSONResponse(status_code=503, content={"error": "Account not connected"})
@@ -660,15 +662,18 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
 
         if period == "yearly":
             year_start = datetime(now.year, 1, 1)
+            year_start_str = year_start.strftime("%Y-%m-%d")
             running = starting
+            balance_at_start = running
             for t in sorted_closed:
                 closed_at = t.get("closed_at", "")
                 if not closed_at:
                     continue
+                if closed_at[:10] < year_start_str:
+                    balance_at_start += t.get("profit", 0)
                 running += t.get("profit", 0)
-            balance_at_start = running
-            running = starting
             monthly = {}
+            running = starting
             for t in sorted_closed:
                 closed_at = t.get("closed_at", "")
                 if not closed_at:
@@ -688,13 +693,16 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
 
         elif period == "monthly":
             month_start = datetime(now.year, now.month, 1)
+            month_start_str = month_start.strftime("%Y-%m-%d")
             running = starting
+            balance_at_start = running
             for t in sorted_closed:
                 closed_at = t.get("closed_at", "")
                 if not closed_at:
                     continue
+                if closed_at[:10] < month_start_str:
+                    balance_at_start += t.get("profit", 0)
                 running += t.get("profit", 0)
-            balance_at_start = running
             running = starting
             daily = {}
             for t in sorted_closed:

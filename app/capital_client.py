@@ -1,6 +1,7 @@
 import requests
 import pandas as pd
 import time
+import asyncio
 from typing import Optional, List, Dict, Tuple
 from datetime import datetime
 from collections import deque
@@ -141,7 +142,10 @@ class CapitalClient:
                 r = self._session.request(method, url, **kwargs)
                 # 429: rate limited — sleep Retry-After then retry once
                 if r.status_code == 429:
-                    retry_after = int(r.headers.get("Retry-After", 5))
+                    try:
+                        retry_after = int(r.headers.get("Retry-After", 5))
+                    except (ValueError, TypeError):
+                        retry_after = 5
                     self._last_order_error = f"HTTP 429: rate limited, retrying after {retry_after}s"
                     time.sleep(retry_after)
                     self._throttle()
@@ -152,6 +156,7 @@ class CapitalClient:
                 if r.status_code == 401 and attempt == 0:
                     self._last_order_error = "HTTP 401: unauthorized, re-authenticating"
                     if self._login():
+                        kwargs["headers"] = self._auth_headers()
                         self._throttle()
                         continue
                     self._last_order_error = "Re-authentication failed"
@@ -183,7 +188,7 @@ class CapitalClient:
         if demo is not None:
             self.demo = demo
         else:
-            self.demo = "demo" in server.lower()
+            self.demo = "demo" in server.lower() if server else self.demo
         return self.initialize(api_key or self.api_key, account, password)
 
     def last_error(self) -> Tuple[int, str]:
@@ -204,7 +209,7 @@ class CapitalClient:
             return None
         try:
             r = self._request("GET", f"{self.base_url}/api/v1/accounts", headers=self._auth_headers())
-            if r.ok:
+            if r is not None and r.ok:
                 accounts = r.json().get("accounts", [])
                 for acct in accounts:
                     if acct.get("preferred"):
@@ -237,7 +242,7 @@ class CapitalClient:
             return None
         try:
             r = self._request("GET", f"{self.base_url}/api/v1/markets/{epic}", headers=self._auth_headers())
-            if r.ok:
+            if r is not None and r.ok:
                 data = r.json()
                 snap = data.get("snapshot", {})
                 inst = data.get("instrument", {})
@@ -275,7 +280,7 @@ class CapitalClient:
             r = self._request("GET", f"{self.base_url}/api/v1/prices/{epic}",
                                   params={"resolution": resolution, "max": count},
                                   headers=self._auth_headers())
-            if r.ok:
+            if r is not None and r.ok:
                 prices = r.json().get("prices", [])
                 if not prices:
                     return None
@@ -298,7 +303,7 @@ class CapitalClient:
                                           "from": from_dt.strftime("%Y-%m-%dT%H:%M:%S"),
                                           "to": to_dt.strftime("%Y-%m-%dT%H:%M:%S")},
                                   headers=self._auth_headers())
-            if r.ok:
+            if r is not None and r.ok:
                 prices = r.json().get("prices", [])
                 if prices:
                     rows = self._parse_prices(prices)
@@ -319,7 +324,7 @@ class CapitalClient:
                 r = self._request("GET", f"{self.base_url}/api/v1/prices/{epic}",
                                       params=params,
                                       headers=self._auth_headers())
-                if not r.ok:
+                if r is None or not r.ok:
                     break
                 prices = r.json().get("prices", [])
                 if not prices:
@@ -354,10 +359,15 @@ class CapitalClient:
     def _parse_prices(self, prices: list) -> list:
         rows = []
         for p in prices:
-            t = p.get("snapshotTime", "").replace("Z", "+00:00")
+            t = p.get("snapshotTime", "").replace("Z", "+00:00") if p.get("snapshotTime") else ""
+            if not t:
+                continue
             if "." not in t and "+" not in t:
                 t += "+00:00"
-            dt = datetime.fromisoformat(t)
+            try:
+                dt = datetime.fromisoformat(t)
+            except ValueError:
+                continue
             if dt.tzinfo is not None:
                 dt = dt.replace(tzinfo=None)
             open_price = p.get("openPrice", {})
@@ -397,19 +407,22 @@ class CapitalClient:
             return []
         try:
             filter_symbol = symbol or cfg.SYMBOL
-            target_epic = self._resolve_epic(filter_symbol) if magic is not None else None
+            target_epic = self._resolve_epic(filter_symbol)
             r = self._request("GET", f"{self.base_url}/api/v1/positions", headers=self._auth_headers())
-            if r.ok:
+            if r is not None and r.ok:
                 result = []
                 for pos_data in r.json().get("positions", []):
                     p = pos_data.get("position", {})
                     mkt = pos_data.get("market", {})
                     epic = mkt.get("epic", "")
+                    if epic != target_epic:
+                        continue
+                    if magic is not None:
+                        ref = p.get("reference", "") or p.get("dealReference", "")
+                        if str(magic) not in ref:
+                            continue
                     deal_id = p.get("dealId", "")
                     comment = p.get("reference", "") or p.get("dealReference", "")
-                    if magic is not None:
-                        if epic != target_epic:
-                            continue
                     result.append({
                         "ticket": deal_id,
                         "symbol": mkt.get("instrumentName", epic),
@@ -489,11 +502,11 @@ class CapitalClient:
 
         current_balance = info.get("balance", 0)
         positions = self.get_positions(magic)
-        open_pnl = sum(p["profit"] for p in positions)
+        open_pnl = sum(p.get("profit", 0) for p in positions)
         return (current_balance - self._prev_balance) + open_pnl
 
     async def order_send(self, request: dict) -> Dict:
-        epic = request.get("epic", self._resolve_epic(request.get("symbol", "GOLD")))
+        epic = request.get("epic") or self._resolve_epic(request.get("symbol") or "GOLD")
         direction = "BUY" if request.get("type") == 0 else "SELL"
         volume = request.get("volume", 0.01)
 
@@ -510,9 +523,8 @@ class CapitalClient:
     async def _open_position_raw(self, epic: str, direction: str, volume: float,
                                    stop_loss: Optional[float] = None,
                                    take_profit: Optional[float] = None,
-                                   force_open: bool = True,
-                                   reference: str = "") -> Optional[Dict]:
-        import asyncio
+                                    force_open: bool = True,
+                                    reference: str = "") -> Optional[Dict]:
         if not self._ensure_session():
             return None
         body = {"epic": epic, "direction": direction.upper(), "size": volume,
@@ -526,11 +538,11 @@ class CapitalClient:
         try:
             r = self._request("POST", f"{self.base_url}/api/v1/positions",
                                    headers=self._auth_headers(), json=body)
-            if r.ok:
+            if r is not None and r.ok:
                 self._last_order_error = ""
                 await asyncio.sleep(0.5)
                 return r.json()
-            self._last_order_error = f"HTTP {r.status_code}: {r.text[:500]}"
+            self._last_order_error = f"HTTP {r.status_code}: {r.text[:500]}" if r is not None else "Request returned None"
         except Exception as exc:
             self._last_order_error = f"{type(exc).__name__}: {exc}"
         return None
@@ -542,22 +554,22 @@ class CapitalClient:
                             comment: str = "",
                             magic: int = 0,
                             slippage: int = 30) -> Optional[str]:
-        import asyncio
         epic = self._resolve_epic(symbol)
         reference = str(magic) + ":" + comment if comment else str(magic)
         positions = self.get_positions()
         for p in positions:
-            p_epic = EPIC_MAP.get(p.get("symbol", ""), p.get("symbol", ""))
+            p_sym = p.get("symbol", "")
+            p_epic = EPIC_MAP.get(p_sym, p_sym)
             if p_epic != epic:
                 continue
             p_dir = p.get("type", "")
-            if p_dir and p_dir != direction.upper():
+            if p_dir and direction and p_dir != direction.upper():
                 self._last_order_error = (
                     f"Opposing position exists ({p_dir}) for {epic} "
                     f"cannot open {direction.upper()}"
                 )
                 return None
-        existing_tickets = {str(p["ticket"]) for p in positions if p.get("ticket")}
+        existing_tickets = {str(p.get("ticket")) for p in positions if p.get("ticket")}
         result = await self._open_position_raw(epic, direction, volume, stop_loss, take_profit, reference=reference)
         if result is None:
             return None

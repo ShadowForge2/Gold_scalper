@@ -1,5 +1,5 @@
 """
-Backtest for eurusd_scalper.py strategy on real Dukascopy EURUSD 2024 data.
+Backtest on real Dukascopy data.
 Faithfully replicates the H1 bias + M1 EMA5/13 entry + SL/TP/trail logic.
 """
 
@@ -15,7 +15,7 @@ from typing import Optional, Dict, List, Tuple
 
 from app.dukascopy_client import DukascopyClient
 
-# ── config (matches eurusd_scalper.py Config) ──
+# ── config ──
 
 LOT_SIZE = 0.01
 POINT = 0.0001
@@ -315,7 +315,7 @@ def run_backtest(m1_full):
             daily_pnl = 0.0
             consec_losses = 0
 
-        # ── Exit logic (same as eurusd_scalper.py Trade.update) ──
+        # ── Exit logic ──
         if in_trade and cur_trade is not None:
             t = cur_trade
             t.bars_held += 1
@@ -519,7 +519,7 @@ def run_backtest(m1_full):
     max_dd = df_trades["dd"].max()
 
     print(f"\n{'='*60}")
-    print(f"  BACKTEST RESULTS — eurusd_scalper.py on real data")
+    print(f"  BACKTEST RESULTS")
     print(f"{'='*60}")
     print(f"  Period:       {m1['time'].min().date()} to {m1['time'].max().date()}")
     print(f"  Starting Bal: ${INITIAL_BALANCE:.2f}")

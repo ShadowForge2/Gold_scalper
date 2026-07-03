@@ -235,18 +235,19 @@ class BotPool:
     def _write_state(self, ident: str, extra: Optional[Dict] = None):
         with self._lock:
             bot = self._bots.get(ident)
-        if bot is None:
-            return
-        account = bot.client.get_account_info() or {"error": "No connection"}
-        symbol_info = bot.client.get_symbol_info(bot.symbol) if bot.client else {}
-        if symbol_info:
-            account["bid"] = symbol_info.get("bid", 0)
-            account["ask"] = symbol_info.get("ask", 0)
-        state = bot.get_state_summary() if hasattr(bot, 'get_state_summary') else {}
+            if bot is None:
+                return
+            account = bot.client.get_account_info() if bot.client else {"error": "No connection"}
+            symbol_info = bot.client.get_symbol_info(bot.symbol) if bot.client else {}
+            if symbol_info:
+                account["bid"] = symbol_info.get("bid", 0)
+                account["ask"] = symbol_info.get("ask", 0)
+            state = bot.get_state_summary() if hasattr(bot, 'get_state_summary') else {}
+            logs = bot.logger.logs[-50:]
         payload = {
             "account": account,
             "bot": state,
-            "logs": bot.logger.logs[-50:],
+            "logs": logs,
             "timestamp": datetime.utcnow().isoformat(),
         }
         if extra:

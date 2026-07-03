@@ -1,30 +1,24 @@
-"""Backtest: Real leverage + sequential sub-trade logic matching live bot."""
-import sys, os, time; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+"""Sweep ML threshold approaches for Jan-Feb 2025."""
+import sys, os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np
 import pandas as pd
 import config as cfg
-from app.dukascopy_client import DukascopyClient
 from app.direction_predictor import DirectionPredictor, compute_features
 from app.meta_strategy import MetaStrategy
 from app.risk_manager import EquityScaler
+import time
+from datetime import timedelta
 
-CS = 1
-MARGIN_RATE = 0.05
+CS = 1; MARGIN_RATE = 0.05
 
 SESSION_HOURS = {"ASIA": (0, 8), "LONDON": (7, 17), "NEW_YORK": (12, 22)}
-def in_allowed_session(ts) -> bool:
+def in_allowed_session(ts):
     h = ts.hour
-    sessions = [s.strip().upper() for s in cfg.ALLOWED_SESSIONS.split(",") if s.strip()]
-    for s in sessions:
+    for s in [x.strip().upper() for x in cfg.ALLOWED_SESSIONS.split(",") if x.strip()]:
         if s in SESSION_HOURS:
             lo, hi = SESSION_HOURS[s]
             if lo <= h < hi: return True
     return False
-
-def session_of_hour(h: int) -> str:
-    for name, (lo, hi) in SESSION_HOURS.items():
-        if lo <= h < hi: return name
-    return "OUTSIDE"
 
 def compute_bias_vectorized(h1):
     c = h1["close"].values.astype(np.float64)
@@ -44,17 +38,13 @@ def compute_bias_vectorized(h1):
     votes[price_above & (slow_slope >= 0)] += 0.5
     votes[~price_above & (slow_slope <= 0)] -= 0.5
     lookback = 5; n = len(c)
-    is_high = np.zeros(n, dtype=bool)
-    is_low = np.zeros(n, dtype=bool)
+    is_high = np.zeros(n, dtype=bool); is_low = np.zeros(n, dtype=bool)
     for i in range(lookback, n - lookback):
-        is_high[i] = all(h[i] >= h[i - j] for j in range(1, lookback + 1)) and \
-                     all(h[i] >= h[i + j] for j in range(1, lookback + 1))
-        is_low[i] = all(l[i] <= l[i - j] for j in range(1, lookback + 1)) and \
-                    all(l[i] <= l[i + j] for j in range(1, lookback + 1))
+        is_high[i] = all(h[i] >= h[i - j] for j in range(1, lookback + 1)) and all(h[i] >= h[i + j] for j in range(1, lookback + 1))
+        is_low[i] = all(l[i] <= l[i - j] for j in range(1, lookback + 1)) and all(l[i] <= l[i + j] for j in range(1, lookback + 1))
     swing_score = np.zeros(n)
     for i in range(n):
-        hi = np.where(is_high[:i + 1])[0]
-        lo = np.where(is_low[:i + 1])[0]
+        hi = np.where(is_high[:i + 1])[0]; lo = np.where(is_low[:i + 1])[0]
         if len(hi) >= 3 and len(lo) >= 3:
             rh = hi[-3:]; rl = lo[-3:]
             h_up = sum(1 for k in range(1, len(rh)) if h[rh[k]] > h[rh[k - 1]])
@@ -76,102 +66,52 @@ def compute_atr_series(high, low, close, period=14):
 
 def compute_body_ratios(m5_open, m5_high, m5_low, m5_close):
     body = np.abs(m5_close - m5_open)
-    candle_range = np.maximum(m5_high - m5_low, 1e-10)
-    return body / candle_range
+    cr = np.maximum(m5_high - m5_low, 1e-10)
+    return body / cr
 
 def adaptive_conf_allowed(br_val, atr_val, bw, aw):
     if len(bw) < 10 or len(aw) < 50: return True
-    p_low = cfg.ADAPTIVE_CONF_P_LOW / 100.0
-    p_norm = cfg.ADAPTIVE_CONF_P_NORM / 100.0
-    if p_low < 0: p_low = 0.0
-    if p_norm < 0: p_norm = 0.0
+    p_low = max(cfg.ADAPTIVE_CONF_P_LOW / 100.0, 0.0)
+    p_norm = max(cfg.ADAPTIVE_CONF_P_NORM / 100.0, 0.0)
     l, h = np.percentile(aw, [25, 75])
     if atr_val <= l: return br_val >= np.percentile(bw, int(p_low * 100))
     elif atr_val < h: return br_val >= np.percentile(bw, int(p_norm * 100))
     return True
 
-def run_bt(year, pred):
-    client = DukascopyClient()
-    m1 = client.download_year(year)
-    m1 = m1.sort_values("time").drop_duplicates(subset="time")
-    m5 = client.resample_to(m1, 5).set_index("time")
-    h1 = client.resample_to(m1, 16385).set_index("time")
-    m5 = m5[~m5.index.duplicated(keep="first")]
-    h1 = h1[~h1.index.duplicated(keep="first")]
-
-    print(f"  [{year}] Features ({len(m5)} bars)...", end=" ", flush=True)
-    ft = compute_features(m5, h1)
-    print(f"OK ({len(ft)} rows)")
-
-    model = pred.model
+def run_mode(mode_name, override_thr, confidence_thr, validate, m5, h1, ft, pred, m5_atr, m5_br,
+             h1_bias, h1_idx_map, m5_bias_arr, m5_h1h, m5_h1l, m5_close, m5_open, m5_high, m5_low):
+    pb_u = np.full(len(m5), np.nan)
+    pb_d = np.full(len(m5), np.nan)
     X = ft[ft.columns.intersection(pred._feature_cols)]
     for c in pred._feature_cols:
         if c not in X.columns: X[c] = 0.0
     X = X[pred._feature_cols]
     X_aligned = X.reindex(m5.index, method="ffill")
     ml_mask = ~X_aligned.isna().any(axis=1)
-    pb_u = np.full(len(m5), np.nan)
-    pb_d = np.full(len(m5), np.nan)
     if ml_mask.any():
         valid_idx = np.where(ml_mask)[0]
-        probs = model.predict_proba(X_aligned[ml_mask].values)
+        probs = pred.model.predict_proba(X_aligned[ml_mask].values)
         pb_u[valid_idx] = np.array([p[1] for p in probs])
         pb_d[valid_idx] = np.array([p[0] for p in probs])
 
-    print(f"  [{year}] ATR + body ratios...", end=" ", flush=True)
-    m5_atr = compute_atr_series(m5["high"].values, m5["low"].values, m5["close"].values)
-    m5_br = compute_body_ratios(m5["open"].values, m5["high"].values, m5["low"].values, m5["close"].values)
-    print("OK")
-
-    print(f"  [{year}] Bias...", end=" ", flush=True)
-    h1_bias = compute_bias_vectorized(h1)
-    h1_idx_map = h1.index.get_indexer(m5.index, method="ffill")
-    h1_idx_map = np.clip(h1_idx_map, 0, len(h1_bias) - 1)
-    m5_bias = h1_bias[h1_idx_map]
-    m5_bias_arr = np.full(len(m5_bias), None, dtype=object)
-    m5_bias_arr[m5_bias == 1] = "BUY"
-    m5_bias_arr[m5_bias == -1] = "SELL"
-
-    h1_h = h1["high"].values; h1_l = h1["low"].values
-    m5_h1h = np.where(h1_idx_map > 0, h1_h[h1_idx_map - 1], h1_h[h1_idx_map])
-    m5_h1l = np.where(h1_idx_map > 0, h1_l[h1_idx_map - 1], h1_l[h1_idx_map])
-    print("OK")
-
-    m5_close = m5["close"].values; m5_open = m5["open"].values
-    m5_high = m5["high"].values; m5_low = m5["low"].values
-
     bal = 20.0; total_events = 0; total_sub_trades = 0; wins = 0; dd = 0; peak_bal = 20.0
-    t0 = time.time()
-    override_count = 0; override_day = None; total_overrides = 0
-    TRADE_MAX_BARS = cfg.PEAK_HARVEST_MAX_HOLD_BARS
-    exit_reasons = {}
-    first_event = None
+    total_overrides = 0; t0 = time.time()
+    TRADE_MAX_BARS = cfg.PEAK_HARVEST_MAX_HOLD_BARS; exit_reasons = {}
 
     meta = MetaStrategy()
     scaler = EquityScaler()
     scaler.initialize(bal)
 
     bw = []; aw = []
-    current_day = None
-
-    from datetime import timedelta
-    start_date = m5.index[60].date()
-    one_week = start_date + timedelta(days=7)
-    event_log = []
-
     for i in range(60, len(m5) - 15):
         expected = m5_bias_arr[i]
         if expected is None: continue
-
         ts_i = m5.index[i]
         if not in_allowed_session(ts_i): continue
-
-        p = float(m5_close[i])
-        h1h = float(m5_h1h[i]); h1l = float(m5_h1l[i])
+        p = float(m5_close[i]); h1h = float(m5_h1h[i]); h1l = float(m5_h1l[i])
         if h1h <= h1l: continue
         if expected == "BUY" and p <= h1h: continue
         if expected == "SELL" and p >= h1l: continue
-
         range_sz = h1h - h1l
         breakout_dist = p - h1h if expected == "BUY" else h1l - p
         score = min(breakout_dist / range_sz, 1.0) if range_sz > 0 else 0.0
@@ -189,24 +129,24 @@ def run_bt(year, pred):
         effective_threshold = max(atr_entry_threshold if atr_entry_threshold else 0, meta_threshold)
         if score < effective_threshold: continue
 
-        day_key = ts_i.date()
-        if override_day != day_key:
-            override_count = 0; override_day = day_key
-
         entry_dir = expected; was_overridden = False
+
+        # Override check
         if not np.isnan(pb_d[i]):
-            if expected == "BUY" and pb_d[i] >= cfg.ML_BIAS_OVERRIDE_THRESHOLD and pb_d[i] > pb_u[i] and override_count < cfg.ML_OVERRIDE_MAX_PER_SESSION:
+            if expected == "BUY" and pb_d[i] >= override_thr and pb_d[i] > pb_u[i]:
                 entry_dir = "SELL"; was_overridden = True
-            elif expected == "SELL" and pb_u[i] >= cfg.ML_BIAS_OVERRIDE_THRESHOLD and pb_u[i] > pb_d[i] and override_count < cfg.ML_OVERRIDE_MAX_PER_SESSION:
+            elif expected == "SELL" and pb_u[i] >= override_thr and pb_u[i] > pb_d[i]:
                 entry_dir = "BUY"; was_overridden = True
-            if was_overridden: override_count += 1; total_overrides += 1
 
-        if not was_overridden:
+        # Validation check (only if not overridden and validate enabled)
+        if not was_overridden and validate:
             if not np.isnan(pb_u[i]) and not np.isnan(pb_d[i]):
-                if expected == "BUY" and pb_u[i] < cfg.ML_CONFIDENCE_THRESHOLD: continue
-                if expected == "SELL" and pb_d[i] < cfg.ML_CONFIDENCE_THRESHOLD: continue
+                if expected == "BUY" and pb_u[i] < confidence_thr: continue
+                if expected == "SELL" and pb_d[i] < confidence_thr: continue
 
-        # Sizing (live bot logic)
+        if was_overridden: total_overrides += 1
+
+        # Sizing
         lot_mult = meta.current_lot_mult
         if cfg.AGGRESSIVE_SIZING_ENABLED:
             if score >= cfg.AGGRESSIVE_VERY_STRONG_THRESHOLD: lot_mult *= cfg.AGGRESSIVE_VERY_STRONG_LOT_MULT
@@ -217,13 +157,9 @@ def run_bt(year, pred):
         lot = round(lot / vol_step) * vol_step
         lot = max(cfg.MIN_LOT, min(lot, cfg.MAX_LOT))
 
-        # Real margin check
         margin_per_lot = p * MARGIN_RATE
-        max_trades = scaler.get_trades_per_event(bal, score)
-        if meta:
-            max_trades = meta.current_trades_per_event
+        max_trades = meta.current_trades_per_event
         free_margin = bal
-
         single_margin = lot * margin_per_lot
         if free_margin < single_margin:
             max_lot = free_margin * 0.9 / margin_per_lot
@@ -232,7 +168,6 @@ def run_bt(year, pred):
             if max_lot < cfg.MIN_LOT: continue
             lot = max_lot
             single_margin = lot * margin_per_lot
-
         if free_margin < single_margin: continue
 
         actual_trades = 0
@@ -241,22 +176,14 @@ def run_bt(year, pred):
             if remaining >= single_margin:
                 actual_trades += 1
                 remaining -= single_margin
-            else:
-                break
+            else: break
         if actual_trades == 0: continue
 
         ep = p
         total_events += 1
         total_sub_trades += actual_trades
-
-        if current_day != day_key:
-            current_day = day_key
-
         peak_profit = 0.0
         event_prof = 0.0
-        trade_exit_price = None
-        trade_exit_bars = None
-        trade_exit_reason = None
 
         for j in range(i + 1, min(i + TRADE_MAX_BARS + 1, len(m5) - 1)):
             fp = float(m5_close[j]); fh = float(m5_high[j]); fl = float(m5_low[j])
@@ -268,14 +195,12 @@ def run_bt(year, pred):
             else: peak_profit = max(peak_profit, float(ep - fl))
 
             atr_j = float(m5_atr[j])
-
             ml_hold = False
             if not np.isnan(pb_u[j]):
                 if entry_dir == "BUY" and pb_u[j] >= cfg.ML_HOLD_CONFIDENCE: ml_hold = True
                 elif entry_dir == "SELL" and pb_d[j] >= cfg.ML_HOLD_CONFIDENCE: ml_hold = True
 
             exit_now = False; exit_reason = None
-
             if peak_profit > 0:
                 trail_trigger = atr_j * cfg.PEAK_HARVEST_TRAIL_TRIGGER
                 if peak_profit >= trail_trigger:
@@ -323,47 +248,19 @@ def run_bt(year, pred):
                 exit_now = True; exit_reason = "max_hold"
 
             if exit_now:
-                bal += prof
-                event_prof = prof
+                bal += prof; event_prof = prof
                 if prof > 0: wins += 1
                 exit_reasons[exit_reason] = exit_reasons.get(exit_reason, 0) + 1
                 meta.record_trade(prof, abs(h1_bias[h1_idx_map[i]]) if abs(h1_bias[h1_idx_map[i]]) > 0 else 0.5)
-                trade_exit_price = fp
-                trade_exit_bars = bars_held
-                trade_exit_reason = exit_reason
                 break
         else:
             fb = m5.iloc[min(i + TRADE_MAX_BARS, len(m5) - 1)]
             fp = float(fb["close"])
             prof = (fp - ep) * CS * lot * actual_trades if entry_dir == "BUY" else (ep - fp) * CS * lot * actual_trades
-            bal += prof
-            event_prof = prof
-            exit_reasons["max_hold"] = exit_reasons.get("max_hold", 0) + 1
+            bal += prof; event_prof = prof
             if prof > 0: wins += 1
+            exit_reasons["max_hold"] = exit_reasons.get("max_hold", 0) + 1
             meta.record_trade(prof, abs(h1_bias[h1_idx_map[i]]) if abs(h1_bias[h1_idx_map[i]]) > 0 else 0.5)
-            trade_exit_price = fp
-            trade_exit_bars = TRADE_MAX_BARS
-            trade_exit_reason = "max_hold"
-
-        # Event log for first week
-        if start_date <= ts_i.date() < one_week:
-            event_log.append({
-                "ts": ts_i, "session": session_of_hour(ts_i.hour),
-                "dir": entry_dir, "sub": actual_trades, "lot": lot,
-                "pnl": event_prof, "reason": trade_exit_reason,
-                "override": was_overridden, "bal": bal - event_prof,
-            })
-
-        if first_event is None:
-            first_event = {
-                "dir": entry_dir, "entry": ep, "exit": trade_exit_price,
-                "sub_trades": actual_trades, "lot_per_trade": lot,
-                "total_lots": lot * actual_trades,
-                "bars": trade_exit_bars, "profit": event_prof,
-                "reason": trade_exit_reason,
-                "ts": ts_i, "bal_before": bal - event_prof, "override": was_overridden,
-                "session": ts_i.hour,
-            }
 
         peak_bal = max(peak_bal, bal)
         dd = max(dd, peak_bal - bal)
@@ -374,53 +271,78 @@ def run_bt(year, pred):
     elapsed = time.time() - t0
     wr = (wins / total_events * 100) if total_events else 0
     pf = wins / max(1, total_events - wins) if (total_events - wins) > 0 else float("inf")
-    print()
-    print(f"{'='*60}")
-    print(f"  Live Sub-Trade Backtest — {year}")
-    print(f"  (CS=1, margin_rate=0.05, sequential sub-trades)")
-    print(f"{'='*60}")
-    print(f"  Events:          {total_events}")
-    print(f"  Sub-trades:      {total_sub_trades} (avg {total_sub_trades/max(1,total_events):.1f}/event)")
-    print(f"  Wins:            {wins}")
-    print(f"  Losses:          {total_events - wins}")
-    print(f"  Win rate:        {wr:.1f}%")
-    print(f"  Profit factor:   {pf:.2f}")
-    print(f"  Net PnL:         ${bal - 20:>+8.2f}")
-    print(f"  Final balance:   ${bal:.2f}")
-    print(f"  Max drawdown:    ${dd:.2f}")
-    print(f"  ML overrides:    {total_overrides}")
-    if first_event:
-        print(f"\n  First event:")
-        print(f"    Direction:     {first_event['dir']}")
-        print(f"    Entry:         ${first_event['entry']:.2f} at {first_event['ts']} (UTC+{first_event['session']})")
-        print(f"    Exit:          ${first_event['exit']:.2f}")
-        print(f"    Sub-trades:    {first_event['sub_trades']}")
-        print(f"    Lot/trade:     {first_event['lot_per_trade']:.4f}")
-        print(f"    Total lots:    {first_event['total_lots']:.4f}")
-        print(f"    Hold:          {first_event['bars']} bars ({first_event['bars']*5} min)")
-        print(f"    Profit:        ${first_event['profit']:.2f}")
-        print(f"    Exit reason:   {first_event['reason']}")
-        print(f"    ML Override:   {first_event['override']}")
-        bal_after = first_event['bal_before'] + first_event['profit']
-        print(f"    Bal before:    ${first_event['bal_before']:.2f}")
-        print(f"    Bal after:     ${bal_after:.2f} (+{first_event['profit']/first_event['bal_before']*100:.1f}%)")
-    print(f"  Runtime:         {elapsed:.1f}s")
-    print(f"{'='*60}")
-    print(f"  Exit reasons:    {exit_reasons}")
-    print(f"  Meta regime:     {meta.regime}")
-    print(f"  Meta threshold:  {meta.current_threshold:.3f}")
-    print(f"  Meta lot mult:   {meta.current_lot_mult}")
-    if event_log:
-        print(f"\n  First week — per event:")
-        print(f"  {'Date':<12} {'Time':<8} {'Session':<10} {'Dir':<5} {'Sub':<4} {'Lot':<6} {'Pnl':<8} {'Reason':<16} {'Ovr':<4} {'Balance':<8}")
-        print(f"  {'-'*85}")
-        for e in event_log:
-            t = e['ts']
-            print(f"  {str(t.date()):<12} {t.strftime('%H:%M'):<8} {e['session']:<10} {e['dir']:<5} {e['sub']:<4} {e['lot']:<6.3f} ${e['pnl']:<+6.2f} {e['reason']:<16} {'Y' if e['override'] else 'N':<4} ${e['bal']:<7.2f}")
-    print()
-    return total_events, total_sub_trades, wr, pf, bal - 20, dd, total_overrides, elapsed
+    print(f"  {mode_name:>12}: events={total_events:>4} sub={total_sub_trades:>4} "
+          f"WR={wr:>5.1f}% PF={pf:>5.2f} PnL=${bal-20:>+7.2f} dd=${dd:>5.2f} "
+          f"overrides={total_overrides:>3} ({elapsed:.1f}s)")
+    return total_events, total_sub_trades, wr, pf, bal - 20, dd, total_overrides
 
 if __name__ == "__main__":
+    print("Loading data...")
+    m1 = pd.read_parquet("data/dukascopy/XAUUSD_M1_2025.parquet")
+    m1["time"] = pd.to_datetime(m1["time"])
+    m1 = m1[(m1["time"] >= "2025-01-01") & (m1["time"] < "2025-03-01")]
+    m1 = m1.sort_values("time").drop_duplicates(subset="time")
+    print(f"  M1 bars: {len(m1)} (Jan-Feb 2025)")
+
+    m5 = m1.set_index("time").resample("5min").agg({
+        "open": "first", "high": "max", "low": "min", "close": "last",
+        "tick_volume": "sum",
+    }).dropna()
+
+    h1 = m1.set_index("time").resample("1h").agg({
+        "open": "first", "high": "max", "low": "min", "close": "last",
+    }).dropna()
+
+    m5 = m5[~m5.index.duplicated(keep="first")]
+    h1 = h1[~h1.index.duplicated(keep="first")]
+    print(f"  M5 bars: {len(m5)}, H1 bars: {len(h1)}")
+
     pred = DirectionPredictor.load("models/direction_xgb_m5.joblib")
-    print("Model loaded.\n")
-    run_bt(2023, pred)
+    print("Computing features...")
+    ft = compute_features(m5, h1)
+    print(f"  Features: {len(ft)} rows, {len(ft.columns)} cols")
+
+    m5_atr = compute_atr_series(m5["high"].values, m5["low"].values, m5["close"].values)
+    m5_br = compute_body_ratios(m5["open"].values, m5["high"].values, m5["low"].values, m5["close"].values)
+
+    print("Computing bias...")
+    h1_bias = compute_bias_vectorized(h1)
+    h1_idx_map = h1.index.get_indexer(m5.index, method="ffill")
+    h1_idx_map = np.clip(h1_idx_map, 0, len(h1_bias) - 1)
+    m5_bias_arr = np.full(len(h1_idx_map), None, dtype=object)
+    m5_bias_arr[h1_bias[h1_idx_map] == 1] = "BUY"
+    m5_bias_arr[h1_bias[h1_idx_map] == -1] = "SELL"
+
+    h1_h = h1["high"].values; h1_l = h1["low"].values
+    m5_h1h = np.where(h1_idx_map > 0, h1_h[h1_idx_map - 1], h1_h[h1_idx_map])
+    m5_h1l = np.where(h1_idx_map > 0, h1_l[h1_idx_map - 1], h1_l[h1_idx_map])
+
+    m5_close = m5["close"].values; m5_open = m5["open"].values
+    m5_high = m5["high"].values; m5_low = m5["low"].values
+
+    MODES = [
+        ("A (0.60 match)",      0.60, 0.60, True),
+        ("B (0.70 match)",      0.70, 0.70, True),
+        ("C (no validation)",   0.70, 0.60, False),
+        ("D (code fix)",        0.60, 0.60, False),
+    ]
+
+    print(f"\n{'='*80}")
+    print(f"  ML Threshold Sweep — Jan-Feb 2025")
+    print(f"{'='*80}")
+    print(f"  {'Mode':<20} {'Events':>6} {'Sub':>5} {'WR':>7} {'PF':>7} {'PnL':>10} {'DD':>6} {'Overrides':>10}")
+    print(f"  {'-'*75}")
+    results = []
+    for name, ovr_thr, conf_thr, val in MODES:
+        res = run_mode(name, ovr_thr, conf_thr, val, m5, h1, ft, pred,
+                       m5_atr, m5_br, h1_bias, h1_idx_map, m5_bias_arr,
+                       m5_h1h, m5_h1l, m5_close, m5_open, m5_high, m5_low)
+        results.append((name, *res))
+    print(f"  {'-'*75}")
+
+    # Show as table
+    print(f"\n  {'Mode':<20} {'Events':>6} {'Sub':>5} {'WR%':>6} {'PF':>6} {'PnL($)':>8} {'DD($)':>6} {'Ovr':>5}")
+    print(f"  {'-'*70}")
+    for name, evt, sub, wr, pf, pnl, dd, ovr in results:
+        print(f"  {name:<20} {evt:>6} {sub:>5} {wr:>5.1f}% {pf:>5.2f} ${pnl:>+7.2f} ${dd:>5.2f} {ovr:>4}")
+    print()

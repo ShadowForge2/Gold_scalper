@@ -118,7 +118,6 @@ class SignalEngine:
         if features is None or len(features) == 0:
             return None, 0.0
         try:
-            import time as _time
             override_threshold = getattr(cfg, 'ML_BIAS_OVERRIDE_THRESHOLD', 0.70)
             if self._slt_predictor is not None:
                 buy_p = self._slt_predictor.buy_win_prob(features)
@@ -231,9 +230,11 @@ class SignalEngine:
 
         bias_dir = bias["bias"]
         direction = "BUY" if bias_dir == "BULLISH" else "SELL"
+        if "close" not in m1_data.columns:
+            return self._reject("no_close_data", bias=bias_dir, price=current_price)
         closes = m1_data["close"].values
         range_size = h1_high - h1_low
-        atr = self._compute_atr(m1_data, cfg.ATR_PERIOD)
+        atr = self._compute_atr_m5(m1_data, cfg.ATR_PERIOD)
         atr_entry_threshold = round(atr * cfg.ATR_MULTIPLIER / range_size, 4) if range_size > 0 and atr > 0 else None
 
         # ML bias override: if ML confidently predicts opposite direction, trust ML
@@ -246,11 +247,10 @@ class SignalEngine:
                 self._ml_override_day = today
             ml_features = self._get_features(m1_data)
             if ml_features is not None and len(ml_features) > 0:
-                if self._ml_override_count < 20:
-                    ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
-                    if ml_dir is not None and ml_dir != direction:
-                        direction = ml_dir
-                        ml_override = True
+                ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
+                if ml_dir is not None and ml_dir != direction:
+                    direction = ml_dir
+                    ml_override = True
 
         if direction == "BUY":
             breakout_dist = current_price - h1_high
@@ -420,7 +420,7 @@ class SignalEngine:
     def _exit_mode_breakout(self, df, entry, direction, entry_score):
         """Breakout exit: SL using high/low, ATR trailing, counter-candle."""
         momentum = self.compute_momentum(df)
-        atr = self._compute_atr(df, 14)
+        atr = self._compute_atr_m5(df, 14)
 
         last_high = df["high"].iloc[-1]
         last_low = df["low"].iloc[-1]
@@ -469,7 +469,7 @@ class SignalEngine:
         px = df["close"].iloc[-1]
         diff = px - entry if direction == "BUY" else entry - px
 
-        atr = self._compute_atr(df, 14)
+        atr = self._compute_atr_m5(df, 14)
         sl_m = sl_mult if sl_mult is not None else 0.5
         tr_m = trigger_mult if trigger_mult is not None else 0.7
         retrace = retrace_pct if retrace_pct is not None else 0.30
@@ -494,7 +494,7 @@ class SignalEngine:
             reason = "breakeven" if (trail_to_breakeven and triggered and stop_loss >= 0) else "stop_loss"
             return True, 1.0, reason
 
-        if triggered:
+        if triggered and peak > 0:
             pullback = peak - max(0, diff)
             if pullback / peak > trail_retrace_pct:
                 return True, 0.85, "trail_stop"
@@ -515,7 +515,7 @@ class SignalEngine:
         px = df["close"].iloc[-1]
         diff = px - entry if direction == "BUY" else entry - px
 
-        atr = self._compute_atr(df, 14)
+        atr = self._compute_atr_m5(df, 14)
         sl = -(max(atr * 0.5, 0.15))
         tp = max(atr * 2.0, 0.60)
 
@@ -530,7 +530,7 @@ class SignalEngine:
         px = df["close"].iloc[-1]
         diff = px - entry if direction == "BUY" else entry - px
 
-        atr = self._compute_atr(df, 14)
+        atr = self._compute_atr_m5(df, 14)
 
         if diff <= -(max(atr * 0.5, 0.15)):
             return True, 1.0, "stop_loss"
@@ -561,10 +561,10 @@ class SignalEngine:
         ML-guided: if ML still predicts same direction, suppress momentum_decay/direction_loss.
         """
         momentum = self.compute_momentum(df)
-        atr = self._compute_atr(df, 14)
+        atr = self._compute_atr_m5(df, 14)
         px = df["close"].iloc[-1]
         diff = px - entry if direction == "BUY" else entry - px
-        bars = bars_since_entry or len(df)
+        bars = bars_since_entry if bars_since_entry is not None else len(df)
 
         if atr <= 0:
             return False, 0.0, "holding"
@@ -579,17 +579,15 @@ class SignalEngine:
         ml_signal = self._get_ml_exit_signal(ml_features, direction)
         if ml_signal == "exit":
             return True, 0.90, "ml_reversal"
-        if ml_signal == "hold":
-            # ML still confident in direction — suppress momentum/direction exits
-            # Only allow trail_stop and max_hold as hard limits
-            confidence = entry_score if entry_score is not None else 0.7
-            patience = 1.0 + (1.0 - confidence)
-            trail_trigger = atr * cfg.PEAK_HARVEST_TRAIL_TRIGGER * patience
-            trail_active = peak >= trail_trigger
-            if trail_active and diff > 0:
-                pullback = peak - diff
-                if pullback / peak > cfg.PEAK_HARVEST_TRAIL_RETRACE:
-                    return True, 0.85, "trail_stop"
+            if ml_signal == "hold":
+                confidence = entry_score if entry_score is not None else 0.7
+                patience = 1.0 + (1.0 - confidence)
+                trail_trigger = atr * cfg.PEAK_HARVEST_TRAIL_TRIGGER * patience
+                trail_active = peak >= trail_trigger
+                if trail_active and diff > 0 and peak > 0:
+                    pullback = peak - diff
+                    if pullback / peak > cfg.PEAK_HARVEST_TRAIL_RETRACE:
+                        return True, 0.85, "trail_stop"
             if bars > cfg.PEAK_HARVEST_MAX_HOLD_BARS:
                 return True, 0.50, "max_hold"
             return False, 0.0, "ml_hold"
@@ -601,7 +599,7 @@ class SignalEngine:
         trail_trigger = atr * cfg.PEAK_HARVEST_TRAIL_TRIGGER * patience
         trail_active = peak >= trail_trigger
 
-        if trail_active and diff > 0:
+        if trail_active and diff > 0 and peak > 0:
             pullback = peak - diff
             if pullback / peak > cfg.PEAK_HARVEST_TRAIL_RETRACE:
                 return True, 0.85, "trail_stop"
@@ -650,7 +648,7 @@ class SignalEngine:
         diff = px - entry if direction == "BUY" else entry - px
 
         if not signal:
-            atr = self._compute_atr(df, 14)
+            atr = self._compute_atr_m5(df, 14)
             if atr <= 0:
                 atr = abs(entry) * 0.001
             sl_price = entry - (2 * atr) if direction == "BUY" else entry + (2 * atr)
@@ -664,7 +662,7 @@ class SignalEngine:
         tp3 = signal.get("tp3")
 
         if None in (sl_price, tp1, tp2, tp3):
-            atr = self._compute_atr(df, 14)
+            atr = self._compute_atr_m5(df, 14)
             if atr <= 0:
                 atr = abs(entry) * 0.001
             sl_price = entry - (2 * atr) if direction == "BUY" else entry + (2 * atr)
@@ -672,7 +670,7 @@ class SignalEngine:
                 return True, 1.0, "stop_loss"
             return False, 0.0, "recovery_no_signal"
 
-        atr = self._compute_atr(df, 14)
+        atr = self._compute_atr_m5(df, 14)
         if atr <= 0:
             atr = abs(entry) * 0.001
 
@@ -795,11 +793,27 @@ class SignalEngine:
         if avg_body == 0:
             return 0.0
 
-        atr = self._compute_atr(df, 14)
+        atr = self._compute_atr_m5(df, 14)
         ref = max(atr, df["close"].iloc[-1] * 0.0001)
         raw = (recent_change / (older_change + 1e-10)) * \
                (avg_body / (ref + 1e-10))
         return min(abs(raw), 1.0)
+
+    def _resample_to_m5(self, m1_data: pd.DataFrame) -> Optional[pd.DataFrame]:
+        try:
+            if "time" in m1_data.columns:
+                m1_idx = m1_data.set_index("time")
+            else:
+                m1_idx = m1_data
+            m5 = m1_idx.resample("5min").agg({
+                "open": "first", "high": "max", "low": "min", "close": "last",
+                "tick_volume": "sum",
+            }).dropna()
+            if len(m5) < 5:
+                return None
+            return m5
+        except Exception:
+            return None
 
     def _compute_atr(self, df: pd.DataFrame, period: int = 14) -> float:
         if len(df) < period + 1:
@@ -812,6 +826,12 @@ class SignalEngine:
                                    np.abs(l[1:] - c[:-1])))
         atr = float(np.mean(tr[-period:]))
         return 0.0 if np.isnan(atr) else atr
+
+    def _compute_atr_m5(self, m1_data: pd.DataFrame, period: int = 14) -> float:
+        m5 = self._resample_to_m5(m1_data)
+        if m5 is None or len(m5) < period + 1:
+            return 0.0
+        return self._compute_atr(m5, period)
 
     def _candle_strength(self, df: pd.DataFrame) -> float:
         if len(df) < 3:

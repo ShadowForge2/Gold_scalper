@@ -13,10 +13,14 @@ class TradeExecutor:
                           comment: str = cfg.COMMENT,
                           slippage: int = cfg.MAX_SLIPPAGE_PIPS) -> Optional[Any]:
 
-        ticket = await self.client.open_position(
-            symbol=symbol, direction=direction, volume=volume,
-            magic=magic, comment=comment, slippage=slippage
-        )
+        try:
+            ticket = await self.client.open_position(
+                symbol=symbol, direction=direction, volume=volume,
+                magic=magic, comment=comment, slippage=slippage
+            )
+        except Exception as e:
+            self.logger.error(f"Order exception for {symbol} {direction}: {e}")
+            return None
         if ticket is not None:
             self.logger.trade(
                 f"Opened {direction} {volume:.2f} {symbol} "
@@ -27,7 +31,10 @@ class TradeExecutor:
             detail = ""
             err_attr = getattr(self.client, "last_order_error", None)
             if err_attr is not None:
-                detail = err_attr() if callable(err_attr) else str(err_attr)
+                try:
+                    detail = err_attr() if callable(err_attr) else str(err_attr)
+                except Exception:
+                    detail = str(err_attr) if not callable(err_attr) else "unknown error"
             suffix = f": {detail}" if detail else ""
             self.logger.error(f"Order failed for {symbol} {direction}{suffix}")
             return None
@@ -45,10 +52,11 @@ class TradeExecutor:
             return False
 
     def close_all_bot_positions(self) -> List[Dict]:
-        positions = self.client.get_positions(symbol=cfg.SYMBOL) or []
+        positions = self.client.get_positions(magic=cfg.MAGIC_NUMBER, symbol=cfg.SYMBOL) or []
         closed = []
         for pos in positions:
-            if self.close_position(pos["ticket"]):
+            ticket = pos.get("ticket")
+            if ticket and self.close_position(ticket):
                 closed.append(pos)
         if closed:
             self.logger.info(f"Closed {len(closed)} bot position(s)")
@@ -60,6 +68,7 @@ class TradeExecutor:
             positions = [p for p in positions if p.get("symbol") == symbol]
         closed = 0
         for pos in positions:
-            if self.close_position(pos["ticket"]):
+            ticket = pos.get("ticket")
+            if ticket and self.close_position(ticket):
                 closed += 1
         return closed
