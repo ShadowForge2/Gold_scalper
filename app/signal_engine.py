@@ -85,7 +85,9 @@ class SignalEngine:
                         self._last_slt_prob_log_time = _time.monotonic()
                         self._last_slt_prob_value = now_key
                         self._logger.info(f"[ML] SL/TP BUY prob={prob:.3f} threshold={cfg.ML_CONFIDENCE_THRESHOLD}")
-                    return "BUY" if prob >= cfg.ML_CONFIDENCE_THRESHOLD else None
+                    if prob >= cfg.ML_CONFIDENCE_THRESHOLD:
+                        return "BUY"
+                    slt_passed = True
                 elif expected_direction == "SELL":
                     prob = self._slt_predictor.sell_win_prob(features)
                     now_key = f"SELL_{prob:.3f}"
@@ -93,7 +95,9 @@ class SignalEngine:
                         self._last_slt_prob_log_time = _time.monotonic()
                         self._last_slt_prob_value = now_key
                         self._logger.info(f"[ML] SL/TP SELL prob={prob:.3f} threshold={cfg.ML_CONFIDENCE_THRESHOLD}")
-                    return "SELL" if prob >= cfg.ML_CONFIDENCE_THRESHOLD else None
+                    if prob >= cfg.ML_CONFIDENCE_THRESHOLD:
+                        return "SELL"
+                    slt_passed = True
 
             # Fallback: direction model predicts generic price direction
             if self._direction_predictor is not None:
