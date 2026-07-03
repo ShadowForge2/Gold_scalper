@@ -114,6 +114,7 @@ class Bot:
         self._shutdown_deadline = None
         self._last_sub_check = 0.0
         self._ml_heartbeat_ticks = 0
+        self._creds: Optional[Dict] = None
 
 
     async def _notify(self, ntype: str, title: str, message: str, data: Optional[Dict] = None):
@@ -170,6 +171,7 @@ class Bot:
             return False
 
     async def initialize_with_credentials(self, api_key: str, identifier: str, password: str, demo: bool = True) -> bool:
+        self._creds = {"api_key": api_key, "identifier": identifier, "password": password, "demo": demo}
         self.logger.info("Connecting to broker...")
         self.client = CapitalClient()
         self.logger.info("Establishing secure connection...")
@@ -296,8 +298,11 @@ class Bot:
                     f"(attempt {self._reconnect_attempts + 1}, "
                     f"backoff={backoff:.0f}s)..."
                 )
-                await self.initialize()
-                if self.client.is_connected():
+                if self._creds:
+                    ok = await self.initialize_with_credentials(**self._creds)
+                else:
+                    ok = await self.initialize()
+                if ok:
                     self._reconnect_attempts = 0
                     self.logger.info("Reconnected successfully")
                 else:
