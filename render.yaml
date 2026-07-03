@@ -50,7 +50,7 @@ services:
       - key: BIAS_UPDATE_INTERVAL_SEC
         value: "60"
       - key: SIGNAL_ENTRY_THRESHOLD
-        value: "0.85"
+        value: "0.10"
       - key: SL_ATR_MULTIPLIER
         value: "1.0"
       - key: TP1_MULTIPLIER

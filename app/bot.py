@@ -115,6 +115,24 @@ class Bot:
         self._last_sub_check = 0.0
         self._ml_heartbeat_ticks = 0
         self._creds: Optional[Dict] = None
+        self._last_market_status_check = 0.0
+        self._market_check_interval = 60
+
+
+    def _check_market_dynamic(self) -> Optional[bool]:
+        now = time.time()
+        if now - self._last_market_status_check < self._market_check_interval:
+            return None
+        self._last_market_status_check = now
+        if not self.client:
+            return None
+        try:
+            info = self.client.get_symbol_info(self.symbol)
+            if info is None:
+                return None
+            return info.get("market_status") == "TRADEABLE"
+        except Exception:
+            return None
 
 
     async def _notify(self, ntype: str, title: str, message: str, data: Optional[Dict] = None):
@@ -331,7 +349,13 @@ class Bot:
                 self.state = self.STATES["WAITING_FOR_FUNDS"]
                 return
 
-        if not cfg.is_market_open():
+        market_open = cfg.is_market_open()
+        if market_open:
+            dyn = self._check_market_dynamic()
+            if dyn is not None:
+                market_open = dyn
+
+        if not market_open:
             if self.state == self.STATES["IN_TRADE"]:
                 self.logger.info("Market closed, managing open positions only")
             elif self.state != self.STATES["MARKET_CLOSED"]:

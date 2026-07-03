@@ -125,9 +125,9 @@ BIAS_TIMEFRAME = _env_int("BIAS_TIMEFRAME", 16385)
 SIGNAL_TIMEFRAME = _env_int("SIGNAL_TIMEFRAME", 1)
 STRUCTURE_TIMEFRAMES = [16385, 16408]
 
-# Market hours (spot gold: Sun 23:00 UTC - Fri 22:00 UTC)
+# Market hours (Capital.com XAUUSD: Sun 23:00 UTC - Fri 21:00 UTC)
 MARKET_OPEN_SUNDAY_UTC = _env_int("MARKET_OPEN_SUNDAY_UTC", 23)
-MARKET_CLOSE_FRIDAY_UTC = _env_int("MARKET_CLOSE_FRIDAY_UTC", 22)
+MARKET_CLOSE_FRIDAY_UTC = _env_int("MARKET_CLOSE_FRIDAY_UTC", 21)
 
 
 # Meta-strategy (adaptive threshold / regime switching)
