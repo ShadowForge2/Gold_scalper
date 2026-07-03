@@ -529,7 +529,7 @@ def run_backtest(data: dict, params: dict = None, verbose: bool = True):
                 trades.append({
                     "entry_time": cur["entry_time"], "exit_time": ts,
                     "direction": cur["direction"], "entry_price": cur["entry_price"],
-                    "exit_price": round(px, 2), "pnl": round(pnl, 2),
+                    "exit_price": round(exit_px, 2), "pnl": round(pnl, 2),
                     "lot": cur["lot"], "num_trades": cur["num_trades"],
                     "bars_held": cur.get("bars_held", 0), "exit_reason": "event_loss",
                     "exit_score": 1.0, "balance": round(balance, 2),

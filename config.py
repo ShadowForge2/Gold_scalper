@@ -103,7 +103,7 @@ GEMINI_MODEL = _env_str("GEMINI_MODEL", "gemini-2.0-flash")
 GEMINI_ADVICE_WEIGHT = _env_float("GEMINI_ADVICE_WEIGHT", 1.0)
 
 # Multi-symbol scanning (comma-separated list, e.g. "XAUUSD,XAGUSD")
-SYMBOLS = _env_str("SYMBOLS", "XAUUSD").split(",")
+SYMBOLS = [s.strip() for s in _env_str("SYMBOLS", "XAUUSD").split(",")]
 
 # Filters
 MAX_SPREAD_PIPS = _env_float("MAX_SPREAD_PIPS", 35.0)

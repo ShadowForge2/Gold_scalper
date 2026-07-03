@@ -119,7 +119,8 @@ class CapitalClient:
             except Exception:
                 self.connected = False
                 return False
-        self._last_activity = time.time()
+        if self.connected:
+            self._last_activity = time.time()
         return self.connected
 
     def _throttle(self):

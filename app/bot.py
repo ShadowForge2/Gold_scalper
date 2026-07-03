@@ -402,8 +402,8 @@ class Bot:
                     if h1_high is None or h1_low is None or not (h1_high > 0 and h1_low > 0):
                         h1_high = None
                         h1_low = None
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.warning(f"H1 range computation failed: {e}")
 
         if h1_high is None or h1_low is None or h1_high <= h1_low:
             h1_data = self.client.get_rates(
@@ -455,7 +455,8 @@ class Bot:
             )
 
         # Shared entry logic
-        effective_threshold = getattr(self, '_signal_entry_threshold_override', None) or (self.meta.current_threshold if self.meta else cfg.SIGNAL_ENTRY_THRESHOLD)
+        override = getattr(self, '_signal_entry_threshold_override', None)
+        effective_threshold = override if override is not None else (self.meta.current_threshold if self.meta else cfg.SIGNAL_ENTRY_THRESHOLD)
         if signal:
             atr_thresh = signal.get("atr_entry_threshold")
             if atr_thresh is not None:
@@ -603,9 +604,11 @@ class Bot:
         )
         if not event_ok:
             self.logger.warning(f"Event stop: {event_msg}")
+            realized_pnl = 0.0
             for pos_data in self.trade_executor.close_all_bot_positions():
                 self.position_manager.note_closed(pos_data)
-            self.risk_manager.record_exit(pnl_data["event_pnl"])
+                realized_pnl += pos_data.get("profit", 0)
+            self.risk_manager.record_exit(realized_pnl)
             if self.meta:
                 self.meta.record_trade(pnl_data["event_pnl"], self._bias_summary.get("strength", 0))
                 self.meta.update(balance, self._bias_summary)
@@ -693,11 +696,13 @@ class Bot:
             self.logger.signal(
                 f"Exit signal: score={exit_score:.2f} reason={reason}"
             )
+            realized_pnl = 0.0
             for pos_data in self.trade_executor.close_all_bot_positions():
                 self.position_manager.note_closed(pos_data)
-            self.risk_manager.record_exit(pnl_data["event_pnl"])
+                realized_pnl += pos_data.get("profit", 0)
+            self.risk_manager.record_exit(realized_pnl)
             if self.meta:
-                self.meta.record_trade(pnl_data["event_pnl"], self._bias_summary.get("strength", 0))
+                self.meta.record_trade(realized_pnl, self._bias_summary.get("strength", 0))
                 self.meta.update(balance, self._bias_summary)
             await self._notify(
                 "trade_close",

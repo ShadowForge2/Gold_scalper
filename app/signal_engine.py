@@ -664,7 +664,9 @@ class SignalEngine:
             if atr <= 0:
                 atr = abs(entry) * 0.001
             sl_price = entry - (2 * atr) if direction == "BUY" else entry + (2 * atr)
-            return False, 0.0, "recovery_trail"
+            if (direction == "BUY" and px <= sl_price) or (direction == "SELL" and px >= sl_price):
+                return True, 1.0, "stop_loss"
+            return False, 0.0, "recovery_no_signal"
 
         sl_price = signal.get("sl")
         tp1 = signal.get("tp1")
@@ -676,7 +678,9 @@ class SignalEngine:
             if atr <= 0:
                 atr = abs(entry) * 0.001
             sl_price = entry - (2 * atr) if direction == "BUY" else entry + (2 * atr)
-            return False, 0.0, "recovery_trail"
+            if (direction == "BUY" and px <= sl_price) or (direction == "SELL" and px >= sl_price):
+                return True, 1.0, "stop_loss"
+            return False, 0.0, "recovery_no_signal"
 
         atr = self._compute_atr(df, 14)
         if atr <= 0:
