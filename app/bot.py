@@ -111,6 +111,7 @@ class Bot:
 
         self._can_trade_cb = None
         self._winding_down = False
+        self._shutdown_deadline = None
         self._last_sub_check = 0.0
         self._ml_heartbeat_ticks = 0
 
@@ -205,11 +206,23 @@ class Bot:
             self.state = self.STATES["STOPPED"]
             return False
 
-    async def shutdown(self):
+    async def shutdown(self, grace_period: float = 25.0):
+        self._winding_down = True
+        self._shutdown_deadline = time.time() + grace_period
+        self.logger.info(
+            f"Shutdown requested, managing {self.position_manager.open_count} open position(s) "
+            f"gracefully (timeout={grace_period:.0f}s)..."
+        )
+        while self._running and self.position_manager.open_count > 0:
+            if time.time() > self._shutdown_deadline:
+                self.logger.warning(
+                    f"Grace period expired, force-closing {self.position_manager.open_count} position(s)"
+                )
+                for pos_data in self.trade_executor.close_all_bot_positions():
+                    self.position_manager.note_closed(pos_data)
+                break
+            await asyncio.sleep(0.5)
         self._running = False
-        if hasattr(self, 'trade_executor'):
-            for pos_data in self.trade_executor.close_all_bot_positions():
-                self.position_manager.note_closed(pos_data)
         if hasattr(self, 'client'):
             self.client.shutdown()
         self.logger.info("Bot shutdown complete")
@@ -258,10 +271,18 @@ class Bot:
                 self._winding_down = True
                 self.logger.warning("Subscription expired. Completing open trades, then stopping.")
             if self._winding_down and pnl_data["open_count"] == 0:
-                self.logger.warning("All trades closed. Stopping bot due to expired subscription.")
+                reason = "shutdown" if hasattr(self, '_shutdown_deadline') else "expired subscription"
+                self.logger.warning(f"All trades closed. Stopping bot due to {reason}.")
                 self.state = self.STATES["STOPPED"]
                 self._running = False
                 return
+            if getattr(self, '_shutdown_deadline', None) and now_t > self._shutdown_deadline:
+                if pnl_data["open_count"] > 0:
+                    self.logger.warning(
+                        f"Shutdown deadline passed, force-closing {pnl_data['open_count']} position(s)"
+                    )
+                    for pos_data in self.trade_executor.close_all_bot_positions():
+                        self.position_manager.note_closed(pos_data)
 
         if not self.client.is_connected():
             now_t = time.time()
@@ -716,6 +737,10 @@ class Bot:
             return
 
     async def _handle_cooldown(self):
+        if self._winding_down:
+            self.state = self.STATES["IDLE"]
+            self._cooldown_until = None
+            return
         if self._cooldown_until and datetime.now() >= self._cooldown_until:
             self.logger.info("Cooldown expired, resuming search")
             self.state = self.STATES["IDLE"]
