@@ -1,9 +1,7 @@
 """
-Backtest 2025: Meta-Aggressive + ML Bias Override + ML-Guided Exit Hold.
-Peak harvest exit (no SL). Uses DirectionPredictor model.
-ML Override: flip entry dir if ML predicts opposite at >=70% (max 3/day).
-ML Exit Hold: suppress momentum_decay/direction_loss if ML still predicts same dir >=50%.
-Integrates MetaStrategy (adaptive threshold/regime) and EquityScaler (aggressive sizing).
+Backtest: Live bot configuration — multi-trade + session filter + DirectionPredictor.
+Peak harvest exit (no SL). Sequential sub-trades per event (up to 5).
+Sessions: LONDON 7-17 UTC, NEW_YORK 12-22 UTC.
 """
 import sys, os, time; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np
@@ -16,6 +14,21 @@ from app.risk_manager import EquityScaler
 
 CS = 100; LEV = 200
 
+SESSION_HOURS = {
+    "ASIA": (0, 8),
+    "LONDON": (7, 17),
+    "NEW_YORK": (12, 22),
+}
+
+def in_allowed_session(ts) -> bool:
+    h = ts.hour
+    sessions = [s.strip().upper() for s in cfg.ALLOWED_SESSIONS.split(",") if s.strip()]
+    for s in sessions:
+        if s in SESSION_HOURS:
+            lo, hi = SESSION_HOURS[s]
+            if lo <= h < hi:
+                return True
+    return False
 
 def compute_bias_vectorized(h1: pd.DataFrame) -> np.ndarray:
     c = h1["close"].values.astype(np.float64)
@@ -62,7 +75,6 @@ def compute_bias_vectorized(h1: pd.DataFrame) -> np.ndarray:
     bias[total <= -0.75] = -1
     return bias
 
-
 def compute_atr_series(high, low, close, period=14):
     tr = np.maximum(
         high - low,
@@ -72,28 +84,24 @@ def compute_atr_series(high, low, close, period=14):
     atr = pd.Series(tr).rolling(period, min_periods=period).mean().values
     return np.where(np.isnan(atr), 0.0, atr)
 
-
 def compute_body_ratios(m5_open, m5_high, m5_low, m5_close):
     body = np.abs(m5_close - m5_open)
     candle_range = np.maximum(m5_high - m5_low, 1e-10)
     return body / candle_range
-
 
 def adaptive_conf_allowed(br_val, atr_val, bw, aw):
     if len(bw) < 10 or len(aw) < 50:
         return True
     p_low = cfg.ADAPTIVE_CONF_P_LOW / 100.0
     p_norm = cfg.ADAPTIVE_CONF_P_NORM / 100.0
-    p_high = cfg.ADAPTIVE_CONF_P_HIGH
-    if p_high < 0:
-        p_high = 0.0
+    if p_low < 0: p_low = 0.0
+    if p_norm < 0: p_norm = 0.0
     l, h = np.percentile(aw, [25, 75])
     if atr_val <= l:
         return br_val >= np.percentile(bw, int(p_low * 100))
     elif atr_val < h:
         return br_val >= np.percentile(bw, int(p_norm * 100))
     return True
-
 
 def run_bt(year, pred):
     client = DukascopyClient()
@@ -153,31 +161,28 @@ def run_bt(year, pred):
     m5_high = m5["high"].values
     m5_low = m5["low"].values
 
-    bal = 20.0; total = 0; wins = 0; dd = 0; peak_bal = 20.0
+    bal = 20.0; total_events = 0; total_sub_trades = 0; wins = 0; dd = 0; peak_bal = 20.0
     t0 = time.time()
-    override_count = 0
-    override_day = None
-    total_overrides = 0
+    override_count = 0; override_day = None; total_overrides = 0
     TRADE_MAX_BARS = cfg.PEAK_HARVEST_MAX_HOLD_BARS
     exit_reasons = {}
+    first_event = None
 
-    # MetaStrategy + EquityScaler for meta-aggressive mode
     meta = MetaStrategy()
     scaler = EquityScaler()
     scaler.initialize(bal)
 
-    # For adaptive confirmation
-    bw = []
-    aw = []
-
-    # For daily PnL tracking
-    dailies = {}
-    daily_pnl = 0.0
-    current_day = None
+    bw = []; aw = []
+    dailies = {}; daily_pnl = 0.0; current_day = None
 
     for i in range(60, len(m5) - 15):
         expected = m5_bias_arr[i]
         if expected is None:
+            continue
+
+        # --- Session filter (live config) ---
+        ts_i = m5.index[i]
+        if not in_allowed_session(ts_i):
             continue
 
         p = float(m5_close[i])
@@ -196,7 +201,7 @@ def run_bt(year, pred):
         if score < cfg.MIN_BREAKOUT_SCORE:
             continue
 
-        # Adaptive confirmation (body ratio percentile)
+        # Adaptive confirmation
         br_val = float(m5_br[i])
         atr_val = float(m5_atr[i])
         bw.append(br_val); aw.append(atr_val)
@@ -214,7 +219,6 @@ def run_bt(year, pred):
             continue
 
         # --- ML Bias Override ---
-        ts_i = m5.index[i]
         day_key = ts_i.date()
         if override_day != day_key:
             override_count = 0
@@ -248,26 +252,34 @@ def run_bt(year, pred):
             elif score >= cfg.AGGRESSIVE_STRONG_THRESHOLD:
                 lot_mult *= cfg.AGGRESSIVE_STRONG_LOT_MULT
 
-        ep = p; total += 1
-        # Max lots from leverage and balance
+        ep = p; total_events += 1
+        # Lot per sub-trade
         n = max(0.01, bal * LEV / ep / CS)
-        n = min(n, 1.0)  # cap at 1 standard lot
-        # Apply scaler and meta lot mult within cap
+        n = min(n, 1.0)
         scale_lot = scaler.get_lot(bal) * lot_mult
         n = min(n, max(cfg.MIN_LOT, min(scale_lot, cfg.MAX_LOT)))
         mg = ep * CS / LEV
         mx = bal / mg
         if mx < cfg.MIN_LOT:
-            total -= 1; continue
+            total_events -= 1; continue
         n = min(n, mx)
+
+        # --- Multi-trade: sequential sub-trades (up to trades_per_event, within margin) ---
+        trades_per_event = meta.current_trades_per_event
+        margin_per_trade = n * ep * CS / LEV
+        max_affordable = int(bal / margin_per_trade) if margin_per_trade > 0 else 0
+        actual_trades = min(trades_per_event, max_affordable, cfg.MAX_TRADES_PER_EVENT)
+        actual_trades = max(1, actual_trades)
+        total_sub_trades += actual_trades
 
         # Track daily PnL
         if current_day != day_key:
             daily_pnl = 0.0
             current_day = day_key
 
-        # --- Trade exit (peak harvest, no SL) ---
+        # --- Trade exit (all sub-trades exit together) ---
         peak_profit = 0.0
+        event_prof = 0.0
 
         for j in range(i + 1, min(i + TRADE_MAX_BARS + 1, len(m5) - 1)):
             fp = float(m5_close[j])
@@ -275,7 +287,7 @@ def run_bt(year, pred):
             fl = float(m5_low[j])
             bars_held = j - i
             diff = (fp - ep) if entry_dir == "BUY" else (ep - fp)
-            prof = diff * CS * n
+            prof = diff * CS * n * actual_trades  # total event PnL
 
             if entry_dir == "BUY":
                 peak_profit = max(peak_profit, float(fh - ep))
@@ -284,7 +296,7 @@ def run_bt(year, pred):
 
             atr_j = float(m5_atr[j])
 
-            # ML hold: does ML still predict same direction at >=50%?
+            # ML hold
             ml_hold = False
             if not np.isnan(pb_u[j]):
                 if entry_dir == "BUY" and pb_u[j] >= cfg.ML_HOLD_CONFIDENCE:
@@ -292,48 +304,34 @@ def run_bt(year, pred):
                 elif entry_dir == "SELL" and pb_d[j] >= cfg.ML_HOLD_CONFIDENCE:
                     ml_hold = True
 
-            exit_now = False
-            exit_reason = None
+            exit_now = False; exit_reason = None
 
-            # 1. Trail stop (always checked)
             if peak_profit > 0:
                 trail_trigger = atr_j * cfg.PEAK_HARVEST_TRAIL_TRIGGER
                 if peak_profit >= trail_trigger:
                     pullback = peak_profit - max(0, diff)
                     if pullback / peak_profit > cfg.PEAK_HARVEST_TRAIL_RETRACE:
-                        exit_now = True
-                        exit_reason = "trail_stop"
+                        exit_now = True; exit_reason = "trail_stop"
 
-            # 2. Direction loss (only if NOT ml_hold)
             if not exit_now and not ml_hold and bars_held >= 4:
-                streak = 0
-                lookback = min(cfg.DIRECTION_LOSS_LOOKBACK, j - i)
+                streak = 0; lookback = min(cfg.DIRECTION_LOSS_LOOKBACK, j - i)
                 for k in range(lookback):
                     idx_k = j - k
                     if entry_dir == "BUY":
-                        if m5_close[idx_k] < m5_open[idx_k]:
-                            streak += 1
-                        else:
-                            break
+                        if m5_close[idx_k] < m5_open[idx_k]: streak += 1
+                        else: break
                     else:
-                        if m5_close[idx_k] > m5_open[idx_k]:
-                            streak += 1
-                        else:
-                            break
+                        if m5_close[idx_k] > m5_open[idx_k]: streak += 1
+                        else: break
                 if streak >= cfg.DIRECTION_LOSS_STREAK:
-                    exit_now = True
-                    exit_reason = "direction_loss"
+                    exit_now = True; exit_reason = "direction_loss"
 
-            # 3. Momentum decay (only if NOT ml_hold)
             if not exit_now and not ml_hold and bars_held >= cfg.PEAK_HARVEST_MIN_BARS_EXIT:
                 start = max(0, j - 19)
-                c_win = m5_close[start:j + 1]
-                o_win = m5_open[start:j + 1]
+                c_win = m5_close[start:j + 1]; o_win = m5_open[start:j + 1]
                 if len(c_win) >= 5:
-                    recent = c_win[-3:]
-                    older = c_win[-6:-3] if len(c_win) >= 6 else c_win[:3]
-                    recent_chg = abs(recent[-1] - recent[0])
-                    older_chg = abs(older[-1] - older[0]) if len(older) >= 2 else recent_chg
+                    recent = c_win[-3:]; older = c_win[-6:-3] if len(c_win) >= 6 else c_win[:3]
+                    recent_chg = abs(recent[-1] - recent[0]); older_chg = abs(older[-1] - older[0]) if len(older) >= 2 else recent_chg
                     avg_body = float(np.mean(np.abs(c_win[-5:] - o_win[-5:])))
                     if avg_body > 0:
                         window_atr = float(np.mean(m5_atr[max(0, j - 13):j + 1]))
@@ -342,75 +340,102 @@ def run_bt(year, pred):
                         momentum = min(abs(raw), 1.0)
                         exit_score = 1.0 - momentum
                         if exit_score > cfg.PEAK_HARVEST_MOMENTUM_THRESHOLD:
-                            exit_now = True
-                            exit_reason = "momentum_decay"
+                            exit_now = True; exit_reason = "momentum_decay"
 
-            # 4. ML reversal (always checked if not already in hold)
             if not exit_now and not ml_hold:
                 if not np.isnan(pb_d[j]) and not np.isnan(pb_u[j]):
                     if entry_dir == "BUY" and pb_d[j] >= cfg.ML_BIAS_OVERRIDE_THRESHOLD:
-                        exit_now = True
-                        exit_reason = "ml_reversal"
+                        exit_now = True; exit_reason = "ml_reversal"
                     elif entry_dir == "SELL" and pb_u[j] >= cfg.ML_BIAS_OVERRIDE_THRESHOLD:
-                        exit_now = True
-                        exit_reason = "ml_reversal"
+                        exit_now = True; exit_reason = "ml_reversal"
 
-            # 5. Max hold (always checked)
             if not exit_now and bars_held >= TRADE_MAX_BARS:
-                exit_now = True
-                exit_reason = "max_hold"
+                exit_now = True; exit_reason = "max_hold"
 
             if exit_now:
                 bal += prof
+                event_prof = prof
                 if prof > 0: wins += 1
                 exit_reasons[exit_reason] = exit_reasons.get(exit_reason, 0) + 1
                 daily_pnl += prof
                 meta.record_trade(prof, abs(h1_bias[h1_idx_map[i]]) if abs(h1_bias[h1_idx_map[i]]) > 0 else 0.5)
+                if first_event is None:
+                    first_event = {
+                        "dir": entry_dir, "entry": ep, "exit": fp,
+                        "sub_trades": actual_trades, "lot_per_trade": n,
+                        "total_lots": n * actual_trades,
+                        "bars": j - i, "profit": prof, "reason": exit_reason,
+                        "ts": ts_i, "bal_before": bal - prof, "override": was_overridden,
+                        "session": ts_i.hour,
+                    }
                 break
         else:
             fb = m5.iloc[min(i + TRADE_MAX_BARS, len(m5) - 1)]
             fp = float(fb["close"])
-            prof = (fp - ep) * CS * n if entry_dir == "BUY" else (ep - fp) * CS * n
+            prof = (fp - ep) * CS * n * actual_trades if entry_dir == "BUY" else (ep - fp) * CS * n * actual_trades
             bal += prof
+            event_prof = prof
             exit_reasons["max_hold"] = exit_reasons.get("max_hold", 0) + 1
             if prof > 0: wins += 1
             daily_pnl += prof
             meta.record_trade(prof, abs(h1_bias[h1_idx_map[i]]) if abs(h1_bias[h1_idx_map[i]]) > 0 else 0.5)
+            if first_event is None:
+                first_event = {
+                    "dir": entry_dir, "entry": ep, "exit": fp,
+                    "sub_trades": actual_trades, "lot_per_trade": n,
+                    "total_lots": n * actual_trades,
+                    "bars": TRADE_MAX_BARS, "profit": prof, "reason": "max_hold",
+                    "ts": ts_i, "bal_before": bal - prof, "override": was_overridden,
+                    "session": ts_i.hour,
+                }
 
         peak_bal = max(peak_bal, bal)
         dd = max(dd, peak_bal - bal)
-
         bal = max(bal, 0.01)
         meta.update(bal, {"bias": "BULLISH" if h1_bias[h1_idx_map[i]] == 1 else "BEARISH",
                           "strength": abs(h1_bias[h1_idx_map[i]]) if abs(h1_bias[h1_idx_map[i]]) > 0 else 0.5})
 
     elapsed = time.time() - t0
-    wr = (wins / total * 100) if total else 0
-    pf = wins / max(1, total - wins) if (total - wins) > 0 else float("inf")
+    wr = (wins / total_events * 100) if total_events else 0
+    pf = wins / max(1, total_events - wins) if (total_events - wins) > 0 else float("inf")
     print()
     print(f"{'='*60}")
-    print(f"  2025 ML Override + ML Hold Backtest Results")
+    print(f"  Live Config Backtest — {year}")
     print(f"{'='*60}")
-    print(f"  Total trades:    {total}")
+    print(f"  Events:          {total_events}")
+    print(f"  Sub-trades:      {total_sub_trades} (avg {total_sub_trades/max(1,total_events):.1f}/event)")
     print(f"  Wins:            {wins}")
-    print(f"  Losses:          {total - wins}")
+    print(f"  Losses:          {total_events - wins}")
     print(f"  Win rate:        {wr:.1f}%")
     print(f"  Profit factor:   {pf:.2f}")
     print(f"  Net PnL:         ${bal - 20:>+8.2f}")
     print(f"  Final balance:   ${bal:.2f}")
     print(f"  Max drawdown:    ${dd:.2f}")
     print(f"  ML overrides:    {total_overrides}")
-
+    if first_event:
+        print(f"\n  First event:")
+        print(f"    Direction:     {first_event['dir']}")
+        print(f"    Entry:         ${first_event['entry']:.2f} at {first_event['ts']} (UTC+{first_event['session']})")
+        print(f"    Exit:          ${first_event['exit']:.2f}")
+        print(f"    Sub-trades:    {first_event['sub_trades']}")
+        print(f"    Lot/trade:     {first_event['lot_per_trade']:.4f}")
+        print(f"    Total lots:    {first_event['total_lots']:.4f}")
+        print(f"    Hold:          {first_event['bars']} bars ({first_event['bars']*5} min)")
+        print(f"    Profit:        ${first_event['profit']:.2f}")
+        print(f"    Exit reason:   {first_event['reason']}")
+        print(f"    ML Override:   {first_event['override']}")
+        bal_after = first_event['bal_before'] + first_event['profit']
+        print(f"    Bal before:    ${first_event['bal_before']:.2f}")
+        print(f"    Bal after:     ${bal_after:.2f} (+{first_event['profit']/first_event['bal_before']*100:.1f}%)")
     print(f"  Runtime:         {elapsed:.1f}s")
     print(f"{'='*60}")
     print(f"  Exit reasons:    {exit_reasons}")
     print(f"  Meta regime:     {meta.regime}")
     print(f"  Meta threshold:  {meta.current_threshold:.3f}")
     print(f"  Meta lot mult:   {meta.current_lot_mult}")
-    return total, wr, pf, bal - 20, dd, total_overrides, elapsed
-
+    return total_events, total_sub_trades, wr, pf, bal - 20, dd, total_overrides, elapsed
 
 if __name__ == "__main__":
     pred = DirectionPredictor.load("models/direction_xgb_m5.joblib")
     print("Model loaded.\n")
-    run_bt(2025, pred)
+    run_bt(2023, pred)
