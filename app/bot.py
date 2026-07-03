@@ -830,21 +830,12 @@ class Bot:
             self.state = self.STATES["IDLE"]
             return
 
-        # Margin-aware lot sizing — reduce until it fits available margin
+        # Margin check — ensure at least 1 trade fits, then fire sequentially
         margin_rate = fresh_info.get("margin_rate", 0.05)
         free_margin = account.get("free_margin", 0)
-        if max_trades > 1:
-            single_margin = lot * current_price * margin_rate * 1
-            if free_margin < single_margin * max_trades and free_margin >= single_margin:
-                self.logger.info(
-                    f"Reducing max_trades from {max_trades} to 1 "
-                    f"(margin: ${free_margin:.2f} available, "
-                    f"${single_margin * max_trades:.2f} needed for {max_trades})"
-                )
-                max_trades = 1
-        est_margin = lot * current_price * margin_rate * max_trades
-        if free_margin < est_margin:
-            max_lot_by_margin = free_margin * 0.9 / (current_price * margin_rate * max_trades)
+        single_margin = lot * current_price * margin_rate * 1
+        if free_margin < single_margin:
+            max_lot_by_margin = free_margin * 0.9 / (current_price * margin_rate * 1)
             vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
             max_lot_by_margin = round(max_lot_by_margin / vol_step) * vol_step
             max_lot_by_margin = max(fresh_info.get("volume_min", cfg.MIN_LOT), max_lot_by_margin)
@@ -852,14 +843,14 @@ class Bot:
                 self.logger.info(
                     f"Reducing lot from {lot:.2f} to {max_lot_by_margin:.2f} "
                     f"(margin: ${free_margin:.2f} available, "
-                    f"${est_margin:.2f} needed)"
+                    f"${single_margin:.2f} needed)"
                 )
                 lot = max_lot_by_margin
-            est_margin = lot * current_price * margin_rate * max_trades
-            if free_margin < est_margin:
+                single_margin = lot * current_price * margin_rate * 1
+            if free_margin < single_margin:
                 self.logger.warning(
                     f"Entry blocked: insufficient margin "
-                    f"(est ${est_margin:.2f} needed, ${free_margin:.2f} available)"
+                    f"(est ${single_margin:.2f} needed, ${free_margin:.2f} available)"
                 )
                 self.state = self.STATES["IDLE"]
                 return
@@ -879,13 +870,24 @@ class Bot:
             if not can_add:
                 break
 
+            # Recheck margin before each subsequent trade
+            if i > 0:
+                acct = self.client.get_account_info()
+                fm = acct.get("free_margin", 0) if acct else 0
+                if fm < single_margin:
+                    self.logger.info(
+                        f"Margin exhausted after {i} trade(s) "
+                        f"(${fm:.2f} < ${single_margin:.2f} needed for next)"
+                    )
+                    break
+
             ticket = await self.trade_executor.open_market(
                 self.symbol, direction, lot
             )
             if ticket is not None:
                 any_opened = True
                 self.risk_manager.record_entry()
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(0.3)
             else:
                 break
 
