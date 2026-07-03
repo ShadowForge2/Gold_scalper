@@ -47,7 +47,7 @@ COMMENT = _env_str("COMMENT", "Gold Scalper")
 # Lot sizing
 LOT_SIZE = _env_float("LOT_SIZE", 0.01)
 MIN_LOT = _env_float("MIN_LOT", 0.01)
-MAX_LOT = _env_float("MAX_LOT", 1.0)
+MAX_LOT = 1.0
 LOT_STEP = _env_float("LOT_STEP", 0.01)
 LOT_MULTIPLIER = _env_int("LOT_MULTIPLIER", 5)
 
@@ -153,6 +153,8 @@ ADAPTIVE_CONF_WINDOW = _env_int("ADAPTIVE_CONF_WINDOW", 100)
 ADAPTIVE_CONF_P_LOW = _env_int("ADAPTIVE_CONF_P_LOW", 60)
 ADAPTIVE_CONF_P_NORM = _env_int("ADAPTIVE_CONF_P_NORM", 40)
 ADAPTIVE_CONF_P_HIGH = _env_int("ADAPTIVE_CONF_P_HIGH", -1)  # -1 = no filter
+
+ML_OVERRIDE_MAX_PER_SESSION = _env_int("ML_OVERRIDE_MAX_PER_SESSION", 20)
 
 # Aggressive sizing (score-based lot boost)
 AGGRESSIVE_SIZING_ENABLED = _env_bool("AGGRESSIVE_SIZING_ENABLED", True)
