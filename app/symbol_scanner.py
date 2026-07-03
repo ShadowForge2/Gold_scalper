@@ -84,13 +84,13 @@ class SymbolScanner:
                 m1_idx = m1_data.set_index("time")
                 has_bid_ask_m1 = "high_ask" in m1_idx.columns
                 if has_bid_ask_m1:
-                    h1_agg = m1_idx.resample("1H").agg({
+                    h1_agg = m1_idx.resample("1h").agg({
                         "high_ask": "max", "low_ask": "min",
                         "high_bid": "max", "low_bid": "min",
                         "high": "max", "low": "min",
                     }).dropna()
                 else:
-                    h1_agg = m1_idx.resample("1H").agg({
+                    h1_agg = m1_idx.resample("1h").agg({
                         "high": "max", "low": "min",
                     }).dropna()
                 if len(h1_agg) >= 2:
