@@ -899,7 +899,7 @@ class Bot:
 
         if self.position_manager.in_event or any_opened:
             self.state = self.STATES["IN_TRADE"]
-            if self.position_manager._event_start_ts is None:
+            if any_opened:
                 self.position_manager._event_start_ts = time.time()
             open_cnt = self.position_manager.open_count or max_trades
             self.logger.info(
@@ -943,6 +943,7 @@ class Bot:
             pass
 
     def _enter_cooldown(self):
+        self.position_manager._event_start_ts = None
         self.state = self.STATES["COOLDOWN"]
         mult = 1 + self.risk_manager.consecutive_losses
         duration = self.risk_manager.cooldown_seconds * mult

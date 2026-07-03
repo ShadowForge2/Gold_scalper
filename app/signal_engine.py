@@ -64,12 +64,14 @@ class SignalEngine:
         except Exception:
             return None
 
-    def _get_ml_direction(self, m1_data: pd.DataFrame, expected_direction: str = None) -> Optional[str]:
+    def _get_ml_direction(self, m1_data: pd.DataFrame = None, expected_direction: str = None, features: pd.DataFrame = None) -> Optional[str]:
         """Use ML model to predict trade viability. Returns 'BUY', 'SELL', or None.
         - If SL/TP model available: checks if expected direction will hit TP before SL
         - Falls back to direction model: checks if price direction matches expected
+        - Accepts pre-computed `features` to avoid redundant _get_features calls.
         """
-        features = self._get_features(m1_data)
+        if features is None and m1_data is not None:
+            features = self._get_features(m1_data)
         if features is None or len(features) == 0:
             return None
 
@@ -232,14 +234,15 @@ class SignalEngine:
 
         # ML bias override: if ML confidently predicts opposite direction, trust ML
         ml_override = False
+        ml_features = None
         if (self._direction_predictor is not None or self._slt_predictor is not None) and _HAS_ML:
             today = datetime.utcnow().day
             if today != self._ml_override_day:
                 self._ml_override_count = 0
                 self._ml_override_day = today
-            if self._ml_override_count < 20:
-                ml_features = self._get_features(m1_data)
-                if ml_features is not None and len(ml_features) > 0:
+            ml_features = self._get_features(m1_data)
+            if ml_features is not None and len(ml_features) > 0:
+                if self._ml_override_count < 20:
                     ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
                     if ml_dir is not None and ml_dir != direction:
                         direction = ml_dir
@@ -319,7 +322,7 @@ class SignalEngine:
 
         # ML direction validation (skip if already overridden by ML)
         if not ml_override and (self._direction_predictor is not None or self._slt_predictor is not None) and _HAS_ML:
-            ml_direction = self._get_ml_direction(m1_data, expected_direction=direction)
+            ml_direction = self._get_ml_direction(expected_direction=direction, features=ml_features)
             if ml_direction is None:
                 return self._reject(
                     "ml_confidence_too_low",
