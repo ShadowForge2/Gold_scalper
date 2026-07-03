@@ -218,8 +218,9 @@ class Bot:
                 self.logger.warning(
                     f"Grace period expired, force-closing {self.position_manager.open_count} position(s)"
                 )
-                for pos_data in self.trade_executor.close_all_bot_positions():
-                    self.position_manager.note_closed(pos_data)
+                if hasattr(self, 'trade_executor'):
+                    for pos_data in self.trade_executor.close_all_bot_positions():
+                        self.position_manager.note_closed(pos_data)
                 break
             await asyncio.sleep(0.5)
         self._running = False
