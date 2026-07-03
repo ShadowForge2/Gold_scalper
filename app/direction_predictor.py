@@ -122,8 +122,9 @@ def compute_features(df: pd.DataFrame, h1_df: Optional[pd.DataFrame] = None) -> 
     features["volatility_ratio"] = short_vol / sess_vol.replace(0, np.nan)
 
     candle_range = highs - lows
-    features["close_position"] = np.where(
-        candle_range > 0, (closes - lows) / candle_range, 0.5
+    features["close_position"] = np.divide(
+        closes - lows, candle_range, where=candle_range > 0,
+        out=np.full_like(closes, 0.5, dtype=float)
     )
 
     features["return_vol_ratio"] = (
