@@ -192,7 +192,7 @@ class MetaStrategy:
         if regime == "CHOPPY" or wr < 0.3:
             return max(1, self.base_trades_per_event // 2)
         if regime == "TRENDING_STRONG" and wr >= 0.45:
-            return min(self.base_trades_per_event + 2, 5)
+            return max(self.base_trades_per_event + 2, 20)
 
         return self.base_trades_per_event
 
