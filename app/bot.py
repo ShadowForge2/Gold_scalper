@@ -350,7 +350,7 @@ class Bot:
                 return
 
         market_open = cfg.is_market_open()
-        if market_open:
+        if market_open and self.state != self.STATES["MARKET_CLOSED"]:
             dyn = self._check_market_dynamic()
             if dyn is not None:
                 market_open = dyn
