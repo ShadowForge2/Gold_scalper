@@ -833,8 +833,8 @@ class Bot:
             return
 
         if fresh_info.get("market_status") != "TRADEABLE":
-            self.logger.warning(f"Entry blocked: market {fresh_info.get('market_status')}")
-            self.state = self.STATES["IDLE"]
+            self.logger.warning(f"Entry blocked: market {fresh_info.get('market_status')}, pausing")
+            self.state = self.STATES["MARKET_CLOSED"]
             return
 
         account = self.client.get_account_info()
