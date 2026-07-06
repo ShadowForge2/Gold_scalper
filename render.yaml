@@ -38,7 +38,7 @@ services:
       - key: MAX_DAILY_LOSS_USD
         value: "10.00"
       - key: MAX_EVENT_LOSS_USD
-        value: "5.00"
+        value: "8.00"
       - key: MAX_TRADES_PER_EVENT
         value: "10"
       - key: MAX_TRADES_PER_SESSION
