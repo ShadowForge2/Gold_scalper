@@ -365,8 +365,12 @@ class Bot:
             else:
                 return
         elif self.state == self.STATES["MARKET_CLOSED"]:
-            self.logger.info("Market reopened, resuming normal operation")
-            self.state = self.STATES["IDLE"]
+            dyn = self._check_market_dynamic()
+            if dyn is True:
+                self.logger.info("Market reopened, resuming normal operation")
+                self.state = self.STATES["IDLE"]
+            else:
+                return
 
         self._ml_heartbeat_ticks += 1
         if self._ml_heartbeat_ticks >= 100 and self._direction_predictor is not None:
