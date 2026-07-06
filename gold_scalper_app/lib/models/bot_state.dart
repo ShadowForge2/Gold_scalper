@@ -55,8 +55,6 @@ class BotState {
     final account = json['account'] as Map<String, dynamic>? ?? {};
     final bias = bot['bias'] as Map<String, dynamic>? ?? {};
     final positions = bot['positions'] as Map<String, dynamic>? ?? {};
-    final risk = bot['risk'] as Map<String, dynamic>? ?? {};
-    final signal = bot['signal'] as Map<String, dynamic>? ?? {};
 
     final isRunning = json['running'] == true;
     final hasError = account['error'] != null;

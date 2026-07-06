@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import '../../theme.dart';
 import '../../widgets/holographic_overlay.dart';
-import '../../widgets/ui/haptic.dart';
+import '../../providers/device_provider.dart';
+import '../../services/security_service.dart';
 import '../home_screen.dart';
 
 class WelcomeScreen extends StatefulWidget {
@@ -26,13 +30,16 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     curve: Curves.easeIn,
   );
 
-  static const _title = 'Quantora FX Pro';
+  static const _title = 'QuantoraFX';
   int _typewriterChars = 0;
   Timer? _twTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<DeviceProvider>().markWelcomeShown();
+    });
     _twTimer = Timer.periodic(const Duration(milliseconds: 60), (_) {
       if (_typewriterChars < _title.length) {
         setState(() => _typewriterChars++);
@@ -41,6 +48,93 @@ class _WelcomeScreenState extends State<WelcomeScreen>
         _taglineCtrl.forward();
       }
     });
+  }
+
+  Future<bool> _hasInternet() async {
+    try {
+      final result = await InternetAddress.lookup('google.com')
+          .timeout(const Duration(seconds: 3));
+      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _onGetStarted(BuildContext context) async {
+    HapticFeedback.lightImpact();
+
+    if (SecurityService.isJailbroken()) {
+      if (!context.mounted) return;
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1A2E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.security, color: Colors.redAccent, size: 22),
+              SizedBox(width: 10),
+              Text('Security Risk',
+                  style: TextStyle(color: Colors.white, fontSize: 16)),
+            ],
+          ),
+          content: const Text(
+            'This device appears to be rooted or jailbroken.\n'
+            'Trading on a compromised device is not allowed.',
+            style: TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('EXIT',
+                  style: TextStyle(color: Color(0xFFD4AF37))),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    if (!await _hasInternet()) {
+      if (!context.mounted) return;
+      await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1A2E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.wifi_off, color: Colors.orange, size: 22),
+              SizedBox(width: 10),
+              Text('No Connection',
+                  style: TextStyle(color: Colors.white, fontSize: 16)),
+            ],
+          ),
+          content: const Text(
+            'Internet connection required to access the dashboard.\n'
+            'Please connect and try again.',
+            style: TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('TRY AGAIN',
+                  style: TextStyle(color: Color(0xFFD4AF37))),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const HomeScreen()),
+    );
   }
 
   @override
@@ -140,13 +234,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                           ],
                         ),
                         child: ElevatedButton(
-                          onPressed: hapt(() {
-                            Navigator.of(context).pushReplacement(
-                              MaterialPageRoute(
-                                builder: (_) => const HomeScreen(),
-                              ),
-                            );
-                          }),
+                          onPressed: () => _onGetStarted(context),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: kGold,
                             foregroundColor: Colors.black,

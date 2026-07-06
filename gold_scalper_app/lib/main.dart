@@ -106,7 +106,7 @@ class AppEntry extends StatelessWidget {
             ),
           );
         }
-        if (device.firstLaunch) {
+        if (device.shouldShowWelcome) {
           return const WelcomeScreen();
         }
         return const HomeScreen();

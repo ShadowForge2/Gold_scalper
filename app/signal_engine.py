@@ -183,7 +183,7 @@ class SignalEngine:
                     if prob_up >= exit_threshold:
                         result = "exit"
                 if self._logger:
-                    now_t = time.time()
+                    now_t = _time.time()
                     if result != getattr(self, '_last_ml_exit_result', None) or now_t - getattr(self, '_last_ml_exit_log_ts', 0) > 60:
                         self._logger.info(f"[ML] Exit signal: {result} | {trade_direction} "
                                           f"DOWN={prob_down:.3f} UP={prob_up:.3f} "

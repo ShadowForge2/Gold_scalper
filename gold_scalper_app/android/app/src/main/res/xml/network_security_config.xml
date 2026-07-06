@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">gold-scalper-qyhg.onrender.com</domain>
+        <domain includeSubdomains="true">gold-scalper.onrender.com</domain>
+        <domain includeSubdomains="true">api-capital.backend-capital.com</domain>
+        <domain includeSubdomains="true">demo-api-capital.backend-capital.com</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>
