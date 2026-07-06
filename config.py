@@ -131,6 +131,10 @@ STRUCTURE_TIMEFRAMES = [16385, 16408]
 MARKET_OPEN_SUNDAY_UTC = _env_int("MARKET_OPEN_SUNDAY_UTC", 23)
 MARKET_CLOSE_FRIDAY_UTC = _env_int("MARKET_CLOSE_FRIDAY_UTC", 21)
 
+# Daily close window (XAUUSD closes 20:59-22:00 UTC Mon-Thu)
+MARKET_DAILY_CLOSE_START = _env_float("MARKET_DAILY_CLOSE_START", 20.9833)  # 20:59 UTC
+MARKET_DAILY_CLOSE_END = _env_float("MARKET_DAILY_CLOSE_END", 22.0)  # 22:00 UTC
+
 
 # Meta-strategy (adaptive threshold / regime switching)
 META_ENABLED = _env_bool("META_ENABLED", True)
@@ -181,4 +185,8 @@ def is_market_open() -> bool:
         return h >= MARKET_OPEN_SUNDAY_UTC
     if wd == 4:
         return h < MARKET_CLOSE_FRIDAY_UTC
-    return 0 <= wd <= 3
+    if 0 <= wd <= 3:
+        if MARKET_DAILY_CLOSE_START <= h < MARKET_DAILY_CLOSE_END:
+            return False
+        return True
+    return False

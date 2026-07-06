@@ -949,6 +949,17 @@ class Bot:
                 self.risk_manager.record_entry(ml_override=signal.get('ml_override', False))
                 await asyncio.sleep(0.3)
             else:
+                err_detail = ""
+                err_attr = getattr(self.client, "last_order_error", None)
+                if err_attr is not None:
+                    try:
+                        err_detail = err_attr() if callable(err_attr) else str(err_attr)
+                    except Exception:
+                        pass
+                if "currently closed" in err_detail.lower():
+                    self.logger.info("Market closed detected, pausing until reopen")
+                    self.state = self.STATES["MARKET_CLOSED"]
+                    return
                 break
 
         # Re-read balance and refresh positions after trades

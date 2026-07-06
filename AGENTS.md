@@ -189,3 +189,14 @@ Scenario C preserves 98.5% of baseline profit vs B's 90.9%. Override trades shou
 - `bot.py:949`: passes `signal.get('ml_override', False)` to `record_entry()`
 
 **Relevant files**: `_bt_session_comparison.py` — reusable comparison script
+
+### Session 2026-07-06b: Market Close Not Detected
+**Symptoms**: Bot repeatedly tries to enter after market close, spamming `"GOLD is currently closed"` errors from Capital.com API. `is_market_open()` returned `True` on Mon-Thu at 20:59 UTC.
+
+**Root cause** (two issues):
+1. `config.py:is_market_open()` only checked Friday close and Sunday open — ignored the **daily close window** (20:59-22:00 UTC Mon-Thu) that gold has every weekday.
+2. Bot had no fallback when Capital.com rejected the order with "currently closed" — it just logged the error and retried next tick.
+
+**Fix** (2 files):
+- `config.py`: Added `MARKET_DAILY_CLOSE_START` (20:59) and `MARKET_DAILY_CLOSE_END` (22:00) env vars; `is_market_open()` now returns `False` during the daily close window on Mon-Thu.
+- `bot.py:947-962`: When `open_market` fails, checks `client.last_order_error` for "currently closed" and immediately sets `state = MARKET_CLOSED` instead of retrying.
