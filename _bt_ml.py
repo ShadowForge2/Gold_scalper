@@ -175,8 +175,105 @@ def run_bt(year, pred):
     print(f"{year}: {total:>4} tr WR={wr:>5.1f}% PF={pf:>5.2f} PnL=${bal-20:>+8.2f} DD=${dd:>8.2f} Bal=${bal:>8.2f} [{elapsed:.0f}s]")
     return total, wr, bal, dd
 
-if __name__ == "__main__":
+def analyze_2025():
     pred = DirectionPredictor.load("models/direction_xgb_m5.joblib")
-    print("Model loaded.\n")
-    for y in [2022, 2023, 2024, 2025]:
-        run_bt(y, pred)
+    client = DukascopyClient()
+    m1 = client.download_year(2025)
+    m1 = m1.sort_values("time").drop_duplicates(subset="time")
+    m5 = client.resample_to(m1, 5).set_index("time")
+    h1 = client.resample_to(m1, 16385).set_index("time")
+    m5 = m5[~m5.index.duplicated(keep="first")]
+    h1 = h1[~h1.index.duplicated(keep="first")]
+
+    print(f"Features...", flush=True)
+    ft = compute_features(m5, h1)
+    X = ft[ft.columns.intersection(pred._feature_cols)]
+    for c in pred._feature_cols:
+        if c not in X.columns: X[c] = 0.0
+    X = X[pred._feature_cols]
+    X_aligned = X.reindex(m5.index, method="ffill")
+    ml_mask = ~X_aligned.isna().any(axis=1)
+    ml_dir = np.full(len(m5), None, dtype=object)
+    if ml_mask.any():
+        valid_idx = np.where(ml_mask)[0]
+        probs = pred.model.predict_proba(X_aligned[ml_mask].values)
+        pb_u = np.array([p[1] for p in probs])
+        pb_d = np.array([p[0] for p in probs])
+        for k, idx in enumerate(valid_idx):
+            if pb_u[k] >= 0.55: ml_dir[idx] = "BUY"
+            elif pb_d[k] >= 0.55: ml_dir[idx] = "SELL"
+
+    h1_bias = compute_bias_vectorized(h1)
+    h1_idx_map = h1.index.get_indexer(m5.index, method="ffill")
+    h1_idx_map = np.clip(h1_idx_map, 0, len(h1_bias) - 1)
+    m5_bias = h1_bias[h1_idx_map]
+    m5_bias_arr = np.full(len(m5_bias), None, dtype=object)
+    m5_bias_arr[m5_bias == 1] = "BUY"
+    m5_bias_arr[m5_bias == -1] = "SELL"
+
+    m5_h1h = h1["high"].values[h1_idx_map]
+    m5_h1l = h1["low"].values[h1_idx_map]
+    m5_h1h = np.where(h1_idx_map > 0, h1["high"].values[h1_idx_map - 1], m5_h1h)
+    m5_h1l = np.where(h1_idx_map > 0, h1["low"].values[h1_idx_map - 1], m5_h1l)
+
+    # Use live-bot sizing: EquityScaler at $20 balance → 0.01 lot * (20/20) * 0.004 cap = 0.01 lot
+    # LOT_MULTIPLIER=5 → 0.05 lot/trade
+    # We'll track PnL per trade using realistic sizes
+    import config as _cfg
+    losses_5plus = 0
+    total_tr = 0
+    max_loss = 0.0
+    all_pnls = []
+
+    for i in range(60, len(m5) - 15):
+        expected = m5_bias_arr[i]
+        if expected is None: continue
+        if ml_dir[i] != expected: continue
+        p = float(m5.iloc[i]["close"])
+        h1h = float(m5_h1h[i]); h1l = float(m5_h1l[i])
+        if h1h <= h1l: continue
+        if expected == "BUY" and p <= h1h: continue
+        if expected == "SELL" and p >= h1l: continue
+        ep = p; total_tr += 1
+        n = max(0.01, 20.0 * 200 / ep / 100)  # full margin
+        n = min(n, 1.0)
+        atr_val = float(m5.iloc[i]["close"]) * 0.002
+        if expected == "BUY":
+            sl = ep - atr_val; tp1 = ep + atr_val * 2; tp2 = ep + atr_val * 4; tp3 = ep + atr_val * 6
+        else:
+            sl = ep + atr_val; tp1 = ep - atr_val * 2; tp2 = ep - atr_val * 4; tp3 = ep - atr_val * 6
+        for j in range(i + 1, min(i + 48, len(m5) - 1)):
+            fb = m5.iloc[j]; fp = float(fb["close"]); fh = float(fb["high"]); fl = float(fb["low"])
+            prof = (fp - ep) * 100 * n if expected == "BUY" else (ep - fp) * 100 * n
+            if expected == "BUY":
+                if fl <= sl: all_pnls.append(prof); break
+                if fp >= tp3: all_pnls.append(prof); break
+                if fp >= tp2: all_pnls.append(prof); break
+                if fp >= tp1: all_pnls.append(prof); break
+            else:
+                if fh >= sl: all_pnls.append(prof); break
+                if fp <= tp3: all_pnls.append(prof); break
+                if fp <= tp2: all_pnls.append(prof); break
+                if fp <= tp1: all_pnls.append(prof); break
+        else:
+            fb = m5.iloc[min(i + 48, len(m5) - 1)]
+            fp = float(fb["close"])
+            prof = (fp - ep) * 100 * n if expected == "BUY" else (ep - fp) * 100 * n
+            all_pnls.append(prof)
+
+    arr = np.array(all_pnls)
+    wins = arr[arr > 0]; losses = arr[arr < 0]
+    losses_5plus = int((arr < -5).sum())
+    max_loss = float(abs(arr[arr < 0].min())) if len(losses) > 0 else 0
+    wr = len(wins)/max(1,len(arr))*100
+    gp = wins.sum() if len(wins)>0 else 0
+    gl = abs(losses.sum()) if len(losses)>0 else 0
+    pf = gp/max(gl,1e-9)
+    print(f"\n2025 ML backtest ({total_tr} trades)")
+    print(f"  WR={wr:.1f}% PF={pf:.2f}")
+    print(f"  Losses >= $5: {losses_5plus}/{total_tr} ({losses_5plus/max(1,total_tr)*100:.1f}%)")
+    print(f"  Max loss: ${max_loss:.2f}")
+    print(f"  With 3-trade event (0.05 lot × 3): $5 loss = ${5/0.15/100:.2f}/oz move")
+
+if __name__ == "__main__":
+    analyze_2025()

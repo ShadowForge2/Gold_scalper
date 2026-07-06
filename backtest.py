@@ -17,6 +17,14 @@ from app.bias_engine import BiasEngine
 from app.risk_manager import EquityScaler
 from app.meta_strategy import MetaStrategy
 from app.capital_client import CapitalClient
+try:
+    from app.direction_predictor import DirectionPredictor
+    _ML_AVAILABLE = True
+    print("ML models available", flush=True)
+except Exception:
+    DirectionPredictor = None
+    _ML_AVAILABLE = False
+    print("ML models NOT available", flush=True)
 
 BACKTEST_BROKER = "DUKASCOPY" # "CAPITAL", "YAHOO", "YAHOO_H1", or "DUKASCOPY"
 BACKTEST_YEAR = 2025          # Full year H1 validation
@@ -125,7 +133,7 @@ def _load_from_capital():
 
 
 
-def _pre_compute(sig_df, h1):
+def _pre_compute(sig_df, h1, direction_predictor=None):
     N = len(sig_df)
     print(f"Loaded {N} signal candles, {len(h1)} H1 candles", flush=True)
 
@@ -158,7 +166,29 @@ def _pre_compute(sig_df, h1):
             biases[idx] = prev_bias
 
     print("Pre-computing entry signals...", flush=True)
-    signal_engine = SignalEngine()
+    signal_engine = SignalEngine(direction_predictor=direction_predictor)
+
+    # Pre-compute ML features for speed
+    precomputed_features = None
+    if direction_predictor is not None:
+        print("  Pre-computing ML features...", flush=True)
+        try:
+            from app.direction_predictor import compute_features as _cf
+            sig_idx = sig_df.set_index("time") if "time" in sig_df.columns else sig_df
+            h1_idx = h1.set_index("time") if "time" in h1.columns else h1
+            m5 = sig_idx
+            h1_resampled = h1_idx
+            ft_all = _cf(m5, h1_resampled)
+            precomputed_features = [None] * N
+            for i in range(N):
+                ts = sig_df["time"].iloc[i]
+                if ts in ft_all.index:
+                    precomputed_features[i] = ft_all.loc[[ts]]
+            signal_engine._precomputed_features = precomputed_features
+            print(f"  Pre-computed {sum(1 for f in precomputed_features if f is not None)} feature rows", flush=True)
+        except Exception as e:
+            print(f"  Feature pre-compute failed: {e}", flush=True)
+
     sig_signal = [None] * N
     sig_score = np.zeros(N)
 
@@ -176,7 +206,8 @@ def _pre_compute(sig_df, h1):
         window = sig_df.iloc[max(0, idx - 50):idx]
         sig = signal_engine.evaluate(window, bsum, current_price,
                                      h1_high=float(h1_high_arr[idx]),
-                                     h1_low=float(h1_low_arr[idx]))
+                                     h1_low=float(h1_low_arr[idx]),
+                                     idx=idx)
         if sig:
             sig_signal[idx] = sig
             sig_score[idx] = sig["score"]
@@ -265,7 +296,7 @@ def _load_from_yahoo_h1():
     h1 = _flatten_yf(h1_raw)
     return _pre_compute_h1(h1)
 
-def _load_from_dukascopy():
+def _load_from_dukascopy(direction_predictor=None):
     from app.dukascopy_client import DukascopyClient
 
     h1_fr = BACKTEST_START - timedelta(days=BIAS_WARMUP_DAYS)
@@ -289,7 +320,7 @@ def _load_from_dukascopy():
     h1.reset_index(drop=True, inplace=True)
     m5.reset_index(drop=True, inplace=True)
 
-    return _pre_compute(m5, h1)
+    return _pre_compute(m5, h1, direction_predictor)
 
 def _pre_compute_h1(h1):
     N = len(h1)
@@ -357,6 +388,13 @@ def _pre_compute_h1(h1):
     }
 
 def load_and_compute():
+    direction_predictor = None
+    if _ML_AVAILABLE:
+        try:
+            direction_predictor = DirectionPredictor.load(cfg.ML_MODEL_PATH)
+            print("DirectionPredictor loaded", flush=True)
+        except Exception as e:
+            print(f"Failed to load DirectionPredictor: {e}", flush=True)
     if BACKTEST_BROKER == "CAPITAL":
         return _load_from_capital()
     elif BACKTEST_BROKER == "YAHOO":
@@ -364,7 +402,7 @@ def load_and_compute():
     elif BACKTEST_BROKER == "YAHOO_H1":
         return _load_from_yahoo_h1()
     elif BACKTEST_BROKER == "DUKASCOPY":
-        return _load_from_dukascopy()
+        return _load_from_dukascopy(direction_predictor)
     else:
         print(f"Unknown BACKTEST_BROKER: {BACKTEST_BROKER}")
         return None

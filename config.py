@@ -49,7 +49,7 @@ LOT_SIZE = _env_float("LOT_SIZE", 0.01)
 MIN_LOT = _env_float("MIN_LOT", 0.01)
 MAX_LOT = 1.0
 LOT_STEP = _env_float("LOT_STEP", 0.01)
-LOT_MULTIPLIER = _env_int("LOT_MULTIPLIER", 5)
+LOT_MULTIPLIER = min(_env_int("LOT_MULTIPLIER", 2), 3)
 
 # Minimum balance to start trading
 MIN_BALANCE = _env_float("MIN_BALANCE", 10.0)

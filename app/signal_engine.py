@@ -42,8 +42,13 @@ class SignalEngine:
         }
         return None
 
-    def _get_features(self, m1_data: pd.DataFrame) -> Optional[pd.DataFrame]:
-        """Resample M1 to M5+H1, compute features. Returns feature DataFrame or None."""
+    def _get_features(self, m1_data: pd.DataFrame = None, idx: int = None) -> Optional[pd.DataFrame]:
+        if hasattr(self, '_precomputed_features') and self._precomputed_features is not None and idx is not None:
+            feat = self._precomputed_features[idx]
+            if feat is not None and isinstance(feat, pd.DataFrame) and len(feat) > 0:
+                return feat
+        if m1_data is None:
+            return None
         try:
             if "time" in m1_data.columns:
                 m1_idx = m1_data.set_index("time")
@@ -202,7 +207,8 @@ class SignalEngine:
 
     def evaluate(self, m1_data: pd.DataFrame, bias: Dict,
                  current_price: float,
-                 h1_high: float = None, h1_low: float = None) -> Optional[Dict]:
+                 h1_high: float = None, h1_low: float = None,
+                 idx: int = None) -> Optional[Dict]:
 
         if m1_data is None or len(m1_data) < 10:
             return self._reject(
@@ -249,7 +255,7 @@ class SignalEngine:
             if today != self._ml_override_day:
                 self._ml_override_count = 0
                 self._ml_override_day = today
-            ml_features = self._get_features(m1_data)
+            ml_features = self._get_features(m1_data, idx=idx)
             if ml_features is not None and len(ml_features) > 0:
                 ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
                 if ml_dir is not None and ml_dir != direction:
