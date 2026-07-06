@@ -657,11 +657,12 @@ class Bot:
         )
         if not event_ok:
             self.logger.warning(f"Event stop: {event_msg}")
+            closed = self.trade_executor.close_all_bot_positions()
             realized_pnl = 0.0
-            for pos_data in self.trade_executor.close_all_bot_positions():
+            for pos_data in closed:
                 self.position_manager.note_closed(pos_data)
                 realized_pnl += pos_data.get("profit", 0)
-            self.risk_manager.record_exit(realized_pnl)
+            self.risk_manager.record_exit(realized_pnl, len(closed))
             if self.meta:
                 self.meta.record_trade(realized_pnl, self._bias_summary.get("strength", 0))
                 self.meta.update(balance, self._bias_summary)
@@ -751,11 +752,12 @@ class Bot:
             self.logger.signal(
                 f"Exit signal: score={exit_score:.2f} reason={reason}"
             )
+            closed = self.trade_executor.close_all_bot_positions()
             realized_pnl = 0.0
-            for pos_data in self.trade_executor.close_all_bot_positions():
+            for pos_data in closed:
                 self.position_manager.note_closed(pos_data)
                 realized_pnl += pos_data.get("profit", 0)
-            self.risk_manager.record_exit(realized_pnl)
+            self.risk_manager.record_exit(realized_pnl, len(closed))
             if self.meta:
                 self.meta.record_trade(realized_pnl, self._bias_summary.get("strength", 0))
                 self.meta.update(balance, self._bias_summary)

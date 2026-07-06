@@ -166,10 +166,12 @@ class RiskManager:
         self.event_trades += 1
         self.session_trades += 1
 
-    def record_exit(self, profit: float):
+    def record_exit(self, profit: float, closed_count: int = 0):
         self.last_exit_time = datetime.now()
-        if self.event_trades > 0:
-            self.event_trades -= 1
+        if closed_count > 0:
+            self.event_trades = max(0, self.event_trades - closed_count)
+        elif self.event_trades > 0:
+            self.event_trades = 0
         if profit < 0:
             self.consecutive_losses += 1
         else:
