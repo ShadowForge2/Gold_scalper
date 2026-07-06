@@ -183,9 +183,13 @@ class SignalEngine:
                     if prob_up >= exit_threshold:
                         result = "exit"
                 if self._logger:
-                    self._logger.info(f"[ML] Exit signal: {result} | {trade_direction} "
-                                      f"DOWN={prob_down:.3f} UP={prob_up:.3f} "
-                                      f"hold_thr={hold_threshold} exit_thr={exit_threshold}")
+                    now_t = time.time()
+                    if result != getattr(self, '_last_ml_exit_result', None) or now_t - getattr(self, '_last_ml_exit_log_ts', 0) > 60:
+                        self._logger.info(f"[ML] Exit signal: {result} | {trade_direction} "
+                                          f"DOWN={prob_down:.3f} UP={prob_up:.3f} "
+                                          f"hold_thr={hold_threshold} exit_thr={exit_threshold}")
+                        self._last_ml_exit_result = result
+                        self._last_ml_exit_log_ts = now_t
                 return result
         except Exception as e:
             if self._logger:
@@ -579,15 +583,15 @@ class SignalEngine:
         ml_signal = self._get_ml_exit_signal(ml_features, direction)
         if ml_signal == "exit":
             return True, 0.90, "ml_reversal"
-            if ml_signal == "hold":
-                confidence = entry_score if entry_score is not None else 0.7
-                patience = 1.0 + (1.0 - confidence)
-                trail_trigger = atr * cfg.PEAK_HARVEST_TRAIL_TRIGGER * patience
-                trail_active = peak >= trail_trigger
-                if trail_active and diff > 0 and peak > 0:
-                    pullback = peak - diff
-                    if pullback / peak > cfg.PEAK_HARVEST_TRAIL_RETRACE:
-                        return True, 0.85, "trail_stop"
+        if ml_signal == "hold":
+            confidence = entry_score if entry_score is not None else 0.7
+            patience = 1.0 + (1.0 - confidence)
+            trail_trigger = atr * cfg.PEAK_HARVEST_TRAIL_TRIGGER * patience
+            trail_active = peak >= trail_trigger
+            if trail_active and diff > 0 and peak > 0:
+                pullback = peak - diff
+                if pullback / peak > cfg.PEAK_HARVEST_TRAIL_RETRACE:
+                    return True, 0.85, "trail_stop"
             if bars > cfg.PEAK_HARVEST_MAX_HOLD_BARS:
                 return True, 0.50, "max_hold"
             return False, 0.0, "ml_hold"
