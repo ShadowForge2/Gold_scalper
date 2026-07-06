@@ -834,7 +834,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             due_kobo = 5000  # Min 50 NGN
         if bot_pool:
             bot_pool.add_log(ident, f"Initializing payment of ₦{due_kobo/100:.2f}...", "INFO")
-        result = initialize_payment(data.email, due_kobo, metadata={"identifier": ident}, channels=data.channels)
+        result = await initialize_payment(data.email, due_kobo, metadata={"identifier": ident}, channels=data.channels)
         if result is None:
             if bot_pool:
                 bot_pool.add_log(ident, "Payment gateway error", "ERROR")
@@ -899,15 +899,10 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         sub = await get_subscription(ident, bal)
         due = sub.get("unpaid_fees", sub.get("due_amount", 0))
         amount = float(data.get("amount", due))
-        if amount <= 0:
-            amount = due
-        if amount <= 0:
-            amount = 1.0
-        if amount < 1.0:
-            amount = 1.0
+        amount = max(amount, due, 1.0)
         order_id = f"maxel_{uuid.uuid4().hex[:16]}"
         await _maxelpay_register_order(order_id, ident)
-        result = create_maxelpay_payment(
+        result = await create_maxelpay_payment(
             amount_usd=amount, order_id=order_id,
             description=f"Gold Scalper subscription payment - {ident}",
         )

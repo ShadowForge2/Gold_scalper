@@ -418,7 +418,7 @@ def verify_paystack_webhook(body: bytes, signature: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
-def initialize_payment(email: str, amount_kobo: int, metadata: Dict = None, channels: List[str] = None, currency: str = "NGN") -> Optional[Dict]:
+async def initialize_payment(email: str, amount_kobo: int, metadata: Dict = None, channels: List[str] = None, currency: str = "NGN") -> Optional[Dict]:
     if not PAYSTACK_SECRET:
         return None
     try:
@@ -427,7 +427,8 @@ def initialize_payment(email: str, amount_kobo: int, metadata: Dict = None, chan
             body["metadata"] = metadata
         if channels:
             body["channels"] = channels
-        r = httpx.post(f"{PAYSTACK_BASE}/transaction/initialize", headers=_paystack_headers(), json=body, timeout=15)
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(f"{PAYSTACK_BASE}/transaction/initialize", headers=_paystack_headers(), json=body)
         if r.is_success:
             return r.json().get("data")
     except Exception:
@@ -553,18 +554,28 @@ def _maxelpay_headers() -> Dict:
 def verify_maxelpay_webhook(body: bytes, signature: str) -> bool:
     if not MAXELPAY_API_KEY or not signature:
         return False
-    # Normalize: parse then re-stringify compact to match Node.js JSON.stringify()
+    key = MAXELPAY_API_KEY.encode()
+    # Try compact-normalized (matches Node.js JSON.stringify())
     try:
         normalized = json.dumps(json.loads(body), separators=(',', ':'), ensure_ascii=True)
+        expected = hmac.new(key, normalized.encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(expected, signature):
+            return True
     except Exception:
-        return False
-    expected = hmac.new(MAXELPAY_API_KEY.encode(), normalized.encode(), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature)
+        pass
+    # Fallback: raw body in case MaxelPay signs the exact HTTP body
+    try:
+        expected = hmac.new(key, body, hashlib.sha256).hexdigest()
+        if hmac.compare_digest(expected, signature):
+            return True
+    except Exception:
+        pass
+    return False
 
 
-def create_maxelpay_payment(amount_usd: float, order_id: str, description: str = "",
-                             success_url: str = "", cancel_url: str = "",
-                             callback_url: str = "") -> Optional[Dict]:
+async def create_maxelpay_payment(amount_usd: float, order_id: str, description: str = "",
+                                   success_url: str = "", cancel_url: str = "",
+                                   callback_url: str = "") -> Optional[Dict]:
     if not MAXELPAY_API_KEY:
         return None
     try:
@@ -578,7 +589,8 @@ def create_maxelpay_payment(amount_usd: float, order_id: str, description: str =
             "callbackUrl": callback_url or "https://gold-scalper-qyhg.onrender.com/api/payment/maxelpay/callback",
         }
         headers = _maxelpay_headers()
-        r = httpx.post(f"{MAXELPAY_BASE}/payments/sessions", headers=headers, json=payload, timeout=15)
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(f"{MAXELPAY_BASE}/payments/sessions", headers=headers, json=payload)
         if r.is_success:
             return r.json()
     except Exception:
