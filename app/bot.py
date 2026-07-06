@@ -361,6 +361,7 @@ class Bot:
             elif self.state != self.STATES["MARKET_CLOSED"]:
                 self.logger.info("Market closed, pausing until reopen")
                 self.state = self.STATES["MARKET_CLOSED"]
+                self._last_market_status_check = 0.0
                 return
             else:
                 return
@@ -835,6 +836,7 @@ class Bot:
         if fresh_info.get("market_status") != "TRADEABLE":
             self.logger.warning(f"Entry blocked: market {fresh_info.get('market_status')}, pausing")
             self.state = self.STATES["MARKET_CLOSED"]
+            self._last_market_status_check = 0.0
             return
 
         account = self.client.get_account_info()
