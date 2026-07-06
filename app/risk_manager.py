@@ -105,14 +105,15 @@ class RiskManager:
         self._session_reset_day: Optional[int] = None
 
     def can_enter_trade(self, symbol_info: Dict,
-                        current_time: datetime) -> Tuple[bool, str]:
+                        current_time: datetime,
+                        ml_override: bool = False) -> Tuple[bool, str]:
         now = current_time
 
         if self._session_reset_day != now.day:
             self.session_trades = 0
             self._session_reset_day = now.day
 
-        if self.session_trades >= self.max_trades_per_session:
+        if not ml_override and self.session_trades >= self.max_trades_per_session:
             return False, f"session_trade_limit ({self.session_trades}/{self.max_trades_per_session})"
 
         if self.consecutive_losses >= self.max_consecutive_losses:
@@ -162,9 +163,10 @@ class RiskManager:
         lot = round(lot / step) * step
         return lot
 
-    def record_entry(self):
+    def record_entry(self, ml_override: bool = False):
         self.event_trades += 1
-        self.session_trades += 1
+        if not ml_override:
+            self.session_trades += 1
 
     def record_exit(self, profit: float, closed_count: int = 0):
         self.last_exit_time = datetime.now()

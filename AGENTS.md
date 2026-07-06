@@ -167,3 +167,25 @@ All documented in prior conversation. Key fixes:
 | 9 | `trade_executor.py` | 53-55 | `get_positions()` returns `None` → crash | `or []`, `.get("symbol")` |
 | 10 | `trade_executor.py` | 28-30 | `last_order_error()` called as function but might be property | `callable` guard |
 | 11 | `bot.py` | 553 | `_event_start_ts` access crashes if `position_manager` replaced | `getattr` guard |
+
+### Session 2026-07-06: ML Override Session Limit Bug
+**Discovered**: Live log analysis - ML overrides blocked by `session_trade_limit (12/10)` despite `risk_manager.py:116` already allowing override bypass at entry check.
+
+**Root cause**: `record_entry()` at `risk_manager.py:166` unconditionally incremented `session_trades` for ALL trades (including ML overrides). Even though overrides bypassed the entry check, they consumed session limit slots, starving regular (non-override) trades.
+
+**Backtest validation** (2022-2024, live-config replicated):
+
+| Scenario | Trades | WR | PF | Net PnL | vs Baseline |
+|---|---|---|---|---|---|
+| A (No limit) | 8,103 | 84.1% | 5.31 | +$20,939,953 | baseline |
+| **B (Live current: override bypass entry + count)** | **7,596** | **83.2%** | **4.97** | **+$19,029,593** | **-$1,910,361 (9.1%)** |
+| **C (Fix: override bypass entry + don't count)** | **8,047** | **84.0%** | **5.26** | **+$20,633,535** | **-$306,419 (1.5%)** |
+| D (Limit=999) | 8,103 | 84.1% | 5.31 | +$20,939,953 | identical |
+
+Scenario C preserves 98.5% of baseline profit vs B's 90.9%. Override trades shouldn't consume regular trade quota.
+
+**Fix** (2 files):
+- `risk_manager.py:166-169`: `record_entry()` now accepts `ml_override=False` param; only increments `session_trades` when `not ml_override`
+- `bot.py:949`: passes `signal.get('ml_override', False)` to `record_entry()`
+
+**Relevant files**: `_bt_session_comparison.py` — reusable comparison script

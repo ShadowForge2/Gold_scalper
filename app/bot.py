@@ -515,7 +515,8 @@ class Bot:
                 effective_threshold = max(atr_thresh, effective_threshold)
         if signal and signal["score"] >= effective_threshold:
             can_enter, reason = self.risk_manager.can_enter_trade(
-                symbol_info, datetime.utcnow()
+                symbol_info, datetime.utcnow(),
+                ml_override=signal.get('ml_override', False)
             )
             if not can_enter:
                 bk_key = f"blocked_{signal['direction']}|{reason}|{signal.get('ml_override')}"
@@ -945,7 +946,7 @@ class Bot:
             )
             if ticket is not None:
                 any_opened = True
-                self.risk_manager.record_entry()
+                self.risk_manager.record_entry(ml_override=signal.get('ml_override', False))
                 await asyncio.sleep(0.3)
             else:
                 break
