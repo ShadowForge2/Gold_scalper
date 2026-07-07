@@ -285,14 +285,22 @@ if __name__ == "__main__":
         t0 = time.time()
 
         b = run_bt(year, pred, exit_predictor=None, mode="baseline")
-        print(f"  BASELINE: {b['events']}ev WR={b['wins']/max(1,b['events']):.1%} "
-              f"PnL=${b['net_pnl']:>10.2f} DD=${b['dd']:>8.2f}", flush=True)
-        print(f"    reasons={dict(sorted(b['exit_reasons'].items(), key=lambda x: -x[1]))}", flush=True)
-
         n = run_bt(year, pred, exit_predictor=ep, mode="narrow")
-        print(f"  NARROW:   {n['events']}ev WR={n['wins']/max(1,n['events']):.1%} "
-              f"PnL=${n['net_pnl']:>10.2f} DD=${n['dd']:>8.2f}", flush=True)
-        print(f"    reasons={dict(sorted(n['exit_reasons'].items(), key=lambda x: -x[1]))}", flush=True)
 
-        print(f"  DELTA: PnL={n['net_pnl']-b['net_pnl']:>+10.2f} DD={n['dd']-b['dd']:>+8.2f}")
+        print(f"{'':>20}  {'Events':>8} {'WR':>8} {'PnL':>14} {'DD':>10} {'AvgPnL':>10}")
+        print(f"{'BASELINE (no exit model):':>20}  {b['events']:>8} {b['wins']/max(1,b['events']):>7.1%} "
+              f"${b['net_pnl']:>10.2f} ${b['dd']:>7.2f} ${b['net_pnl']/max(1,b['events']):>8.2f}", flush=True)
+        print(f"{'EXIT MODEL (narrow):':>20}  {n['events']:>8} {n['wins']/max(1,n['events']):>7.1%} "
+              f"${n['net_pnl']:>10.2f} ${n['dd']:>7.2f} ${n['net_pnl']/max(1,n['events']):>8.2f}", flush=True)
+        delta_pnl = n['net_pnl'] - b['net_pnl']
+        delta_dd = n['dd'] - b['dd']
+        print(f"{'DELTA:':>20}  {'':>8} {'':>8} ${delta_pnl:>+10.2f} ${delta_dd:>+8.2f}")
+        print(f"\n  BASELINE exits: {dict(sorted(b['exit_reasons'].items(), key=lambda x: -x[1]))}")
+        print(f"  EXIT MODEL exits: {dict(sorted(n['exit_reasons'].items(), key=lambda x: -x[1]))}")
+
+        # Key metric: trail_stop + direction_loss + momentum_decay reduction
+        base_mech = sum(v for k, v in b['exit_reasons'].items() if k in ('trail_stop','direction_loss','momentum_decay'))
+        exit_mech = sum(v for k, v in n['exit_reasons'].items() if k in ('trail_stop','direction_loss','momentum_decay'))
+        print(f"\n  Mechanical exits (trail+dir_loss+mom_decay): {base_mech} -> {exit_mech} ({((base_mech-exit_mech)/max(1,base_mech))*100:.0f}% reduction)")
+        print(f"  ML reversal exits preserved: {b['exit_reasons'].get('ml_reversal',0)} → {n['exit_reasons'].get('ml_reversal',0)}")
         print(f"  Time: {time.time()-t0:.1f}s")
