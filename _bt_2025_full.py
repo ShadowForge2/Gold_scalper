@@ -11,6 +11,7 @@ import config as cfg
 from app.dukascopy_client import DukascopyClient
 from app.direction_predictor import DirectionPredictor, ExitPredictor, compute_features, FEATURE_COLS
 from app.meta_strategy import MetaStrategy
+from app.risk_manager import EquityScaler
 
 CS = 100; LEV = 200; TRADE_MAX_BARS = 25
 SESSION_HOURS = {"ASIA": (0, 8), "LONDON": (7, 17), "NEW_YORK": (12, 22)}
@@ -74,6 +75,8 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline"):
 
     bal = 20.0; total_events = 0; wins = 0; dd = 0; peak_bal = 20.0
     exit_reasons = {}; meta = MetaStrategy()
+    scaler = EquityScaler()
+    scaler.initialize(bal)
 
     for i in range(100, n - 15):
         ts_i = m5.index[i]
@@ -95,7 +98,7 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline"):
             if entry_dir == "SELL" and pb_d[i] < cfg.ML_CONFIDENCE_THRESHOLD: continue
 
         ep = p; total_events += 1
-        n_lots = 0.01; actual_trades = 1
+        n_lots = scaler.get_lot(bal); actual_trades = 1
         best_pnl = 0.0; w_streak = 0
         exited = False
 
@@ -277,25 +280,19 @@ if __name__ == "__main__":
     pred = DirectionPredictor.load("models/direction_xgb_m5.joblib")
     ep = ExitPredictor(model_path="models/exit_xgb_m5.joblib")
 
-    for year in [2022, 2023, 2024, 2025]:
+    for year in [2025]:
         print(f"\n{'='*60}\n=== {year} ===\n{'='*60}")
         t0 = time.time()
 
         b = run_bt(year, pred, exit_predictor=None, mode="baseline")
         print(f"  BASELINE: {b['events']}ev WR={b['wins']/max(1,b['events']):.1%} "
-              f"PnL=${b['net_pnl']:>8.2f} DD=${b['dd']:>6.2f}  "
-              f"reasons={dict(sorted(b['exit_reasons'].items(), key=lambda x: -x[1]))}", flush=True)
+              f"PnL=${b['net_pnl']:>10.2f} DD=${b['dd']:>8.2f}", flush=True)
+        print(f"    reasons={dict(sorted(b['exit_reasons'].items(), key=lambda x: -x[1]))}", flush=True)
 
         n = run_bt(year, pred, exit_predictor=ep, mode="narrow")
         print(f"  NARROW:   {n['events']}ev WR={n['wins']/max(1,n['events']):.1%} "
-              f"PnL=${n['net_pnl']:>8.2f} DD=${n['dd']:>6.2f}  "
-              f"reasons={dict(sorted(n['exit_reasons'].items(), key=lambda x: -x[1]))}", flush=True)
+              f"PnL=${n['net_pnl']:>10.2f} DD=${n['dd']:>8.2f}", flush=True)
+        print(f"    reasons={dict(sorted(n['exit_reasons'].items(), key=lambda x: -x[1]))}", flush=True)
 
-        a = run_bt(year, pred, exit_predictor=ep, mode="aggressive")
-        print(f"  AGGRESSIVE: {a['events']}ev WR={a['wins']/max(1,a['events']):.1%} "
-              f"PnL=${a['net_pnl']:>8.2f} DD=${a['dd']:>6.2f}  "
-              f"reasons={dict(sorted(a['exit_reasons'].items(), key=lambda x: -x[1]))}", flush=True)
-
-        print(f"  NARROW d:    PnL={n['net_pnl']-b['net_pnl']:>+8.2f} DD={n['dd']-b['dd']:>+6.2f}")
-        print(f"  AGGRESSIVE d: PnL={a['net_pnl']-b['net_pnl']:>+8.2f} DD={a['dd']-b['dd']:>+6.2f}")
+        print(f"  DELTA: PnL={n['net_pnl']-b['net_pnl']:>+10.2f} DD={n['dd']-b['dd']:>+8.2f}")
         print(f"  Time: {time.time()-t0:.1f}s")
