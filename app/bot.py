@@ -18,11 +18,10 @@ from app.meta_strategy import MetaStrategy
 from app.adaptive_confirmation import AdaptiveConfirmation
 
 try:
-    from app.direction_predictor import DirectionPredictor, SLTPredictor, ExitPredictor
+    from app.direction_predictor import DirectionPredictor, ExitPredictor
     _HAS_ML = True
 except ImportError:
     DirectionPredictor = None
-    SLTPredictor = None
     ExitPredictor = None
     _HAS_ML = False
 
@@ -46,7 +45,6 @@ class Bot:
         self.client: object = None
         self.bias_engine = BiasEngine()
         self._direction_predictor = None
-        self._slt_predictor = None
         self._exit_predictor = None
         if _HAS_ML:
             try:
@@ -56,14 +54,6 @@ class Bot:
             except Exception as e:
                 self.logger.warning(f"Failed to load direction model: {e}")
             try:
-                buy_path = cfg.ML_BUY_MODEL_PATH
-                sell_path = cfg.ML_SELL_MODEL_PATH
-                if os.path.exists(buy_path) and os.path.exists(sell_path):
-                    self._slt_predictor = SLTPredictor(buy_model_path=buy_path, sell_model_path=sell_path)
-                    self.logger.info(f"SL/TP models loaded (buy={buy_path}, sell={sell_path})")
-            except Exception as e:
-                self.logger.warning(f"Failed to load SL/TP models: {e}")
-            try:
                 if os.path.exists(cfg.ML_EXIT_MODEL_PATH):
                     self._exit_predictor = ExitPredictor(model_path=cfg.ML_EXIT_MODEL_PATH)
                     self.logger.info(f"Exit model loaded from {cfg.ML_EXIT_MODEL_PATH}")
@@ -71,15 +61,12 @@ class Bot:
                 self.logger.warning(f"Failed to load exit model: {e}")
         self.signal_engine = SignalEngine(
             direction_predictor=self._direction_predictor,
-            slt_predictor=self._slt_predictor,
             exit_predictor=self._exit_predictor,
             logger=self.logger,
         )
         ml_status = []
         if self._direction_predictor:
             ml_status.append("Direction model loaded")
-        if self._slt_predictor:
-            ml_status.append("SL/TP models loaded")
         if self._exit_predictor:
             ml_status.append("Exit model loaded")
         if ml_status:

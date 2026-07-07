@@ -91,26 +91,7 @@ All documented in prior conversation. Key fixes:
 
 **Model 1: Direction Predictor** — generic M5 direction 3 bars ahead (~75% accuracy).
 
-**Model 2: SL/TP Predictor** — predicts if trade will hit 2xATR TP before 1xATR SL.
-- Unconditional win rate (2xATR TP before 1xATR SL): only ~33% (noisy market)
-- Model correct: 73% of bars (79% at high confidence)
-- **When model says WIN with high confidence: 64-67% actually win** (2x baseline)
 
-**Backtest comparison (Meta-Aggressive + ML filter, with SL):**
-| Year | Trades | WR | PF | Trades | WR | PF |
-|---|---|---|---|---|---|---|
-| | **Direction Model** | | | **SL/TP Model** | | |
-| 2022 | 3,866 | 54.6% | 1.20 | **2,581** | **59.5%** | **1.47** |
-| 2023 | 3,631 | 57.4% | 1.35 | **2,436** | **62.4%** | **1.66** |
-
-**Without SL** (TP-only exit, no hard stop):
-| Year | Trades | WR | PF |
-|---|---|---|---|
-| 2010 | 3,525 | 63.4% | 1.73 |
-| 2011 | 4,138 | 68.9% | 2.22 |
-| 2020 | 3,763 | 68.5% | 2.17 |
-| 2022 | 3,874 | 62.1% | 1.64 |
-| 2023 | 3,626 | 62.6% | 1.67 |
 
 **Implementation (5 files):**
 - `app/direction_predictor.py` — new: feature engineering + XGBoost wrapper class
@@ -129,8 +110,6 @@ All documented in prior conversation. Key fixes:
 ## Key Config Values
 - `ML_CONFIDENCE_THRESHOLD = 0.60` — minimum confidence for ML prediction
 - `ML_MODEL_PATH = models/direction_xgb_m5.joblib` — direction model
-- `ML_BUY_MODEL_PATH = models/buy_sltp_xgb.joblib` — BUY SL/TP model
-- `ML_SELL_MODEL_PATH = models/sell_sltp_xgb.joblib` — SELL SL/TP model
 - `ML_M1_HISTORY_BARS = 500` — M1 bars fetched for M5 feature computation
 
 ## Relevant Files
@@ -141,13 +120,10 @@ All documented in prior conversation. Key fixes:
 - `app/adaptive_confirmation.py` — volatility-regime adaptive confirmation class
 - `app/backtest.py:572-574` — backtest threshold logic (uses max(atr_thresh, effective_et))
 - `sweep_adaptive.py` — confirmation-mode sweep script (backtest comparison tool)
-- `app/direction_predictor.py` — ML feature engineering + DirectionPredictor + SLTPredictor classes
+- `app/direction_predictor.py` — ML feature engineering + DirectionPredictor class
 - `_train_direction_model.py` — direction model training (2007-2021, OOS test 2022-2025)
-- `_train_sltp_model.py` — SL/TP model training (2xATR TP vs 1xATR SL target)
 - `_bt_ml.py` — ML-integrated backtest script
 - `models/direction_xgb_m5.joblib` — trained direction model
-- `models/buy_sltp_xgb.joblib` — trained BUY SL/TP model
-- `models/sell_sltp_xgb.joblib` — trained SELL SL/TP model
 
 ### Session 2026-07-02b: Codebase Audit Fixes
 **Discovered**: Systematic code review during H1 data debugging identified 11 additional bugs across 6 files.

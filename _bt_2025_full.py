@@ -280,7 +280,7 @@ if __name__ == "__main__":
     pred = DirectionPredictor.load("models/direction_xgb_m5.joblib")
     ep = ExitPredictor(model_path="models/exit_xgb_m5.joblib")
 
-    for year in [2025]:
+    for year in [2024]:
         print(f"\n{'='*60}\n=== {year} ===\n{'='*60}")
         t0 = time.time()
 

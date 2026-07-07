@@ -7,11 +7,10 @@ from datetime import datetime
 import config as cfg
 
 try:
-    from app.direction_predictor import DirectionPredictor, SLTPredictor, ExitPredictor, compute_features
+    from app.direction_predictor import DirectionPredictor, ExitPredictor, compute_features
     _HAS_ML = True
 except ImportError:
     DirectionPredictor = None
-    SLTPredictor = None
     ExitPredictor = None
     compute_features = None
     _HAS_ML = False
@@ -20,22 +19,18 @@ except ImportError:
 class SignalEngine:
     def __init__(self,
                  direction_predictor: Optional["DirectionPredictor"] = None,
-                 slt_predictor: Optional["SLTPredictor"] = None,
                  exit_predictor: Optional["ExitPredictor"] = None,
                  logger=None):
         self.current_signal: Optional[Dict] = None
         self.last_signal_time: Optional[datetime] = None
         self.last_rejection: Optional[Dict] = None
         self._direction_predictor = direction_predictor
-        self._slt_predictor = slt_predictor
         self._exit_predictor = exit_predictor
         self._ml_override_count = 0
         self._ml_override_day = None
         self._logger = logger
         self._last_ml_override_log_time = 0.0
         self._last_ml_override_result_value = None
-        self._last_slt_prob_log_time = 0.0
-        self._last_slt_prob_value = None
 
     def _reject(self, reason: str, **context) -> None:
         self.last_rejection = {
@@ -73,41 +68,13 @@ class SignalEngine:
             return None
 
     def _get_ml_direction(self, m1_data: pd.DataFrame = None, expected_direction: str = None, features: pd.DataFrame = None) -> Optional[str]:
-        """Use ML model to predict trade viability. Returns 'BUY', 'SELL', or None.
-        - If SL/TP model available: checks if expected direction will hit TP before SL
-        - Falls back to direction model: checks if price direction matches expected
-        - Accepts pre-computed `features` to avoid redundant _get_features calls.
-        """
+        """Use ML model to predict trade viability. Returns 'BUY', 'SELL', or None."""
         if features is None and m1_data is not None:
             features = self._get_features(m1_data)
         if features is None or len(features) == 0:
             return None
 
         try:
-            # SL/TP model: directly predicts trade outcome
-            if self._slt_predictor is not None and expected_direction is not None:
-                if expected_direction == "BUY":
-                    prob = self._slt_predictor.buy_win_prob(features)
-                    now_key = f"BUY_{prob:.3f}"
-                    if self._logger and (_time.monotonic() - self._last_slt_prob_log_time >= 30 or self._last_slt_prob_value != now_key):
-                        self._last_slt_prob_log_time = _time.monotonic()
-                        self._last_slt_prob_value = now_key
-                        self._logger.info(f"[ML] SL/TP BUY prob={prob:.3f} threshold={cfg.ML_CONFIDENCE_THRESHOLD}")
-                    if prob >= cfg.ML_CONFIDENCE_THRESHOLD:
-                        return "BUY"
-                    slt_passed = True
-                elif expected_direction == "SELL":
-                    prob = self._slt_predictor.sell_win_prob(features)
-                    now_key = f"SELL_{prob:.3f}"
-                    if self._logger and (_time.monotonic() - self._last_slt_prob_log_time >= 30 or self._last_slt_prob_value != now_key):
-                        self._last_slt_prob_log_time = _time.monotonic()
-                        self._last_slt_prob_value = now_key
-                        self._logger.info(f"[ML] SL/TP SELL prob={prob:.3f} threshold={cfg.ML_CONFIDENCE_THRESHOLD}")
-                    if prob >= cfg.ML_CONFIDENCE_THRESHOLD:
-                        return "SELL"
-                    slt_passed = True
-
-            # Fallback: direction model predicts generic price direction
             if self._direction_predictor is not None:
                 result = self._direction_predictor.predict(
                     features, confidence_threshold=cfg.ML_CONFIDENCE_THRESHOLD
@@ -127,25 +94,6 @@ class SignalEngine:
             return None, 0.0
         try:
             override_threshold = getattr(cfg, 'ML_BIAS_OVERRIDE_THRESHOLD', 0.70)
-            if self._slt_predictor is not None:
-                buy_p = self._slt_predictor.buy_win_prob(features)
-                sell_p = self._slt_predictor.sell_win_prob(features)
-                should_log = self._logger and _time.monotonic() - self._last_ml_override_log_time >= 30
-                if should_log:
-                    self._last_ml_override_log_time = _time.monotonic()
-                    self._logger.info(f"[ML] Override check: BUY prob={buy_p:.3f} SELL prob={sell_p:.3f} threshold={override_threshold}")
-                if buy_p >= override_threshold and buy_p > sell_p:
-                    if should_log or self._last_ml_override_result_value != f"BUY_{buy_p:.3f}":
-                        self._last_ml_override_result_value = f"BUY_{buy_p:.3f}"
-                        if self._logger:
-                            self._logger.info(f"[ML] Override: BUY (conf={buy_p:.3f})")
-                    return "BUY", buy_p
-                if sell_p >= override_threshold and sell_p > buy_p:
-                    if should_log or self._last_ml_override_result_value != f"SELL_{sell_p:.3f}":
-                        self._last_ml_override_result_value = f"SELL_{sell_p:.3f}"
-                        if self._logger:
-                            self._logger.info(f"[ML] Override: SELL (conf={sell_p:.3f})")
-                    return "SELL", sell_p
             if self._direction_predictor is not None:
                 prob_down, prob_up = self._direction_predictor.predict_proba(features)
                 should_log = self._logger and _time.monotonic() - self._last_ml_override_log_time >= 30
@@ -253,7 +201,7 @@ class SignalEngine:
         # ML bias override: if ML confidently predicts opposite direction, trust ML
         ml_override = False
         ml_features = None
-        if (self._direction_predictor is not None or self._slt_predictor is not None) and _HAS_ML:
+        if self._direction_predictor is not None and _HAS_ML:
             today = datetime.utcnow().day
             if today != self._ml_override_day:
                 self._ml_override_count = 0
@@ -338,7 +286,7 @@ class SignalEngine:
             )
 
         # ML direction validation (skip if already overridden by ML)
-        if not ml_override and (self._direction_predictor is not None or self._slt_predictor is not None) and _HAS_ML:
+        if not ml_override and self._direction_predictor is not None and _HAS_ML:
             ml_direction = self._get_ml_direction(expected_direction=direction, features=ml_features)
             if ml_direction is None:
                 return self._reject(
