@@ -8,6 +8,7 @@ import '../../widgets/holographic_overlay.dart';
 import '../../providers/device_provider.dart';
 import '../../services/security_service.dart';
 import '../home_screen.dart';
+import '../no_internet_screen.dart';
 
 class WelcomeScreen extends StatefulWidget {
   const WelcomeScreen({super.key});
@@ -100,34 +101,8 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
     if (!await _hasInternet()) {
       if (!context.mounted) return;
-      await showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          backgroundColor: const Color(0xFF1A1A2E),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: const Row(
-            children: [
-              Icon(Icons.wifi_off, color: Colors.orange, size: 22),
-              SizedBox(width: 10),
-              Text('No Connection',
-                  style: TextStyle(color: Colors.white, fontSize: 16)),
-            ],
-          ),
-          content: const Text(
-            'Internet connection required to access the dashboard.\n'
-            'Please connect and try again.',
-            style: TextStyle(color: Colors.white70, fontSize: 13),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('TRY AGAIN',
-                  style: TextStyle(color: Color(0xFFD4AF37))),
-            ),
-          ],
-        ),
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const NoInternetScreen()),
       );
       return;
     }

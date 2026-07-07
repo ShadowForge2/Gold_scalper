@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/bot_provider.dart';
@@ -13,6 +15,7 @@ import 'performance_screen.dart';
 import 'controls_screen.dart';
 import 'settings_screen.dart';
 import 'subscription_screen.dart';
+import 'no_internet_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -37,9 +40,27 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _currentIndex);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final hasInternet = await _checkInternet();
+      if (!mounted) return;
+      if (!hasInternet) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const NoInternetScreen()),
+        );
+        return;
+      }
       context.read<BotProvider>().init();
     });
+  }
+
+  Future<bool> _checkInternet() async {
+    try {
+      final result = await InternetAddress.lookup('google.com')
+          .timeout(const Duration(seconds: 3));
+      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
   }
 
   @override

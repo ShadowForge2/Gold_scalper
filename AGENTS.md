@@ -200,3 +200,27 @@ Scenario C preserves 98.5% of baseline profit vs B's 90.9%. Override trades shou
 **Fix** (2 files):
 - `config.py`: Added `MARKET_DAILY_CLOSE_START` (20:59) and `MARKET_DAILY_CLOSE_END` (22:00) env vars; `is_market_open()` now returns `False` during the daily close window on Mon-Thu.
 - `bot.py:947-962`: When `open_market` fails, checks `client.last_order_error` for "currently closed" and immediately sets `state = MARKET_CLOSED` instead of retrying.
+
+### Session 2026-07-06c: Market CLOSED → IDLE Loop
+**Discovered**: After `_check_market_dynamic()` falsely returned TRADEABLE during daily close window (21:10 UTC, Mon), bot entered IDLE state and tried to trade → entry blocked by market_status check at line 835 → state set to IDLE → retry next tick → infinite loop.
+
+**Root cause**: `_execute_entry()` at `bot.py:837` set `self.state = self.STATES["IDLE"]` when `fresh_info.get("market_status") != "TRADEABLE"`. This put the bot right back into the trade-seeking loop.
+
+**Fix** (3 commits):
+- `ca03629` — `bot.py:837`: set `MARKET_CLOSED` instead of `IDLE`
+- `f59859b` — `bot.py:353`: skip dynamic check when already `MARKET_CLOSED` (prevents 60s cooldown from blocking reopen)
+- `5f2b94f` — `bot.py:364,839`: reset `_last_market_status_check = 0.0` when entering `MARKET_CLOSED`
+
+### Session 2026-07-06d: Payment Subscription Verification
+**Discovered**: Three issues in subscription/payment code.
+
+**Fixes** (`c86b15f`):
+1. **Synchronous httpx in async context** — `initialize_payment()` and `create_maxelpay_payment()` used synchronous `httpx.post(timeout=15)` blocking the event loop. Changed to `httpx.AsyncClient` with `await`.
+2. **MaxelPay amount underpayment** — user could specify any amount below due. Changed to `amount = max(amount, due, 1.0)` at `api.py:901`.
+3. **Webhook signature verification** — `verify_maxelpay_webhook()` at `subscription.py:553` only tried normalized JSON. Now falls back to raw body if normalized fails.
+
+**Payment flow verified**:
+- Paystack: init → user pays (card/bank_transfer via `channels` param) → verify + webhook (both with dedup)
+- MaxelPay: init → user pays → server-to-server callback (no race condition)
+- Demo: no subscription checks, runs free
+- Live: trial → 15% of profit per 30-day period → must pay to continue

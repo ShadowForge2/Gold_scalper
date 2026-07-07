@@ -143,7 +143,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildHeader(s, BotProvider bp) {
     final isBullish = s.bias == 'BULLISH' || s.bias == 'BUY';
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [Color(0xFF0F172A), kDarkSurface],
@@ -162,15 +162,44 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       child: Column(
         children: [
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final isNarrow = constraints.maxWidth < 460;
-              return isNarrow ? _buildNarrowHeader(s, bp) : _buildWideHeader(s, bp);
-            },
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              _buildLogo(),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: ShaderMask(
+                        shaderCallback: (bounds) => const LinearGradient(
+                          colors: [kGold, Color(0xFFD4AF37), kGold],
+                          stops: [0.0, 0.5, 1.0],
+                        ).createShader(bounds),
+                        blendMode: BlendMode.srcIn,
+                        child: const Text('QuantoraFX',
+                          style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900,
+                            color: Colors.white, letterSpacing: 1.5, height: 1.2)),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    StatusIndicator(active: s.connected, label: s.broker),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _buildStateBadge(s),
+            ],
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 12),
+          Row(mainAxisAlignment: MainAxisAlignment.end, children: [_buildSubscriptionBtn()]),
+          const SizedBox(height: 12),
           Container(height: 1, color: Colors.white.withValues(alpha: 0.04)),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
           Row(
             children: [
               Expanded(
@@ -178,34 +207,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text('MARKET BIAS', style: TextStyle(color: kTextSecondary, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     Row(
                       children: [
                         Icon(
                           isBullish ? Icons.trending_up_rounded : Icons.trending_down_rounded,
                           color: isBullish ? kSuccess : kDanger,
-                          size: 22,
+                          size: 20,
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 6),
                         Text(
                           '${isBullish ? "BULLISH" : "BEARISH"}',
                           style: TextStyle(
                             color: isBullish ? kSuccess : kDanger,
                             fontWeight: FontWeight.w900,
-                            fontSize: 18,
+                            fontSize: 16,
                             letterSpacing: 0.2,
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'STR: ${s.biasStrength}%',
+                          style: TextStyle(
+                            color: (isBullish ? kSuccess : kDanger).withValues(alpha: 0.5),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
                       ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'STRENGTH: ${s.biasStrength}%',
-                      style: TextStyle(
-                        color: (isBullish ? kSuccess : kDanger).withValues(alpha: 0.6),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                      ),
                     ),
                   ],
                 ),
@@ -214,19 +243,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   const Text('BALANCE', style: TextStyle(color: kTextSecondary, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 2),
                   Text(
                     '\$${s.balance.toStringAsFixed(2)}',
                     style: const TextStyle(
-                      fontSize: 30,
+                      fontSize: 28,
                       fontWeight: FontWeight.w900,
                       color: kTextPrimary,
                       letterSpacing: -1.0,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 2),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                     decoration: BoxDecoration(
                       color: (s.dailyPnl >= 0 ? kSuccess : kDanger).withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
@@ -244,7 +273,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
           Row(
             children: [
               const Text('OPEN POSITIONS', style: TextStyle(color: kTextSecondary, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
@@ -273,53 +302,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildLogo() {
     return Container(
-      width: 56, height: 56,
+      width: 48, height: 48,
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [kGold.withValues(alpha: 0.3), kGold.withValues(alpha: 0.05)],
           begin: Alignment.topLeft, end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: kGold.withValues(alpha: 0.2)),
-        boxShadow: [BoxShadow(color: kGold.withValues(alpha: 0.1), blurRadius: 10, spreadRadius: 2)],
+        boxShadow: [BoxShadow(color: kGold.withValues(alpha: 0.1), blurRadius: 8, spreadRadius: 1)],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.asset('assets/images/logo.png', width: 56, height: 56, fit: BoxFit.cover),
+        borderRadius: BorderRadius.circular(10),
+        child: Image.asset('assets/images/logo.png', width: 48, height: 48, fit: BoxFit.cover),
       ),
-    );
-  }
-
-  Widget _buildTitleColumn(s) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ShaderMask(
-          shaderCallback: (bounds) => const LinearGradient(
-            colors: [kGold, Color(0xFFD4AF37), kGold],
-            stops: [0.0, 0.5, 1.0],
-          ).createShader(bounds),
-          blendMode: BlendMode.srcIn,
-          child: const Text('QuantoraFX', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 6, height: 1.1)),
-        ),
-        const Text('Gold scalper pro', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: kTextSecondary, letterSpacing: 3)),
-        const SizedBox(height: 6),
-        StatusIndicator(active: s.connected, label: s.broker),
-      ],
     );
   }
 
   Widget _buildStateBadge(s) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: _stateColor(s.state).withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _stateColor(s.state).withValues(alpha: 0.2)),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _stateColor(s.state).withValues(alpha: 0.25)),
       ),
       child: Text(
         s.state.replaceAll('_', ' '),
-        style: TextStyle(color: _stateColor(s.state), fontWeight: FontWeight.w700, fontSize: 10, letterSpacing: 0.8),
+        style: TextStyle(color: _stateColor(s.state), fontWeight: FontWeight.w700, fontSize: 9, letterSpacing: 0.6),
       ),
     );
   }
@@ -328,51 +338,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return GestureDetector(
       onTap: hapt(() => Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscriptionScreen()))),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: kGold.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(color: kGold.withValues(alpha: 0.2)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.credit_card_rounded, color: kGold, size: 14),
-            const SizedBox(width: 6),
-            Text('subscription', style: TextStyle(color: kGold.withValues(alpha: 0.7), fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+            Icon(Icons.credit_card_rounded, color: kGold.withValues(alpha: 0.7), size: 12),
+            const SizedBox(width: 4),
+            Text('SUBSCRIPTION', style: TextStyle(color: kGold.withValues(alpha: 0.7), fontSize: 9, fontWeight: FontWeight.w600, letterSpacing: 0.4)),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildNarrowHeader(s, BotProvider bp) {
-    return Column(
-      children: [
-        Row(
-          children: [
-            _buildLogo(),
-            const SizedBox(width: 12),
-            Expanded(child: _buildTitleColumn(s)),
-            _buildStateBadge(s),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Align(alignment: Alignment.centerRight, child: _buildSubscriptionBtn()),
-      ],
-    );
-  }
-
-  Widget _buildWideHeader(s, BotProvider bp) {
-    return Row(
-      children: [
-        _buildLogo(),
-        const SizedBox(width: 16),
-        Expanded(child: _buildTitleColumn(s)),
-        _buildStateBadge(s),
-        const SizedBox(width: 8),
-        _buildSubscriptionBtn(),
-      ],
     );
   }
 
