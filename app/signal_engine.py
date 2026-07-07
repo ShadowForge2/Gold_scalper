@@ -627,38 +627,33 @@ class SignalEngine:
                 if self._logger:
                     self._logger.debug(f"[EXIT_MODEL] error: {e}")
 
-        # --- Exit model: primary decision-maker ---
+        # --- Exit model: suppress mechanical exits when confident to hold ---
+        # NOTE: exit model never blocks ML reversal — that preserves high WR.
+        exit_model_holding = False
         hold_threshold = cfg.ML_EXIT_HOLD_THRESHOLD
         if exit_model_hold is not None:
-            if exit_model_hold >= 0.70:
-                # Strong hold — suppress all exits except max_hold
-                if bars > cfg.PEAK_HARVEST_MAX_HOLD_BARS:
-                    return True, 0.50, "max_hold"
-                return False, round(exit_model_hold, 3), "exit_model_hold"
             if exit_model_hold >= hold_threshold:
-                # Moderate hold — suppress mechanical, but let ML exit if triggered
-                ml_features = self._get_features(df)
-                ml_signal = self._get_ml_exit_signal(ml_features, direction)
-                if ml_signal == "exit":
-                    return True, 0.90, "ml_reversal"
-                if bars > cfg.PEAK_HARVEST_MAX_HOLD_BARS:
-                    return True, 0.50, "max_hold"
-                return False, round(exit_model_hold, 3), "exit_model_hold"
-            if exit_model_hold <= 0.30:
-                # Weak hold / strong exit signal — exit now
+                # Strong/moderate hold — suppress mechanical exits
+                exit_model_holding = True
+            elif exit_model_hold <= 0.30:
+                # Strong exit signal — exit now via exit model
                 return True, round(1.0 - exit_model_hold, 3), "exit_model_exit"
 
-        # --- ML exit signal (fallback when exit model unavailable) ---
+        # --- ML exit signal (always checked, even during exit model hold) ---
         ml_features = self._get_features(df)
         ml_signal = self._get_ml_exit_signal(ml_features, direction)
         if ml_signal == "exit":
             return True, 0.90, "ml_reversal"
-        if ml_signal == "hold":
-            if bars > cfg.PEAK_HARVEST_MAX_HOLD_BARS:
-                return True, 0.50, "max_hold"
-            return False, 0.0, "ml_hold"
 
-        # --- Normal (non-ML) exit logic (fallback) ---
+        # --- Max hold check ---
+        if bars > cfg.PEAK_HARVEST_MAX_HOLD_BARS:
+            return True, 0.50, "max_hold"
+
+        # --- Exit model hold: return early, skip mechanical exits ---
+        if exit_model_holding:
+            return False, round(exit_model_hold, 3), "exit_model_hold"
+
+        # --- Normal (non-ML) exit logic (only when exit model uncertain or unavailable) ---
         confidence = entry_score if entry_score is not None else 0.7
         patience = 1.0 + (1.0 - confidence)
 
