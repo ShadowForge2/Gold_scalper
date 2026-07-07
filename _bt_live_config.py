@@ -188,15 +188,39 @@ def run_bt(year, pred):
         p = float(m5_close[i])
         h1h = float(m5_h1h[i]); h1l = float(m5_h1l[i])
         if h1h <= h1l: continue
+        # Bias must have confirmed breakout first
         if expected == "BUY" and p <= h1h: continue
         if expected == "SELL" and p >= h1l: continue
 
-        # Breakout score
         range_sz = h1h - h1l
-        if expected == "BUY":
+
+        # --- ML Bias Override ---
+        day_key = ts_i.date()
+        if override_day != day_key:
+            override_count = 0
+            override_day = day_key
+
+        entry_dir = expected
+        was_overridden = False
+        if not np.isnan(pb_d[i]):
+            if expected == "BUY" and pb_d[i] >= cfg.ML_BIAS_OVERRIDE_THRESHOLD and pb_d[i] > pb_u[i] and override_count < cfg.ML_OVERRIDE_MAX_PER_SESSION:
+                entry_dir = "SELL"
+                was_overridden = True
+            elif expected == "SELL" and pb_u[i] >= cfg.ML_BIAS_OVERRIDE_THRESHOLD and pb_u[i] > pb_d[i] and override_count < cfg.ML_OVERRIDE_MAX_PER_SESSION:
+                entry_dir = "BUY"
+                was_overridden = True
+            if was_overridden:
+                override_count += 1
+                total_overrides += 1
+
+        # Breakout score in entry direction
+        if entry_dir == "BUY":
             breakout_dist = p - h1h
         else:
             breakout_dist = h1l - p
+        # If override and no breakout in override direction, skip
+        if was_overridden and breakout_dist <= 0:
+            continue
         score = min(breakout_dist / range_sz, 1.0) if range_sz > 0 else 0.0
         if score < cfg.MIN_BREAKOUT_SCORE:
             continue
@@ -217,25 +241,6 @@ def run_bt(year, pred):
         effective_threshold = max(atr_entry_threshold if atr_entry_threshold else 0, meta_threshold)
         if score < effective_threshold:
             continue
-
-        # --- ML Bias Override ---
-        day_key = ts_i.date()
-        if override_day != day_key:
-            override_count = 0
-            override_day = day_key
-
-        entry_dir = expected
-        was_overridden = False
-        if not np.isnan(pb_d[i]):
-            if expected == "BUY" and pb_d[i] >= cfg.ML_BIAS_OVERRIDE_THRESHOLD and pb_d[i] > pb_u[i] and override_count < cfg.ML_OVERRIDE_MAX_PER_SESSION:
-                entry_dir = "SELL"
-                was_overridden = True
-            elif expected == "SELL" and pb_u[i] >= cfg.ML_BIAS_OVERRIDE_THRESHOLD and pb_u[i] > pb_d[i] and override_count < cfg.ML_OVERRIDE_MAX_PER_SESSION:
-                entry_dir = "BUY"
-                was_overridden = True
-            if was_overridden:
-                override_count += 1
-                total_overrides += 1
 
         if not was_overridden:
             if not np.isnan(pb_u[i]) and not np.isnan(pb_d[i]):
