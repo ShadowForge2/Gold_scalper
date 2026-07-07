@@ -7,11 +7,12 @@ from datetime import datetime
 import config as cfg
 
 try:
-    from app.direction_predictor import DirectionPredictor, SLTPredictor, compute_features
+    from app.direction_predictor import DirectionPredictor, SLTPredictor, ExitPredictor, compute_features
     _HAS_ML = True
 except ImportError:
     DirectionPredictor = None
     SLTPredictor = None
+    ExitPredictor = None
     compute_features = None
     _HAS_ML = False
 
@@ -20,12 +21,14 @@ class SignalEngine:
     def __init__(self,
                  direction_predictor: Optional["DirectionPredictor"] = None,
                  slt_predictor: Optional["SLTPredictor"] = None,
+                 exit_predictor: Optional["ExitPredictor"] = None,
                  logger=None):
         self.current_signal: Optional[Dict] = None
         self.last_signal_time: Optional[datetime] = None
         self.last_rejection: Optional[Dict] = None
         self._direction_predictor = direction_predictor
         self._slt_predictor = slt_predictor
+        self._exit_predictor = exit_predictor
         self._ml_override_count = 0
         self._ml_override_day = None
         self._logger = logger
@@ -568,7 +571,7 @@ class SignalEngine:
         """
         Peak-harvest exit — no hard stop loss, trail only after significant profit,
         close when directional confidence breaks down.
-        ML-guided: if ML still predicts same direction, suppress momentum_decay/direction_loss.
+        ML-guided: exit model overrides mechanical exits when confident to hold.
         """
         momentum = self.compute_momentum(df)
         atr = self._compute_atr_m5(df, 14)
@@ -584,25 +587,78 @@ class SignalEngine:
         else:
             peak = float(np.max(entry - df["low"].values))
 
-        # --- ML exit signal ---
+        # --- Compute exit model prediction ---
+        exit_model_hold = None
+        if self._exit_predictor is not None and bars > 0:
+            try:
+                mf = self._get_features(df)
+                if mf is not None and len(mf) > 0:
+                    mf_row = mf.iloc[-1].to_dict() if hasattr(mf, 'iloc') else mf
+                    wrong_streak = 0
+                    for i in range(min(5, len(df))):
+                        c = df.iloc[-(i + 1)]
+                        if direction == "BUY":
+                            if c["close"] < c["open"]: wrong_streak += 1
+                            else: break
+                        else:
+                            if c["close"] > c["open"]: wrong_streak += 1
+                            else: break
+                    pnl_atr = diff / atr
+                    peak_atr = peak / atr
+                    drawdown = (peak - max(0, diff)) / max(peak, 0.001)
+                    trade_state = {
+                        "bars_held": bars,
+                        "pnl_atr": round(pnl_atr, 4),
+                        "peak_atr": round(peak_atr, 4),
+                        "drawdown_pct": round(drawdown, 4),
+                        "entry_score": round(entry_score if entry_score is not None else 0.5, 4),
+                        "atr_change": 1.0,
+                        "wrong_streak": wrong_streak,
+                    }
+                    hold_prob = self._exit_predictor.predict_hold_prob(mf_row, trade_state)
+                    exit_model_hold = hold_prob
+                    if self._logger:
+                        self._logger.info(
+                            f"[EXIT_MODEL] hold_prob={hold_prob:.3f} "
+                            f"pnl={pnl_atr:.2f}atr peak={peak_atr:.2f}atr dd={drawdown:.2%} "
+                            f"bars={bars}"
+                        )
+            except Exception as e:
+                if self._logger:
+                    self._logger.debug(f"[EXIT_MODEL] error: {e}")
+
+        # --- Exit model: primary decision-maker ---
+        hold_threshold = cfg.ML_EXIT_HOLD_THRESHOLD
+        if exit_model_hold is not None:
+            if exit_model_hold >= 0.70:
+                # Strong hold — suppress all exits except max_hold
+                if bars > cfg.PEAK_HARVEST_MAX_HOLD_BARS:
+                    return True, 0.50, "max_hold"
+                return False, round(exit_model_hold, 3), "exit_model_hold"
+            if exit_model_hold >= hold_threshold:
+                # Moderate hold — suppress mechanical, but let ML exit if triggered
+                ml_features = self._get_features(df)
+                ml_signal = self._get_ml_exit_signal(ml_features, direction)
+                if ml_signal == "exit":
+                    return True, 0.90, "ml_reversal"
+                if bars > cfg.PEAK_HARVEST_MAX_HOLD_BARS:
+                    return True, 0.50, "max_hold"
+                return False, round(exit_model_hold, 3), "exit_model_hold"
+            if exit_model_hold <= 0.30:
+                # Weak hold / strong exit signal — exit now
+                return True, round(1.0 - exit_model_hold, 3), "exit_model_exit"
+
+        # --- ML exit signal (fallback when exit model unavailable) ---
         ml_features = self._get_features(df)
         ml_signal = self._get_ml_exit_signal(ml_features, direction)
         if ml_signal == "exit":
             return True, 0.90, "ml_reversal"
         if ml_signal == "hold":
-            confidence = entry_score if entry_score is not None else 0.7
-            patience = 1.0 + (1.0 - confidence)
-            trail_trigger = atr * cfg.PEAK_HARVEST_TRAIL_TRIGGER * patience
-            trail_active = peak >= trail_trigger
-            if trail_active and diff > 0 and peak > 0:
-                pullback = peak - diff
-                if pullback / peak > cfg.PEAK_HARVEST_TRAIL_RETRACE:
-                    return True, 0.85, "trail_stop"
             if bars > cfg.PEAK_HARVEST_MAX_HOLD_BARS:
                 return True, 0.50, "max_hold"
             return False, 0.0, "ml_hold"
 
-        # --- Normal (non-ML) exit logic ---
+        # --- Normal (non-ML) exit logic (fallback) ---
         confidence = entry_score if entry_score is not None else 0.7
         patience = 1.0 + (1.0 - confidence)
 
@@ -620,15 +676,11 @@ class SignalEngine:
             for i in range(lookback):
                 c = df.iloc[-(i + 1)]
                 if direction == "BUY":
-                    if c["close"] < c["open"]:
-                        streak += 1
-                    else:
-                        break
+                    if c["close"] < c["open"]: streak += 1
+                    else: break
                 else:
-                    if c["close"] > c["open"]:
-                        streak += 1
-                    else:
-                        break
+                    if c["close"] > c["open"]: streak += 1
+                    else: break
             if streak >= cfg.DIRECTION_LOSS_STREAK:
                 return True, 0.80, "direction_loss"
 

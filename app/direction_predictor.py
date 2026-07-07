@@ -297,3 +297,39 @@ class SLTPredictor:
         if sell_p >= confidence_threshold and sell_p > buy_p:
             return "SELL"
         return None
+
+
+EXIT_FEATURE_COLS = FEATURE_COLS + [
+    "bars_held", "pnl_atr", "peak_atr", "drawdown_pct",
+    "entry_score", "atr_change", "wrong_streak",
+]
+
+
+class ExitPredictor:
+    """Predicts whether to hold or exit during an active trade.
+    Features: market state (26 cols from compute_features) + trade state (7 cols)."""
+    def __init__(self, model_path: str = None):
+        self.model = joblib.load(model_path) if model_path and os.path.exists(model_path) else None
+
+    def predict_hold_prob(self, market_features: pd.DataFrame, trade_state: dict) -> float:
+        """Return probability that holding is better than exiting (0-1).
+        market_features: output from compute_features (1 row DataFrame or dict-like)
+        trade_state: dict with keys: bars_held, pnl_atr, peak_atr, drawdown_pct, entry_score, atr_change, wrong_streak
+        """
+        if self.model is None:
+            return 0.5
+        try:
+            row = {}
+            for c in FEATURE_COLS:
+                if c in market_features:
+                    row[c] = float(market_features[c]) if hasattr(market_features[c], '__float__') else 0.0
+                else:
+                    row[c] = 0.0
+            for c in ["bars_held", "pnl_atr", "peak_atr", "drawdown_pct", "entry_score", "atr_change", "wrong_streak"]:
+                row[c] = float(trade_state.get(c, 0.0))
+            vec = np.array([[row[c] for c in EXIT_FEATURE_COLS]], dtype=np.float32)
+            probs = self.model.predict_proba(vec)
+            idx = list(self.model.classes_).index(1) if 1 in self.model.classes_ else 1
+            return float(probs[0][idx])
+        except Exception:
+            return 0.5

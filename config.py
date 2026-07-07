@@ -151,6 +151,8 @@ ML_SELL_MODEL_PATH = _env_str("ML_SELL_MODEL_PATH", "models/sell_sltp_xgb.joblib
 ML_M1_HISTORY_BARS = _env_int("ML_M1_HISTORY_BARS", 500)
 ML_BIAS_OVERRIDE_THRESHOLD = _env_float("ML_BIAS_OVERRIDE_THRESHOLD", 0.60)
 ML_HOLD_CONFIDENCE = _env_float("ML_HOLD_CONFIDENCE", 0.50)  # min ML confidence to hold exit (suppress momentum_decay/direction_loss)
+ML_EXIT_MODEL_PATH = _env_str("ML_EXIT_MODEL_PATH", "models/exit_xgb_m5.joblib")
+ML_EXIT_HOLD_THRESHOLD = _env_float("ML_EXIT_HOLD_THRESHOLD", 0.60)  # exit model min hold confidence to suppress trail_stop
 
 
 # Adaptive confirmation (vreg_vtight)
