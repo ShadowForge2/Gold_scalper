@@ -196,10 +196,59 @@ class SignalEngine:
         atr = self._compute_atr_m5(m1_data, cfg.ATR_PERIOD)
         atr_entry_threshold = round(atr * cfg.ATR_MULTIPLIER / range_size, 4) if range_size > 0 and atr > 0 else None
 
-        # ML bias override: if ML confidently predicts opposite direction, trust ML
+        # ML bias override: ML predicts direction after breakout check
         ml_override = False
         ml_features = None
         ml_conf = 0.0
+
+        if direction == "BUY":
+            breakout_dist = current_price - h1_high
+            score = breakout_dist / range_size if range_size > 0 else 0.0
+            if breakout_dist <= 0:
+                return self._reject(
+                    "buy_price_not_above_h1_high",
+                    direction=direction, bias=bias_dir,
+                    price=current_price, h1_high=h1_high, h1_low=h1_low,
+                    breakout_dist=round(breakout_dist, 2),
+                    range_size=round(range_size, 2),
+                    score=round(score, 3),
+                )
+            lookback = max(2, cfg.RECENT_PULLBACK_LOOKBACK + 1)
+            recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(lookback, len(closes))))
+            if cfg.REQUIRE_RECENT_PULLBACK and not recent_in_range:
+                return self._reject(
+                    "buy_no_recent_pullback_inside_h1_range",
+                    direction=direction, bias=bias_dir,
+                    price=current_price, h1_high=h1_high, h1_low=h1_low,
+                    breakout_dist=round(breakout_dist, 2),
+                    range_size=round(range_size, 2),
+                    score=round(score, 3),
+                )
+        else:
+            breakout_dist = h1_low - current_price
+            score = breakout_dist / range_size if range_size > 0 else 0.0
+            if current_price >= h1_low:
+                return self._reject(
+                    "sell_price_not_below_h1_low",
+                    direction=direction, bias=bias_dir,
+                    price=current_price, h1_high=h1_high, h1_low=h1_low,
+                    breakout_dist=round(breakout_dist, 2),
+                    range_size=round(range_size, 2),
+                    score=round(score, 3),
+                )
+            lookback = max(2, cfg.RECENT_PULLBACK_LOOKBACK + 1)
+            recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(lookback, len(closes))))
+            if cfg.REQUIRE_RECENT_PULLBACK and not recent_in_range:
+                return self._reject(
+                    "sell_no_recent_pullback_inside_h1_range",
+                    direction=direction, bias=bias_dir,
+                    price=current_price, h1_high=h1_high, h1_low=h1_low,
+                    breakout_dist=round(breakout_dist, 2),
+                    range_size=round(range_size, 2),
+                    score=round(score, 3),
+                )
+
+        # ML override/validation only runs on real breakout signals
         if self._direction_predictor is not None and _HAS_ML:
             today = datetime.utcnow().date()
             if today != self._ml_override_day:
@@ -215,69 +264,21 @@ class SignalEngine:
                     ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
                     if ml_dir is not None:
                         if ml_dir != direction:
-                            direction = ml_dir
-                            ml_override = True
+                            new_breakout_dist = (current_price - h1_high) if ml_dir == "BUY" else (h1_low - current_price)
+                            if new_breakout_dist <= 0:
+                                if self._logger:
+                                    self._logger.info(f"[ML] Override: {ml_dir} (conf={ml_conf:.3f}) blocked — no breakout in flipped direction")
+                            else:
+                                direction = ml_dir
+                                breakout_dist = new_breakout_dist
+                                score = breakout_dist / range_size if range_size > 0 else 0.0
+                                ml_override = True
+                                if self._logger:
+                                    self._logger.info(f"[ML] Override: {direction} (conf={ml_conf:.3f}) counter-direction flip")
                         elif ml_conf >= getattr(cfg, 'ML_CONF_STRONG_THRESHOLD', 0.75):
                             ml_override = True
                             if self._logger:
                                 self._logger.info(f"[ML] Override: {direction} (conf={ml_conf:.3f}) same-direction strong")
-
-        if direction == "BUY":
-            breakout_dist = current_price - h1_high
-            score = breakout_dist / range_size if range_size > 0 else 0.0
-            if breakout_dist <= 0:
-                if ml_override:
-                    breakout_dist = range_size * 0.5
-                    score = 0.5
-                else:
-                    return self._reject(
-                        "buy_price_not_above_h1_high",
-                        direction=direction, bias=bias_dir,
-                        price=current_price, h1_high=h1_high, h1_low=h1_low,
-                        breakout_dist=round(breakout_dist, 2),
-                        range_size=round(range_size, 2),
-                        score=round(score, 3),
-                    )
-            if not ml_override:
-                lookback = max(2, cfg.RECENT_PULLBACK_LOOKBACK + 1)
-                recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(lookback, len(closes))))
-                if cfg.REQUIRE_RECENT_PULLBACK and not recent_in_range:
-                    return self._reject(
-                        "buy_no_recent_pullback_inside_h1_range",
-                        direction=direction, bias=bias_dir,
-                        price=current_price, h1_high=h1_high, h1_low=h1_low,
-                        breakout_dist=round(breakout_dist, 2),
-                        range_size=round(range_size, 2),
-                        score=round(score, 3),
-                    )
-        else:
-            breakout_dist = h1_low - current_price
-            score = breakout_dist / range_size if range_size > 0 else 0.0
-            if current_price >= h1_low:
-                if ml_override:
-                    breakout_dist = range_size * 0.5
-                    score = 0.5
-                else:
-                    return self._reject(
-                        "sell_price_not_below_h1_low",
-                        direction=direction, bias=bias_dir,
-                        price=current_price, h1_high=h1_high, h1_low=h1_low,
-                        breakout_dist=round(breakout_dist, 2),
-                        range_size=round(range_size, 2),
-                        score=round(score, 3),
-                    )
-            if not ml_override:
-                lookback = max(2, cfg.RECENT_PULLBACK_LOOKBACK + 1)
-                recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(lookback, len(closes))))
-                if cfg.REQUIRE_RECENT_PULLBACK and not recent_in_range:
-                    return self._reject(
-                        "sell_no_recent_pullback_inside_h1_range",
-                        direction=direction, bias=bias_dir,
-                        price=current_price, h1_high=h1_high, h1_low=h1_low,
-                        breakout_dist=round(breakout_dist, 2),
-                        range_size=round(range_size, 2),
-                        score=round(score, 3),
-                    )
 
         score = min(breakout_dist / range_size, 1.0)
         if score < cfg.MIN_BREAKOUT_SCORE:

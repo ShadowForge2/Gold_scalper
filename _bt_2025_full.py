@@ -31,7 +31,7 @@ def compute_atr_series(high, low, close, period=14):
     tr[0] = high[0] - low[0]
     return np.where(np.isnan(pd.Series(tr).rolling(period, min_periods=period).mean().values), 0.0, tr)
 
-def run_bt(year, pred, exit_predictor=None, mode="baseline", allow_all=False, trace_first=False):
+def run_bt(year, pred, exit_predictor=None, mode="baseline", allow_all=False, trace_first=False, use_override=True):
     client = DukascopyClient()
     m1 = client.download_year(year).sort_values("time").drop_duplicates(subset="time")
     m5 = client.resample_to(m1, 5).set_index("time")
@@ -78,7 +78,7 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline", allow_all=False, tr
     exit_reasons = {}; meta = MetaStrategy()
     scaler = EquityScaler()
     scaler.initialize(bal)
-    event_log = []
+    event_log = []; override_count = 0
     consec_losses = 0; last_exit_bar = -999; daily_pnl = 0.0; last_day = None
 
     for i in range(100, n - 15):
@@ -91,12 +91,41 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline", allow_all=False, tr
         if h1h <= h1l: continue
         range_sz = h1h - h1l
 
+        # --- Step 1: Bias breakout check (no bypass) ---
         if entry_dir == "BUY":
             if p <= h1h: continue
         else:
             if p >= h1l: continue
 
-        if not np.isnan(pb_u[i]) and not np.isnan(pb_d[i]):
+        # --- Step 2: ML override/validation on real breakout ---
+        ml_override = False
+        if use_override:
+            if not np.isnan(pb_u[i]) and not np.isnan(pb_d[i]):
+                override_thr = cfg.ML_BIAS_OVERRIDE_THRESHOLD
+                strong_thr = cfg.ML_CONF_STRONG_THRESHOLD
+                if pb_u[i] >= override_thr and pb_u[i] > pb_d[i]:
+                    ml_dir, ml_c = "BUY", pb_u[i]
+                elif pb_d[i] >= override_thr and pb_d[i] > pb_u[i]:
+                    ml_dir, ml_c = "SELL", pb_d[i]
+                else:
+                    ml_dir, ml_c = None, 0.0
+                if ml_dir is not None and ml_dir != entry_dir:
+                    if ml_dir == "BUY" and p > h1h:
+                        entry_dir = "BUY"; ml_override = True
+                    elif ml_dir == "SELL" and p < h1l:
+                        entry_dir = "SELL"; ml_override = True
+                if not ml_override and ml_dir == entry_dir and ml_c >= strong_thr:
+                    ml_override = True
+        else:
+            # Old behavior: no override, just validation
+            if not np.isnan(pb_u[i]) and not np.isnan(pb_d[i]):
+                if entry_dir == "BUY" and pb_u[i] < cfg.ML_CONFIDENCE_THRESHOLD: continue
+                if entry_dir == "SELL" and pb_d[i] < cfg.ML_CONFIDENCE_THRESHOLD: continue
+
+        # --- Step 3: ML direction validation (skip if overridden) ---
+        if ml_override:
+            pass  # skip validation
+        elif not np.isnan(pb_u[i]) and not np.isnan(pb_d[i]):
             if entry_dir == "BUY" and pb_u[i] < cfg.ML_CONFIDENCE_THRESHOLD: continue
             if entry_dir == "SELL" and pb_d[i] < cfg.ML_CONFIDENCE_THRESHOLD: continue
 
@@ -110,6 +139,8 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline", allow_all=False, tr
         last_day = ts_i.day
         if daily_pnl <= -cfg.MAX_DAILY_LOSS_USD: continue
 
+        if ml_override:
+            override_count += 1
         ep = p; total_events += 1
         ml_conf = pb_u[i] if entry_dir == "BUY" else pb_d[i]
         ml_conf = ml_conf if not np.isnan(ml_conf) else 0.5
@@ -315,7 +346,7 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline", allow_all=False, tr
         meta.update(bal, {"bias": "BULLISH" if h1_bias[h1_idx_map[i]] == 1 else "BEARISH",
                           "strength": abs(h1_bias[h1_idx_map[i]]) if abs(h1_bias[h1_idx_map[i]]) > 0 else 0.5})
 
-    return {"events": total_events, "wins": wins, "net_pnl": round(bal - 20, 2), "dd": round(dd, 2), "exit_reasons": exit_reasons, "event_log": event_log}
+    return {"events": total_events, "wins": wins, "net_pnl": round(bal - 20, 2), "dd": round(dd, 2), "exit_reasons": exit_reasons, "event_log": event_log, "overrides": override_count}
 
 def _compute_bias(h1):
     c = h1["close"].values.astype(np.float64)
