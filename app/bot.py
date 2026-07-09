@@ -522,7 +522,7 @@ class Bot:
             atr_thresh = signal.get("atr_entry_threshold")
             if atr_thresh is not None:
                 effective_threshold = max(atr_thresh, effective_threshold)
-        if signal and signal["score"] >= effective_threshold:
+        if signal and (signal.get('ml_override', False) or signal["score"] >= effective_threshold):
             can_enter, reason = self.risk_manager.can_enter_trade(
                 symbol_info, datetime.utcnow(),
                 ml_override=signal.get('ml_override', False)
@@ -541,7 +541,7 @@ class Bot:
             )
                 return
 
-            if not self.adaptive_conf.should_enter():
+            if not signal.get('ml_override', False) and not self.adaptive_conf.should_enter():
                 self.logger.signal(
                     f"Signal {signal.get('direction', 'UNKNOWN')} score={signal['score']:.2f} "
                     f"blocked: adaptive confirmation (low vol filter)"

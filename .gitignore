@@ -50,3 +50,6 @@ gold_scalper_app/build/
 gold_scalper_app/android/app/build/
 gold_scalper_app/android/build/
 website/
+
+_eval_models.py
+_check_accuracy.py
