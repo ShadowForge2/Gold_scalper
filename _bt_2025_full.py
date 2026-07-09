@@ -79,6 +79,7 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline", allow_all=False, tr
     scaler = EquityScaler()
     scaler.initialize(bal)
     event_log = []
+    consec_losses = 0; last_exit_bar = -999; daily_pnl = 0.0; last_day = None
 
     for i in range(100, n - 15):
         ts_i = m5.index[i]
@@ -98,6 +99,16 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline", allow_all=False, tr
         if not np.isnan(pb_u[i]) and not np.isnan(pb_d[i]):
             if entry_dir == "BUY" and pb_u[i] < cfg.ML_CONFIDENCE_THRESHOLD: continue
             if entry_dir == "SELL" and pb_d[i] < cfg.ML_CONFIDENCE_THRESHOLD: continue
+
+        # --- Live risk gates ---
+        if bal < cfg.MIN_BALANCE: break
+        if consec_losses >= cfg.MAX_CONSECUTIVE_LOSSES: continue
+        cooldown_bars = max(1, cfg.RE_ENTRY_COOLDOWN_SEC // 300)
+        if i - last_exit_bar < cooldown_bars: continue
+        if last_day is not None and ts_i.day != last_day:
+            daily_pnl = 0.0
+        last_day = ts_i.day
+        if daily_pnl <= -cfg.MAX_DAILY_LOSS_USD: continue
 
         ep = p; total_events += 1
         ml_conf = pb_u[i] if entry_dir == "BUY" else pb_d[i]
@@ -263,8 +274,11 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline", allow_all=False, tr
                     print(f"    Profit: ${prof:.2f}")
                     print(f"    Exit model hold_prob: {hp:.3f}")
                 bal += prof
-                if prof > 0: wins += 1
+                if prof > 0: wins += 1; consec_losses = 0
+                else: consec_losses += 1
                 exit_reasons[exit_reason] = exit_reasons.get(exit_reason, 0) + 1
+                daily_pnl += prof
+                last_exit_bar = j
                 meta.record_trade(prof, abs(h1_bias[h1_idx_map[i]]) if abs(h1_bias[h1_idx_map[i]]) > 0 else 0.5)
                 break
         else:
@@ -288,8 +302,11 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline", allow_all=False, tr
                 print(f"    Duration: {bar_duration} min ({bars} bars)")
                 print(f"    Profit: ${prof:.2f}")
             bal += prof
-            if prof > 0: wins += 1
+            if prof > 0: wins += 1; consec_losses = 0
+            else: consec_losses += 1
             exit_reasons["max_hold"] = exit_reasons.get("max_hold", 0) + 1
+            daily_pnl += prof
+            last_exit_bar = min(i + TRADE_MAX_BARS, len(m5) - 1)
             meta.record_trade(prof, abs(h1_bias[h1_idx_map[i]]) if abs(h1_bias[h1_idx_map[i]]) > 0 else 0.5)
 
         peak_bal = max(peak_bal, bal)

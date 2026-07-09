@@ -10,14 +10,9 @@ import joblib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from app.dukascopy_client import DukascopyClient
-from app.direction_predictor import compute_features, FEATURE_COLS
+from app.direction_predictor import compute_features, EXIT_FEATURE_COLS
 
 MODEL_PATH = "models/exit_xgb_m5.joblib"
-EXIT_FEATURE_COLS = FEATURE_COLS + [
-    "bars_held", "pnl_atr", "peak_atr", "drawdown_pct",
-    "entry_score", "atr_change", "wrong_streak",
-    "sweep_atr", "recovery_pct",
-]
 TRADE_MAX_BARS = 25
 SESSION_HOURS = {"ASIA": (0, 8), "LONDON": (7, 17), "NEW_YORK": (12, 22)}
 
@@ -155,18 +150,12 @@ def process_year(year, client=None):
             w_streak = (w_streak + 1) if (direction == "BUY" and close[j] < open_[j]) or \
                         (direction == "SELL" and close[j] > open_[j]) else 0
 
-            # Label
-            la = min(TRADE_MAX_BARS - bars, n - 1 - j)
-            if la > 0:
-                bf = max(np.max(high[j:j+la] - ep) if direction == "BUY" else np.max(ep - low[j:j+la]), 0)
-            else:
-                bf = max(diff, 0)
-            remaining = bf - max(diff, 0)
-
-            if remaining > 0.5 * atr_e:
-                label = 1
-            elif remaining < 0.1 * atr_e:
+            # Label: state-based (no lookahead)
+            # Exit when PnL exceeds -1.0 ATR, hold when above -0.5 ATR
+            if diff < -1.0 * atr_e:
                 label = 0
+            elif diff >= -0.5 * atr_e:
+                label = 1
             else:
                 continue
 

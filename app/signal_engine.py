@@ -208,9 +208,14 @@ class SignalEngine:
             ml_features = self._get_features(m1_data)
             if ml_features is not None and len(ml_features) > 0:
                 ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
-                if ml_dir is not None and ml_dir != direction:
-                    direction = ml_dir
-                    ml_override = True
+                if ml_dir is not None:
+                    if ml_dir != direction:
+                        direction = ml_dir
+                        ml_override = True
+                    elif ml_conf >= getattr(cfg, 'ML_CONF_STRONG_THRESHOLD', 0.75):
+                        ml_override = True
+                        if self._logger:
+                            self._logger.info(f"[ML] Override: {direction} (conf={ml_conf:.3f}) same-direction strong")
 
         if direction == "BUY":
             breakout_dist = current_price - h1_high

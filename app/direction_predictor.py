@@ -317,26 +317,12 @@ class SLTPredictor:
         return None
 
 
-EXIT_FEATURE_COLS = [
-    "return_1", "return_2", "return_3", "return_5", "return_10",
-    "return_20",
-    "rsi_14",
-    "atr_norm",
-    "bb_position",
-    "hl_ratio",
-    "volume_ratio",
-    "hour_sin", "hour_cos",
-    "day_sin", "day_cos",
-    "sma_ratio",
-    "macd", "macd_signal", "macd_hist",
-    "h1_pos", "h1_dir", "above_h1h", "below_h1l",
-    "volatility_ratio",
-    "close_position",
-    "return_vol_ratio",
+TRADE_STATE_COLS = [
     "bars_held", "pnl_atr", "peak_atr", "drawdown_pct",
     "entry_score", "atr_change", "wrong_streak",
     "sweep_atr", "recovery_pct",
 ]
+EXIT_FEATURE_COLS = FEATURE_COLS + TRADE_STATE_COLS
 
 
 class ExitPredictor:
@@ -359,7 +345,7 @@ class ExitPredictor:
                     row[c] = float(market_features[c]) if hasattr(market_features[c], '__float__') else 0.0
                 else:
                     row[c] = 0.0
-            for c in ["bars_held", "pnl_atr", "peak_atr", "drawdown_pct", "entry_score", "atr_change", "wrong_streak", "sweep_atr", "recovery_pct"]:
+            for c in TRADE_STATE_COLS:
                 row[c] = float(trade_state.get(c, 0.0))
             vec = np.array([[row[c] for c in EXIT_FEATURE_COLS]], dtype=np.float32)
             probs = self.model.predict_proba(vec)
