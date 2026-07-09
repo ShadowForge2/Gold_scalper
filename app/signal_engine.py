@@ -26,8 +26,6 @@ class SignalEngine:
         self.last_rejection: Optional[Dict] = None
         self._direction_predictor = direction_predictor
         self._exit_predictor = exit_predictor
-        self._ml_override_count = 0
-        self._ml_override_day = None
         self._logger = logger
         self._last_ml_override_log_time = 0.0
         self._last_ml_override_result_value = None
@@ -64,27 +62,6 @@ class SignalEngine:
             return compute_features(m5, h1)
         except Exception:
             return None
-
-    def _get_ml_direction(self, m1_data: pd.DataFrame = None, expected_direction: str = None, features: pd.DataFrame = None) -> Optional[str]:
-        """Use ML model to predict trade viability. Returns 'BUY', 'SELL', or None."""
-        if features is None and m1_data is not None:
-            features = self._get_features(m1_data)
-        if features is None or len(features) == 0:
-            return None
-
-        try:
-            if self._direction_predictor is not None:
-                result = self._direction_predictor.predict(
-                    features, confidence_threshold=cfg.ML_CONFIDENCE_THRESHOLD
-                )
-                if self._logger:
-                    self._logger.info(f"[ML] Direction prediction: {result} threshold={cfg.ML_CONFIDENCE_THRESHOLD}")
-                return result
-        except Exception as e:
-            if self._logger:
-                self._logger.warning(f"[ML] Prediction error: {e}")
-
-        return None
 
     def _get_ml_unbiased_prediction(self, features: pd.DataFrame) -> Tuple[Optional[str], float]:
         """Get ML prediction without bias filtering. Returns (direction, confidence) or (None, 0.0)."""
@@ -150,10 +127,6 @@ class SignalEngine:
                 self._logger.warning(f"[ML] Exit signal error: {e}")
         return None
 
-    def reset_ml_override_count(self):
-        self._ml_override_count = 0
-        self._ml_override_day = None
-
     def evaluate(self, m1_data: pd.DataFrame, bias: Dict,
                  current_price: float,
                  h1_high: float = None, h1_low: float = None,
@@ -191,15 +164,8 @@ class SignalEngine:
         direction = "BUY" if bias_dir == "BULLISH" else "SELL"
         if "close" not in m1_data.columns:
             return self._reject("no_close_data", bias=bias_dir, price=current_price)
-        closes = m1_data["close"].values
         range_size = h1_high - h1_low
         atr = self._compute_atr_m5(m1_data, cfg.ATR_PERIOD)
-        atr_entry_threshold = round(atr * cfg.ATR_MULTIPLIER / range_size, 4) if range_size > 0 and atr > 0 else None
-
-        # ML bias override: ML predicts direction after breakout check
-        ml_override = False
-        ml_features = None
-        ml_conf = 0.0
 
         if direction == "BUY":
             breakout_dist = current_price - h1_high
@@ -207,17 +173,6 @@ class SignalEngine:
             if breakout_dist <= 0:
                 return self._reject(
                     "buy_price_not_above_h1_high",
-                    direction=direction, bias=bias_dir,
-                    price=current_price, h1_high=h1_high, h1_low=h1_low,
-                    breakout_dist=round(breakout_dist, 2),
-                    range_size=round(range_size, 2),
-                    score=round(score, 3),
-                )
-            lookback = max(2, cfg.RECENT_PULLBACK_LOOKBACK + 1)
-            recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(lookback, len(closes))))
-            if cfg.REQUIRE_RECENT_PULLBACK and not recent_in_range:
-                return self._reject(
-                    "buy_no_recent_pullback_inside_h1_range",
                     direction=direction, bias=bias_dir,
                     price=current_price, h1_high=h1_high, h1_low=h1_low,
                     breakout_dist=round(breakout_dist, 2),
@@ -236,49 +191,35 @@ class SignalEngine:
                     range_size=round(range_size, 2),
                     score=round(score, 3),
                 )
-            lookback = max(2, cfg.RECENT_PULLBACK_LOOKBACK + 1)
-            recent_in_range = any(h1_low <= closes[-i] <= h1_high for i in range(2, min(lookback, len(closes))))
-            if cfg.REQUIRE_RECENT_PULLBACK and not recent_in_range:
-                return self._reject(
-                    "sell_no_recent_pullback_inside_h1_range",
-                    direction=direction, bias=bias_dir,
-                    price=current_price, h1_high=h1_high, h1_low=h1_low,
-                    breakout_dist=round(breakout_dist, 2),
-                    range_size=round(range_size, 2),
-                    score=round(score, 3),
-                )
 
-        # ML override/validation only runs on real breakout signals
+        # ML direction + confidence — this is the only entry filter
+        ml_conf = 0.0
+        ml_features = None
         if self._direction_predictor is not None and _HAS_ML:
-            today = datetime.utcnow().date()
-            if today != self._ml_override_day:
-                self._ml_override_count = 0
-                self._ml_override_day = today
             ml_features = self._get_features(m1_data)
             if ml_features is not None and len(ml_features) > 0:
-                override_max = getattr(cfg, 'ML_OVERRIDE_MAX_PER_SESSION', 999999)
-                if self._ml_override_count >= override_max:
-                    if self._logger:
-                        self._logger.info(f"[ML] Override blocked: {self._ml_override_count}/{override_max} used today")
-                else:
-                    ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
-                    if ml_dir is not None:
-                        if ml_dir != direction:
-                            new_breakout_dist = (current_price - h1_high) if ml_dir == "BUY" else (h1_low - current_price)
-                            if new_breakout_dist <= 0:
-                                if self._logger:
-                                    self._logger.info(f"[ML] Override: {ml_dir} (conf={ml_conf:.3f}) blocked — no breakout in flipped direction")
-                            else:
-                                direction = ml_dir
-                                breakout_dist = new_breakout_dist
-                                score = breakout_dist / range_size if range_size > 0 else 0.0
-                                ml_override = True
-                                if self._logger:
-                                    self._logger.info(f"[ML] Override: {direction} (conf={ml_conf:.3f}) counter-direction flip")
-                        elif ml_conf >= getattr(cfg, 'ML_CONF_STRONG_THRESHOLD', 0.75):
-                            ml_override = True
-                            if self._logger:
-                                self._logger.info(f"[ML] Override: {direction} (conf={ml_conf:.3f}) same-direction strong")
+                ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
+                if ml_dir is not None and ml_dir != direction:
+                    # ML flips direction — re-check breakout for flipped direction
+                    new_bd = (current_price - h1_high) if ml_dir == "BUY" else (h1_low - current_price)
+                    if new_bd > 0:
+                        direction = ml_dir
+                        breakout_dist = new_bd
+                        score = breakout_dist / range_size if range_size > 0 else 0.0
+                        if self._logger:
+                            self._logger.info(f"[ML] Direction: {direction} (conf={ml_conf:.3f}) from ML")
+                if ml_conf < cfg.ML_CONFIDENCE_THRESHOLD:
+                    return self._reject(
+                        "ml_confidence_too_low",
+                        direction=direction, bias=bias_dir,
+                        ml_confidence=round(ml_conf, 4),
+                        threshold=cfg.ML_CONFIDENCE_THRESHOLD,
+                        price=current_price,
+                        h1_high=h1_high,
+                        h1_low=h1_low,
+                        breakout_dist=round(breakout_dist, 2),
+                        score=round(score, 3),
+                    )
 
         score = min(breakout_dist / range_size, 1.0)
         if score < cfg.MIN_BREAKOUT_SCORE:
@@ -295,31 +236,16 @@ class SignalEngine:
                 threshold=cfg.MIN_BREAKOUT_SCORE,
             )
 
-        # ML direction validation (skip if already overridden by ML)
-        if not ml_override and self._direction_predictor is not None and _HAS_ML:
-            if ml_features is not None and len(ml_features) > 0:
-                ml_direction = self._get_ml_direction(expected_direction=direction, features=ml_features)
-                if ml_direction is None:
-                    return self._reject(
-                        "ml_confidence_too_low",
-                        direction=direction,
-                        bias=bias_dir,
-                        entry=current_price,
-                        at=datetime.utcnow().isoformat(),
-                        ml_confidence=ml_conf,
-                        ml_direction=ml_direction,
-                    )
-                if ml_direction != direction:
-                    return self._reject(
-                        "ml_direction_conflict",
-                        direction=direction,
-                        ml_direction=ml_direction,
-                        bias=bias_dir,
-                        price=current_price,
-                        h1_high=h1_high,
-                        h1_low=h1_low,
-                        score=round(score, 3),
-                    )
+        # Conviction tier — scaled positions based on ML confidence
+        if ml_conf >= cfg.ML_CONF_VERY_STRONG_THRESHOLD:
+            num_positions = cfg.ML_POSITIONS_MAX
+            lot_mult = cfg.ML_LOT_MULT_VERY_STRONG
+        elif ml_conf >= cfg.ML_CONF_STRONG_THRESHOLD:
+            num_positions = cfg.ML_POSITIONS_VERY_STRONG
+            lot_mult = cfg.ML_LOT_MULT_STRONG
+        else:
+            num_positions = cfg.ML_POSITIONS_STRONG
+            lot_mult = cfg.ML_LOT_MULTIPLIER
 
         atr_val = atr if atr > 0 else (current_price * 0.001)
         if direction == "BUY":
@@ -340,22 +266,20 @@ class SignalEngine:
             "conviction": round(score, 3),
             "breakout_dist": round(breakout_dist, 2),
             "range_size": round(range_size, 2),
-            "atr_entry_threshold": atr_entry_threshold,
             "entry_price": current_price,
             "sl": round(sl_price, 2),
             "tp1": round(tp1, 2),
             "tp2": round(tp2, 2),
             "tp3": round(tp3, 2),
             "atr_value": round(atr_val, 4),
-            "ml_override": ml_override,
-            "ml_confidence": round(ml_conf, 4) if ml_features is not None else 0.0,
+            "ml_confidence": round(ml_conf, 4),
+            "num_positions": num_positions,
+            "lot_mult": lot_mult,
             "timestamp": datetime.now().isoformat(),
         }
 
         self.current_signal = signal
         self.last_rejection = None
-        if ml_override:
-            self._ml_override_count += 1
         return signal
 
     def evaluate_exit(self, m1_data: pd.DataFrame,

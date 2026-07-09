@@ -1,5 +1,5 @@
 from typing import Dict, Tuple, Optional
-from datetime import datetime, timedelta
+from datetime import datetime
 import config as cfg
 
 
@@ -10,7 +10,7 @@ class EquityScaler:
         self.starting_balance: Optional[float] = None
         self.peak_balance: Optional[float] = None
         self.base_lot = cfg.LOT_SIZE
-        self.base_trades = cfg.MAX_TRADES_PER_EVENT
+        self.base_trades = cfg.ML_POSITIONS_STRONG
 
     def initialize(self, balance: float):
         self.starting_balance = balance
@@ -93,45 +93,12 @@ class EquityScaler:
 
 class RiskManager:
     def __init__(self):
-        self.max_daily_loss = cfg.MAX_DAILY_LOSS_USD
-        self.max_event_loss = cfg.MAX_EVENT_LOSS_USD
-        self.max_trades_per_event = cfg.MAX_TRADES_PER_EVENT
-        self.max_trades_per_session = cfg.MAX_TRADES_PER_SESSION
-        self.max_consecutive_losses = cfg.MAX_CONSECUTIVE_LOSSES
         self.max_spread = cfg.MAX_SPREAD_PIPS
-        self.min_volatility = cfg.MIN_VOLATILITY_PIPS
-        self.max_volatility = cfg.MAX_VOLATILITY_PIPS
-        self.min_body_ratio = cfg.MIN_CANDLE_BODY_RATIO
-        self.cooldown_seconds = cfg.RE_ENTRY_COOLDOWN_SEC
-
-        self.last_exit_time: Optional[datetime] = None
-        self.consecutive_losses = 0
-        self.session_trades = 0
-        self.daily_pnl = 0.0
-        self.event_trades = 0
-        self._session_reset_day: Optional[int] = None
+        self.allowed_sessions = [s.strip().upper() for s in cfg.ALLOWED_SESSIONS.split(",")]
 
     def can_enter_trade(self, symbol_info: Dict,
-                        current_time: datetime,
-                        ml_override: bool = False) -> Tuple[bool, str]:
+                        current_time: datetime) -> Tuple[bool, str]:
         now = current_time
-
-        if self._session_reset_day != now.day:
-            self.session_trades = 0
-            self._session_reset_day = now.day
-
-        if not ml_override and self.session_trades >= self.max_trades_per_session:
-            return False, f"session_trade_limit ({self.session_trades}/{self.max_trades_per_session})"
-
-        if self.consecutive_losses >= self.max_consecutive_losses:
-            return False, f"consecutive_losses ({self.consecutive_losses})"
-
-        if self.last_exit_time and self.cooldown_seconds > 0:
-            elapsed = (now - self.last_exit_time).total_seconds()
-            if elapsed < self.cooldown_seconds:
-                remaining = int(self.cooldown_seconds - elapsed)
-                return False, f"cooldown ({remaining}s remaining)"
-
         point = symbol_info.get("point", 0.0001)
         spread_pips = float(symbol_info.get("spread", 0)) / point if point > 0 else 0
         if spread_pips > self.max_spread:
@@ -143,22 +110,7 @@ class RiskManager:
 
         return True, "ok"
 
-    def set_event_trade_limit(self, limit: int):
-        self.max_trades_per_event = max(1, limit)
-
-    def can_add_to_event(self) -> Tuple[bool, str]:
-        if self.event_trades >= self.max_trades_per_event:
-            return False, f"event_trade_limit ({self.event_trades}/{self.max_trades_per_event})"
-        return True, "ok"
-
-    def check_daily_loss(self, daily_pnl: float) -> Tuple[bool, str]:
-        if daily_pnl <= -self.max_daily_loss:
-            return False, f"daily_loss_limit (${daily_pnl:.2f} <= -${self.max_daily_loss:.2f})"
-        return True, "ok"
-
     def check_event_loss(self, event_pnl: float) -> Tuple[bool, str]:
-        if event_pnl <= -self.max_event_loss:
-            return False, f"event_loss_limit (${event_pnl:.2f} <= -${self.max_event_loss:.2f})"
         return True, "ok"
 
     def calculate_lot_size(self, balance: float,
@@ -173,27 +125,6 @@ class RiskManager:
         lot = round(lot / step) * step
         return lot
 
-    def record_entry(self, ml_override: bool = False):
-        self.event_trades += 1
-        if not ml_override:
-            self.session_trades += 1
-
-    def record_exit(self, profit: float, closed_count: int = 0):
-        self.last_exit_time = datetime.now()
-        if closed_count > 0:
-            self.event_trades = max(0, self.event_trades - closed_count)
-        elif self.event_trades > 0:
-            self.event_trades = 0
-        if profit < 0:
-            self.consecutive_losses += 1
-        else:
-            self.consecutive_losses = 0
-
-    def record_daily_pnl_reset(self):
-        self.daily_pnl = 0.0
-        self.consecutive_losses = 0
-        self.session_trades = 0
-
     def _check_session(self, dt: datetime) -> Tuple[bool, str]:
         hour = dt.hour
         minute = dt.minute
@@ -205,11 +136,7 @@ class RiskManager:
             "NEW_YORK": (12, 22),
         }
 
-        allowed = getattr(self, 'allowed_sessions', None)
-        if allowed is None:
-            allowed = [s.strip().upper() for s in cfg.ALLOWED_SESSIONS.split(",")]
-
-        for name in allowed:
+        for name in self.allowed_sessions:
             if name in sessions:
                 start, end = sessions[name]
                 if start <= time_decimal < end:

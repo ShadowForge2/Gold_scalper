@@ -414,16 +414,10 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
     @app.get("/api/device/bot/config")
     async def device_bot_config(device_id: str = Header(None, alias="X-Device-Id")):
         return {
+            "ML_CONFIDENCE_THRESHOLD": str(cfg.ML_CONFIDENCE_THRESHOLD),
             "LOT_MULTIPLIER": str(cfg.LOT_MULTIPLIER),
-            "MAX_DAILY_LOSS_USD": str(cfg.MAX_DAILY_LOSS_USD),
-            "MAX_EVENT_LOSS_USD": str(cfg.MAX_EVENT_LOSS_USD),
-            "SIGNAL_ENTRY_THRESHOLD": str(cfg.SIGNAL_ENTRY_THRESHOLD),
             "EXIT_THRESHOLD_TIGHT": str(cfg.EXIT_THRESHOLD_TIGHT),
             "MAX_SPREAD_PIPS": str(cfg.MAX_SPREAD_PIPS),
-            "MAX_TRADES_PER_EVENT": str(cfg.MAX_TRADES_PER_EVENT),
-            "MAX_TRADES_PER_SESSION": str(cfg.MAX_TRADES_PER_SESSION),
-            "MAX_CONSECUTIVE_LOSSES": str(cfg.MAX_CONSECUTIVE_LOSSES),
-            "RE_ENTRY_COOLDOWN_SEC": str(cfg.RE_ENTRY_COOLDOWN_SEC),
             "BIAS_UPDATE_INTERVAL_SEC": str(cfg.BIAS_UPDATE_INTERVAL_SEC),
             "ALLOWED_SESSIONS": cfg.ALLOWED_SESSIONS,
             "MIN_BALANCE": str(cfg.MIN_BALANCE),
@@ -442,14 +436,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         ident = dev["accounts"][0]["identifier"]
         # Normalize env-var style keys to the format update_settings expects
         KEY_MAP = {
-            "MAX_DAILY_LOSS_USD": "max_daily_loss",
-            "MAX_EVENT_LOSS_USD": "max_event_loss",
-            "MAX_TRADES_PER_EVENT": "max_trades_per_event",
-            "MAX_TRADES_PER_SESSION": "max_trades_per_session",
-            "RE_ENTRY_COOLDOWN_SEC": "cooldown_seconds",
-            "MAX_CONSECUTIVE_LOSSES": "consecutive_loss_limit",
             "LOT_MULTIPLIER": "lot_multiplier",
-            "SIGNAL_ENTRY_THRESHOLD": "signal_entry_threshold",
             "EXIT_THRESHOLD_TIGHT": "exit_threshold_tight",
             "MAX_SPREAD_PIPS": "max_spread_pips",
             "BIAS_UPDATE_INTERVAL_SEC": "bias_update_interval_sec",

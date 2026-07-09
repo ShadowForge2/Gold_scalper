@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Dict, List
 
 import config as cfg
@@ -13,9 +13,6 @@ from app.signal_engine import SignalEngine
 from app.risk_manager import RiskManager, EquityScaler
 from app.trade_executor import TradeExecutor
 from app.position_manager import PositionManager
-from app.gemini_advisor import GeminiAdvisor
-from app.meta_strategy import MetaStrategy
-from app.adaptive_confirmation import AdaptiveConfirmation
 
 try:
     from app.direction_predictor import DirectionPredictor, ExitPredictor
@@ -34,7 +31,6 @@ class Bot:
         "ENTERING": "ENTERING",
         "IN_TRADE": "IN_TRADE",
         "EXITING": "EXITING",
-        "COOLDOWN": "COOLDOWN",
         "STOPPED": "STOPPED",
         "WAITING_FOR_FUNDS": "WAITING_FOR_FUNDS",
         "MARKET_CLOSED": "MARKET_CLOSED",
@@ -71,23 +67,16 @@ class Bot:
             ml_status.append("Exit model loaded")
         if ml_status:
             self.logger.info(f"[ML] Active: {', '.join(ml_status)} | "
-                             f"confidence_threshold={cfg.ML_CONFIDENCE_THRESHOLD} "
-                             f"override_max={cfg.ML_OVERRIDE_MAX_PER_SESSION}")
+                             f"confidence_threshold={cfg.ML_CONFIDENCE_THRESHOLD}")
         else:
             self.logger.info("[ML] Not available")
         self.risk_manager = RiskManager()
         self.scaler = EquityScaler()
-        self.meta = MetaStrategy() if cfg.META_ENABLED else None
-        self.gemini_advisor = GeminiAdvisor()
-        if self.gemini_advisor.enabled:
-            self.logger.info("Gemini advisor enabled")
-        self.adaptive_conf = AdaptiveConfirmation()
 
         self.state: str = self.STATES["IDLE"]
         self.symbol: str = cfg.SYMBOL
         self.magic: int = cfg.MAGIC_NUMBER
         self._running = False
-        self._cooldown_until: Optional[datetime] = None
 
         self._current_signal: Optional[Dict] = None
         self._bias_summary: Dict = {}
@@ -145,7 +134,7 @@ class Bot:
 
     async def initialize(self) -> bool:
         self.logger.info(f"Initializing {self.symbol} scalping bot...")
-        self.logger.info(f"Config: EXIT_THRESHOLD_TIGHT={cfg.EXIT_THRESHOLD_TIGHT} LOT_MULTIPLIER={cfg.LOT_MULTIPLIER} ENTRY_THRESHOLD={cfg.SIGNAL_ENTRY_THRESHOLD}")
+        self.logger.info(f"Config: EXIT_THRESHOLD_TIGHT={cfg.EXIT_THRESHOLD_TIGHT} LOT_MULTIPLIER={cfg.LOT_MULTIPLIER}")
 
         self.logger.info("Broker: Capital.com (REST API)")
         self.client = CapitalClient()
@@ -328,16 +317,6 @@ class Bot:
             self._write_state()
             return
 
-        daily_ok, daily_msg = self.risk_manager.check_daily_loss(
-            pnl_data["daily_pnl"]
-        )
-        if not daily_ok:
-            self.logger.warning(f"Stopping bot: {daily_msg}")
-            for pos_data in self.trade_executor.close_all_bot_positions():
-                self.position_manager.note_closed(pos_data)
-            self.state = self.STATES["STOPPED"]
-            return
-
         if self.state not in (self.STATES["IN_TRADE"], self.STATES["WAITING_FOR_FUNDS"]):
             info = self.client.get_account_info()
             if info and info["balance"] < cfg.MIN_BALANCE:
@@ -375,13 +354,10 @@ class Bot:
         self._ml_heartbeat_ticks += 1
         if self._ml_heartbeat_ticks >= 100 and self._direction_predictor is not None:
             self._ml_heartbeat_ticks = 0
-            n_override = getattr(self.signal_engine, '_ml_override_count', 0)
-            self.logger.info(f"[ML] Heartbeat: overrides today={n_override} | models=active")
+            self.logger.info("[ML] Heartbeat: models=active")
 
         if self.state == self.STATES["IN_TRADE"]:
             await self._handle_in_trade(pnl_data)
-        elif self.state == self.STATES["COOLDOWN"]:
-            await self._handle_cooldown()
         elif self.state == self.STATES["WAITING_FOR_FUNDS"]:
             await self._handle_waiting_for_funds()
         else:
@@ -403,8 +379,6 @@ class Bot:
                 {"bars": 0 if m1_data is None else len(m1_data)},
             )
             return
-
-        self.adaptive_conf.update(m1_data)
 
         symbol_info = self.client.get_symbol_info(self.symbol)
         if symbol_info is None:
@@ -515,92 +489,31 @@ class Bot:
                  "h1_high": h1_high, "h1_low": h1_low, **rejection},
             )
 
-        # Shared entry logic
-        override = getattr(self, '_signal_entry_threshold_override', None)
-        effective_threshold = override if override is not None else (self.meta.current_threshold if self.meta else cfg.SIGNAL_ENTRY_THRESHOLD)
         if signal:
-            atr_thresh = signal.get("atr_entry_threshold")
-            if atr_thresh is not None:
-                effective_threshold = max(atr_thresh, effective_threshold)
-        if signal and (signal.get('ml_override', False) or signal["score"] >= effective_threshold):
             can_enter, reason = self.risk_manager.can_enter_trade(
-                symbol_info, datetime.utcnow(),
-                ml_override=signal.get('ml_override', False)
+                symbol_info, datetime.utcnow()
             )
             if not can_enter:
-                bk_key = f"blocked_{signal['direction']}|{reason}|{signal.get('ml_override')}"
+                bk_key = f"blocked_{signal['direction']}|{reason}"
                 bk_now = time.monotonic()
                 if bk_key != self._last_signal_blocked_key or bk_now - self._last_signal_blocked_time >= 30:
                     self._last_signal_blocked_key = bk_key
                     self._last_signal_blocked_time = bk_now
                     self.logger.signal(
-                f"Signal {signal.get('direction', 'UNKNOWN')} (score={signal['score']:.2f}) "
+                f"Signal {signal.get('direction', 'UNKNOWN')} "
                 f"blocked: {reason} | "
                 f"price={current_price:.2f} "
                 f"spread={symbol_info.get('spread', 0)}"
             )
                 return
 
-            if not signal.get('ml_override', False) and not self.adaptive_conf.should_enter():
-                self.logger.signal(
-                    f"Signal {signal.get('direction', 'UNKNOWN')} score={signal['score']:.2f} "
-                    f"blocked: adaptive confirmation (low vol filter)"
-                )
-                return
-
-            gemini_advice = await self.gemini_advisor.advise_entry({
-                "bias": self._bias_summary.get("bias", "UNKNOWN"),
-                "direction": signal.get("direction", "UNKNOWN"),
-                "score": signal["score"],
-                "atr": signal.get("atr_value"),
-                "breakout_dist": signal.get("breakout_dist"),
-                "range_size": signal.get("range_size"),
-                "spread": symbol_info.get("spread", 0),
-                "consecutive_losses": self.risk_manager.consecutive_losses,
-                "session": self._current_session(),
-                "momentum": round(
-                    self.signal_engine.compute_momentum(m1_data), 3
-                ) if hasattr(self.signal_engine, 'compute_momentum') else None,
-                "volatility": symbol_info.get("volatility", 0),
-            })
-
-            if gemini_advice:
-                action = gemini_advice.get("action", "proceed")
-                reason = gemini_advice.get("reason", "")
-                self.logger.signal(
-                    f"Gemini: {action} | {reason}"
-                )
-                if action == "skip":
-                    return
-                if action == "caution":
-                    tp_mod = float(gemini_advice.get("tp_modifier", 1.0))
-                    if "tp1" in signal:
-                        signal["tp1"] = signal["entry_price"] + (
-                            signal["tp1"] - signal["entry_price"]
-                        ) * tp_mod
-                    if "tp2" in signal:
-                        signal["tp2"] = signal["entry_price"] + (
-                            signal["tp2"] - signal["entry_price"]
-                        ) * tp_mod
-                    if "tp3" in signal:
-                        signal["tp3"] = signal["entry_price"] + (
-                            signal["tp3"] - signal["entry_price"]
-                        ) * tp_mod
-
             self._current_signal = signal
+            ml_tag = f" (ML conf={signal.get('ml_confidence', 0):.2f} × {signal.get('num_positions', 1)} pos)"
             self.logger.signal(
-                f"Signal triggered: {signal.get('direction', 'UNKNOWN')} "
+                f"Signal triggered: {signal.get('direction', 'UNKNOWN')}{ml_tag} "
                 f"score={signal['score']:.2f}"
             )
             await self._execute_entry(signal, symbol_info)
-        elif signal:
-            self._log_signal_diagnostic(
-                "score_below_entry_threshold",
-                {"direction": signal["direction"],
-                 "price": current_price,
-                 "score": signal["score"],
-                 "threshold": effective_threshold},
-            )
 
     def _current_session(self) -> str:
         h = datetime.utcnow().hour
@@ -642,21 +555,15 @@ class Bot:
             f"breakout={fmt_num(context.get('breakout_dist'))} "
             f"range={fmt_num(context.get('range_size'))} "
             f"score={fmt_num(context.get('score'), 3)} "
-            f"threshold={fmt_num(context.get('threshold', cfg.SIGNAL_ENTRY_THRESHOLD), 3)}"
+            f"threshold={fmt_num(context.get('threshold', 0.75), 3)}"
         )
 
     async def _handle_in_trade(self, pnl_data: Dict):
         if pnl_data["open_count"] == 0:
-            # Grace period: if we just entered, API may not show positions yet
             if getattr(self.position_manager, "_event_start_ts", None) is not None and time.time() - self.position_manager._event_start_ts < 10:
                 self.logger.debug("Waiting for positions to appear (API delay grace period)")
                 return
-            self.risk_manager.record_exit(pnl_data["event_pnl"])
-            if self.meta:
-                self.meta.record_trade(pnl_data["event_pnl"], self._bias_summary.get("strength", 0))
-                balance = (self.client.get_account_info() or {}).get("balance", 0)
-                self.meta.update(balance, self._bias_summary)
-            self._enter_cooldown()
+            self.state = self.STATES["IDLE"]
             return
 
         acct = self.client.get_account_info()
@@ -668,21 +575,9 @@ class Bot:
         if not event_ok:
             self.logger.warning(f"Event stop: {event_msg}")
             closed = self.trade_executor.close_all_bot_positions()
-            realized_pnl = 0.0
             for pos_data in closed:
                 self.position_manager.note_closed(pos_data)
-                realized_pnl += pos_data.get("profit", 0)
-            self.risk_manager.record_exit(realized_pnl, len(closed))
-            if self.meta:
-                self.meta.record_trade(realized_pnl, self._bias_summary.get("strength", 0))
-                self.meta.update(balance, self._bias_summary)
-            await self._notify(
-                "trade_close",
-                "Trade Closed (Event Loss)",
-                f"PnL: ${pnl_data['event_pnl']:.2f} | {self.position_manager.open_count} position(s)",
-                {"pnl": pnl_data["event_pnl"], "reason": "event_loss"},
-            )
-            self._enter_cooldown()
+            self.state = self.STATES["IDLE"]
             return
 
         m1_count = cfg.ML_M1_HISTORY_BARS if (hasattr(self, '_direction_predictor') and self._direction_predictor is not None) else 20
@@ -731,64 +626,15 @@ class Bot:
                 self._last_ml_hold_log = now_t
                 self.logger.signal(f"ML hold: suppressing exit, ML still confident in {direction}")
 
-        gemini_exit_advice = None
-        if not should_exit:
-            gemini_exit_advice = await self.gemini_advisor.advise_exit({
-                "direction": direction,
-                "pnl": round(pnl_data["event_pnl"], 2),
-                "run_duration_min": round(
-                    (time.time() - getattr(self.position_manager, '_event_start_ts', 0)) / 60
-                ) if getattr(self.position_manager, '_event_start_ts', None) else None,
-                "momentum": round(
-                    self.signal_engine.compute_momentum(m1_data), 3
-                ) if hasattr(self.signal_engine, 'compute_momentum') else None,
-                "distance_from_entry": round(
-                    m1_data["close"].iloc[-1] - entry_price
-                ) if direction == "BUY" else round(
-                    entry_price - m1_data["close"].iloc[-1]
-                ),
-                "tp1": self._current_signal.get("tp1") if self._current_signal else None,
-                "tp2": self._current_signal.get("tp2") if self._current_signal else None,
-                "spread": (self.client.get_symbol_info(self.symbol) or {}).get("spread", 0)
-                if self.client else 0,
-            })
-            if gemini_exit_advice and gemini_exit_advice.get("action") == "exit_early":
-                self.logger.signal(
-                    f"Gemini suggests early exit: {gemini_exit_advice.get('reason', '')}"
-                )
-                should_exit = True
-
         if should_exit:
             self.logger.signal(
                 f"Exit signal: score={exit_score:.2f} reason={reason}"
             )
             closed = self.trade_executor.close_all_bot_positions()
-            realized_pnl = 0.0
             for pos_data in closed:
                 self.position_manager.note_closed(pos_data)
-                realized_pnl += pos_data.get("profit", 0)
-            self.risk_manager.record_exit(realized_pnl, len(closed))
-            if self.meta:
-                self.meta.record_trade(realized_pnl, self._bias_summary.get("strength", 0))
-                self.meta.update(balance, self._bias_summary)
-            await self._notify(
-                "trade_close",
-                "Trade Closed",
-                f"PnL: ${pnl_data['event_pnl']:.2f} | {reason}",
-                {"pnl": pnl_data["event_pnl"], "reason": reason},
-            )
-            self._enter_cooldown()
-            return
-
-    async def _handle_cooldown(self):
-        if self._winding_down:
             self.state = self.STATES["IDLE"]
-            self._cooldown_until = None
             return
-        if self._cooldown_until and datetime.now() >= self._cooldown_until:
-            self.logger.info("Cooldown expired, resuming search")
-            self.state = self.STATES["IDLE"]
-            self._cooldown_until = None
 
     async def _handle_waiting_for_funds(self):
         info = self.client.get_account_info()
@@ -811,11 +657,6 @@ class Bot:
 
         summary = self.bias_engine.update(h1_data)
         self._bias_summary = summary
-
-        if self.meta:
-            info = self.client.get_account_info()
-            balance = info["balance"] if info else 0
-            self.meta.update(balance, summary)
 
         tradeable = self.bias_engine.is_tradeable()
         self.logger.bias(
@@ -858,45 +699,13 @@ class Bot:
 
         self.scaler.update_peak(balance)
 
-        lot_mult = getattr(self, '_lot_multiplier_override', None)
-        if lot_mult is None:
-            lot_mult = self.meta.current_lot_mult if self.meta else cfg.LOT_MULTIPLIER
-
-        if cfg.AGGRESSIVE_SIZING_ENABLED:
-            if score >= cfg.AGGRESSIVE_VERY_STRONG_THRESHOLD:
-                lot_mult *= cfg.AGGRESSIVE_VERY_STRONG_LOT_MULT
-                self.logger.info(
-                    f"Aggressive LOT: score={score:.2f} >= {cfg.AGGRESSIVE_VERY_STRONG_THRESHOLD} "
-                    f"→ lot_mult={lot_mult:.1f}x"
-                )
-            elif score >= cfg.AGGRESSIVE_STRONG_THRESHOLD:
-                lot_mult *= cfg.AGGRESSIVE_STRONG_LOT_MULT
-                self.logger.info(
-                    f"Aggressive LOT: score={score:.2f} >= {cfg.AGGRESSIVE_STRONG_THRESHOLD} "
-                    f"→ lot_mult={lot_mult:.1f}x"
-                )
-
+        lot_mult = signal.get("lot_mult", cfg.LOT_MULTIPLIER)
         ml_conf = signal.get("ml_confidence", 0.0)
-        if ml_conf >= cfg.ML_CONF_VERY_STRONG_THRESHOLD:
-            lot_mult *= cfg.ML_CONF_VERY_STRONG_LOT_MULT
-            self.logger.info(
-                f"ML confidence LOT: ml_conf={ml_conf:.4f} >= {cfg.ML_CONF_VERY_STRONG_THRESHOLD} "
-                f"→ lot_mult={lot_mult:.1f}x"
-            )
-        elif ml_conf >= cfg.ML_CONF_STRONG_THRESHOLD:
-            lot_mult *= cfg.ML_CONF_STRONG_LOT_MULT
-            self.logger.info(
-                f"ML confidence LOT: ml_conf={ml_conf:.4f} >= {cfg.ML_CONF_STRONG_THRESHOLD} "
-                f"→ lot_mult={lot_mult:.1f}x"
-            )
-
         lot = min(self.scaler.get_lot(balance) * lot_mult, cfg.MAX_LOT)
         vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
         lot = round(lot / vol_step) * vol_step
         lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), min(lot, fresh_info.get("volume_max", cfg.MAX_LOT)))
-        max_trades = self.scaler.get_trades_per_event(balance, score, ml_conf)
-        if self.meta:
-            max_trades = self.meta.current_trades_per_event
+        max_trades = signal.get("num_positions", 1)
 
         # Price drift check — reject if price moved outside allowed drift
         current_price = fresh_info.get("bid", fresh_info.get("price", 0)) if direction == "SELL" else fresh_info.get("ask", fresh_info.get("price", 0))
@@ -949,12 +758,7 @@ class Bot:
         )
 
         any_opened = False
-        self.risk_manager.set_event_trade_limit(max_trades)
         for i in range(max_trades):
-            can_add, add_msg = self.risk_manager.can_add_to_event()
-            if not can_add:
-                break
-
             # Recheck margin before each subsequent trade
             if i > 0:
                 acct = self.client.get_account_info()
@@ -971,7 +775,6 @@ class Bot:
             )
             if ticket is not None:
                 any_opened = True
-                self.risk_manager.record_entry(ml_override=signal.get('ml_override', False))
                 await asyncio.sleep(0.3)
             else:
                 err_detail = ""
@@ -999,14 +802,8 @@ class Bot:
                 self.position_manager._event_start_ts = time.time()
             open_cnt = self.position_manager.open_count or max_trades
             self.logger.info(
-                f"Entered {direction} mode with "
-                f"{open_cnt} position(s)"
-            )
-            await self._notify(
-                "trade_open",
-                "Trade Opened",
-                f"{direction} {lot} {self.symbol} @ ${current_price:.2f}",
-                {"direction": direction, "lot": lot, "price": current_price, "symbol": self.symbol},
+                f"Entered {direction} with {open_cnt} position(s) "
+                f"(ML conf={ml_conf:.2f})"
             )
         else:
             self.state = self.STATES["IDLE"]
@@ -1038,18 +835,6 @@ class Bot:
         except IOError:
             pass
 
-    def _enter_cooldown(self):
-        self.position_manager._event_start_ts = None
-        self.state = self.STATES["COOLDOWN"]
-        mult = 1 + self.risk_manager.consecutive_losses
-        duration = self.risk_manager.cooldown_seconds * mult
-        self._cooldown_until = datetime.now() + \
-            timedelta(seconds=duration)
-        self.logger.info(
-            f"Cooldown for {duration}s (losses={self.risk_manager.consecutive_losses}) "
-            f"until {self._cooldown_until.strftime('%H:%M:%S')}"
-        )
-
     def get_state_summary(self) -> Dict:
         account = self.client.get_account_info()
         current_balance = account["balance"] if account else 0
@@ -1062,22 +847,8 @@ class Bot:
             "bias": self._bias_summary,
             "signal": signal,
             "positions": self.position_manager.summary(),
-            "risk": {
-                "consecutive_losses": self.risk_manager.consecutive_losses,
-                "session_trades": self.risk_manager.session_trades,
-                "event_trades": self.risk_manager.event_trades,
-                "cooldown_until": self._cooldown_until.isoformat()
-                if self._cooldown_until else None,
-                "cooldown_active": self.state == self.STATES["COOLDOWN"],
-                "max_daily_loss": self.risk_manager.max_daily_loss,
-                "max_event_loss": self.risk_manager.max_event_loss,
-                "max_trades_per_event": self.risk_manager.max_trades_per_event,
-                "max_trades_per_session": self.risk_manager.max_trades_per_session,
-                "cooldown_seconds": self.risk_manager.cooldown_seconds,
-                "daily_pnl": self.risk_manager.daily_pnl,
-            },
+            "risk": {},
             "scaler": self.scaler.summary(current_balance) if self.scaler.starting_balance else None,
-            "cooldown_active": self.state == self.STATES["COOLDOWN"],
             "last_logs": self.logger.logs[-50:],
             "closed_trades": self.position_manager.closed_history[-100:],
         }
@@ -1104,36 +875,14 @@ class Bot:
             f"Closed {len(closed)} position(s) manually",
             {"count": len(closed), "reason": "emergency"},
         )
-        self.state = self.STATES["COOLDOWN"]
-        self._enter_cooldown()
+        self.state = self.STATES["IDLE"]
         return len(closed)
 
     def update_settings(self, settings: Dict):
         clamped = {}
-        if "max_daily_loss" in settings:
-            clamped["max_daily_loss"] = max(0.01, min(float(settings["max_daily_loss"]), 10000.0))
-            self.risk_manager.max_daily_loss = clamped["max_daily_loss"]
-        if "max_event_loss" in settings:
-            clamped["max_event_loss"] = max(0.01, min(float(settings["max_event_loss"]), 1000.0))
-            self.risk_manager.max_event_loss = clamped["max_event_loss"]
-        if "max_trades_per_event" in settings:
-            clamped["max_trades_per_event"] = max(1, min(int(settings["max_trades_per_event"]), 50))
-            self.risk_manager.max_trades_per_event = clamped["max_trades_per_event"]
-        if "max_trades_per_session" in settings:
-            clamped["max_trades_per_session"] = max(1, min(int(settings["max_trades_per_session"]), 100))
-            self.risk_manager.max_trades_per_session = clamped["max_trades_per_session"]
-        if "cooldown_seconds" in settings:
-            clamped["cooldown_seconds"] = max(0, min(int(settings["cooldown_seconds"]), 86400))
-            self.risk_manager.cooldown_seconds = clamped["cooldown_seconds"]
-        if "consecutive_loss_limit" in settings:
-            clamped["consecutive_loss_limit"] = max(1, min(int(settings["consecutive_loss_limit"]), 100))
-            self.risk_manager.max_consecutive_losses = clamped["consecutive_loss_limit"]
         if "lot_multiplier" in settings:
             clamped["lot_multiplier"] = max(0.1, min(float(settings["lot_multiplier"]), 100.0))
             self._lot_multiplier_override = clamped["lot_multiplier"]
-        if "signal_entry_threshold" in settings:
-            clamped["signal_entry_threshold"] = max(0.1, min(float(settings["signal_entry_threshold"]), 1.0))
-            self._signal_entry_threshold_override = clamped["signal_entry_threshold"]
         if "exit_threshold_tight" in settings:
             clamped["exit_threshold_tight"] = max(0.01, min(float(settings["exit_threshold_tight"]), 1.0))
             self._exit_threshold_override = clamped["exit_threshold_tight"]
