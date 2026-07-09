@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import uuid
@@ -188,7 +189,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         acct = await get_account_by_identifier(identifier)
         if not acct:
             return
-        bot_pool.start(
+        await bot_pool.start(
             identifier=acct["identifier"],
             api_key=acct["api_key"],
             password=acct["password"],
@@ -225,14 +226,16 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
 
         temp = CapitalClient()
         ok = temp.initialize(api_key=data.api_key, identifier=ident, password=data.password, demo=data.demo)
-        err_msg = temp.last_error()[1] if not ok else ""
+        last_err = temp.last_error()
+        err_msg = str(last_err[1]) if last_err and len(last_err) > 1 else str(last_err or "")
         temp.shutdown()
         if not ok:
             logger.warning("Capital.com auth failed for %s with demo=%s: %s", ident, data.demo, err_msg)
             # Diagnostic: try the opposite mode
             temp2 = CapitalClient()
             ok2 = temp2.initialize(api_key=data.api_key, identifier=ident, password=data.password, demo=not data.demo)
-            err2 = temp2.last_error()[1] if not ok2 else ""
+            last_err2 = temp2.last_error()
+            err2 = str(last_err2[1]) if last_err2 and len(last_err2) > 1 else str(last_err2 or "")
             temp2.shutdown()
             if ok2:
                 logger.warning("DIAG: %s works with demo=%s (opposite of what user selected)", ident, not data.demo)
@@ -290,11 +293,11 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         ident = acct["identifier"]
         demo = acct.get("demo", True)
 
-        if bot_pool.is_running(ident):
+        if await asyncio.to_thread(bot_pool.is_running, ident):
             return JSONResponse(status_code=400, content={"error": "Bot already running for this account"})
 
         if not demo:
-            state_data = bot_pool.get_state(ident)
+            state_data = await asyncio.to_thread(bot_pool.get_state, ident)
             bal = 0.0
             if state_data and state_data.get("account") and not state_data["account"].get("error"):
                 bal = state_data["account"].get("balance", 0)
@@ -305,7 +308,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                     "subscription": sub,
                 })
 
-        result = bot_pool.start(
+        result = await asyncio.to_thread(
+            bot_pool.start,
             identifier=ident,
             api_key=acct["api_key"],
             password=acct["password"],
@@ -356,14 +360,14 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         if not accounts:
             return {"message": "No accounts to stop"}
         ident = accounts[0]["identifier"]
-        open_positions = bot_pool.open_count(ident)
+        open_positions = await asyncio.to_thread(bot_pool.open_count, ident)
         if open_positions > 0:
             return JSONResponse(status_code=409, content={
                 "error": f"Close all {open_positions} open position(s) before stopping the bot.",
                 "open_count": open_positions,
                 "action_required": "close_all",
             })
-        result = bot_pool.stop(ident)
+        result = await asyncio.to_thread(bot_pool.stop, ident)
         if result["success"]:
             await set_account_active(ident, False)
             bot_pool.add_log(ident, "Bot stopped.", "WARNING")
@@ -383,10 +387,10 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         if not accounts:
             return {"running": False, "state": None}
         ident = accounts[0]["identifier"]
-        state = bot_pool.get_state(ident)
+        state = await asyncio.to_thread(bot_pool.get_state, ident)
         if state is None:
             return {"running": False, "state": None}
-        running = bot_pool.is_running(ident) or False
+        running = await asyncio.to_thread(bot_pool.is_running, ident) or False
         return {**state, "running": running}
 
     @app.get("/api/device/bot/logs")
@@ -597,7 +601,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         avg_loss = round(gross_loss / losses, 2) if losses > 0 else 0
 
         max_dd = 0.0
-        sorted_closed = sorted(closed, key=lambda t: t.get("closed_at", "")) if closed else []
+        sorted_closed = sorted(closed, key=lambda t: t.get("closed_at") or "") if closed else []
         if closed:
             running = starting
             peak = starting
@@ -648,7 +652,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         starting = scaler.get("starting_balance", 0) or 0
         closed = bot_data.get("closed_trades", []) or []
 
-        sorted_closed = sorted(closed, key=lambda t: t.get("closed_at", ""))
+        sorted_closed = sorted(closed, key=lambda t: t.get("closed_at") or "")
         points = []
         running = starting
         now = datetime.utcnow()
@@ -898,7 +902,10 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                 bal = state["account"].get("balance", 0)
         sub = await get_subscription(ident, bal)
         due = sub.get("unpaid_fees", sub.get("due_amount", 0))
-        amount = float(data.get("amount", due))
+        try:
+            amount = float(data.get("amount", due))
+        except (ValueError, TypeError):
+            amount = due
         amount = max(amount, due, 1.0)
         order_id = f"maxel_{uuid.uuid4().hex[:16]}"
         await _maxelpay_register_order(order_id, ident)
@@ -936,7 +943,10 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         if not order_id or not event:
             return {"ok": False}
         if event == "payment.completed":
-            amount = float(payload.get("totalPaidUsd", payload.get("amount", 0)))
+            try:
+                amount = float(payload.get("totalPaidUsd", payload.get("amount", 0)))
+            except (ValueError, TypeError):
+                amount = 0
             ok = await process_maxelpay_callback(order_id, status, amount)
             if ok and bot_pool:
                 ident = await _maxelpay_get_identifier(order_id)
@@ -964,7 +974,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                     seen.add(n["id"])
                     all_notifs.append(n)
             total_unread += await get_unread_notification_count(ident)
-        all_notifs.sort(key=lambda n: n.get("created_at", ""), reverse=True)
+        all_notifs.sort(key=lambda n: n.get("created_at") or "", reverse=True)
         return {"notifications": all_notifs[:50], "unread_count": total_unread}
 
     @app.post("/api/device/notifications/mark-read")

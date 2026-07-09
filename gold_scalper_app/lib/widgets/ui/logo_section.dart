@@ -15,7 +15,7 @@ class _LogoSectionState extends State<LogoSection>
     with SingleTickerProviderStateMixin {
   late AnimationController _fadeController;
   int _index = 0;
-  static const _text = 'GOLD SCALPER PRO';
+  static const _text = 'QuantoraFX';
   Timer? _timer;
 
   @override
@@ -60,7 +60,7 @@ class _LogoSectionState extends State<LogoSection>
           ).createShader(bounds),
           blendMode: BlendMode.srcIn,
           child: Text(
-            'HIDE',
+            'QuantoraFX',
             style: TextStyle(
               color: Colors.white,
               fontSize: 64,

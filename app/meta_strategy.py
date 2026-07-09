@@ -119,10 +119,10 @@ class MetaStrategy:
 
         if strength >= 0.7 and wr >= 0.4 and pf >= 1.5:
             return "TRENDING_STRONG"
-        if strength >= 0.4 and wr >= 0.35 and pf >= 1.2:
-            return "TRENDING_WEAK"
         if self.dd_pct(balance) > 15:
             return "DRAWDOWN"
+        if strength >= 0.4 and wr >= 0.35 and pf >= 1.2:
+            return "TRENDING_WEAK"
 
         if strength < 0.4 or (wr < 0.3 and pf < 1.0):
             return "CHOPPY"
@@ -219,7 +219,7 @@ class MetaStrategy:
         self._current_threshold = new_threshold
 
         lot_factor = self._compute_lot_mult_adjustment(regime, balance)
-        self._current_lot_mult = max(1, round(self.base_lot_multiplier * lot_factor))
+        self._current_lot_mult = max(0.1, round(self.base_lot_multiplier * lot_factor))
 
         self._current_trades_per_event = self._compute_trades_adjustment(regime, balance)
         self._current_bias_min = self._compute_bias_min_adjustment(regime)

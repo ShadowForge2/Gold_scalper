@@ -72,7 +72,7 @@ class BotPool:
             if bot is None:
                 return {"success": False, "error": "No bot running for this account"}
             if loop and loop.is_running():
-                for task in asyncio.all_tasks(loop):
+                for task in asyncio.all_tasks():
                     task.cancel()
                 loop.call_soon_threadsafe(loop.stop)
             return {"success": True, "message": "Bot stopped"}

@@ -6,6 +6,8 @@ from typing import Optional, Tuple
 import joblib
 
 
+SWEEP_LOOKBACK = 12  # M5 bars (~1 hour)
+
 FEATURE_COLS = [
     "return_1", "return_2", "return_3", "return_5", "return_10",
     "return_20",
@@ -22,6 +24,7 @@ FEATURE_COLS = [
     "volatility_ratio",
     "close_position",
     "return_vol_ratio",
+    "sweep_low_atr", "sweep_high_atr", "close_vs_range_12",
 ]
 
 
@@ -69,7 +72,7 @@ def compute_features(df: pd.DataFrame, h1_df: Optional[pd.DataFrame] = None) -> 
     roll_vol = roll_vol.replace(0, np.nan)
     features["volume_ratio"] = pd.Series(vols, index=df.index) / roll_vol
 
-    delta = pd.Series(closes - np.roll(closes, 1), index=df.index)
+    delta = pd.Series(np.diff(closes, prepend=np.nan), index=df.index)
     gain = delta.where(delta > 0, 0).rolling(14, min_periods=2).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14, min_periods=2).mean()
     rs = gain / loss.replace(0, np.nan)
@@ -132,9 +135,24 @@ def compute_features(df: pd.DataFrame, h1_df: Optional[pd.DataFrame] = None) -> 
         / short_vol.replace(0, np.nan)
     )
 
+    # SMC/manipulation features
+    roll_min = pd.Series(lows, index=df.index).rolling(SWEEP_LOOKBACK, min_periods=SWEEP_LOOKBACK).min()
+    roll_max = pd.Series(highs, index=df.index).rolling(SWEEP_LOOKBACK, min_periods=SWEEP_LOOKBACK).max()
+    roll_range = roll_max - roll_min
+    roll_range_safe = roll_range.replace(0, np.nan)
+    atr_safe = atr_series.replace(0, np.nan)
+
+    sweep_low = np.maximum(0, roll_min.values - closes)
+    features["sweep_low_atr"] = sweep_low / atr_safe.values
+
+    sweep_high = np.maximum(0, closes - roll_max.values)
+    features["sweep_high_atr"] = sweep_high / atr_safe.values
+
+    features["close_vs_range_12"] = (closes - roll_min.values) / roll_range_safe.values
+
     times = df.index if isinstance(df.index, pd.DatetimeIndex) else pd.to_datetime(df.index)
-    hours = times.hour if hasattr(times, "hour") else times.hour
-    days = times.dayofweek if hasattr(times, "dayofweek") else times.dayofweek
+    hours = times.hour
+    days = times.dayofweek
     features["hour_sin"] = np.sin(2 * np.pi * hours / 24)
     features["hour_cos"] = np.cos(2 * np.pi * hours / 24)
     features["day_sin"] = np.sin(2 * np.pi * days / 7)
@@ -299,9 +317,25 @@ class SLTPredictor:
         return None
 
 
-EXIT_FEATURE_COLS = FEATURE_COLS + [
+EXIT_FEATURE_COLS = [
+    "return_1", "return_2", "return_3", "return_5", "return_10",
+    "return_20",
+    "rsi_14",
+    "atr_norm",
+    "bb_position",
+    "hl_ratio",
+    "volume_ratio",
+    "hour_sin", "hour_cos",
+    "day_sin", "day_cos",
+    "sma_ratio",
+    "macd", "macd_signal", "macd_hist",
+    "h1_pos", "h1_dir", "above_h1h", "below_h1l",
+    "volatility_ratio",
+    "close_position",
+    "return_vol_ratio",
     "bars_held", "pnl_atr", "peak_atr", "drawdown_pct",
     "entry_score", "atr_change", "wrong_streak",
+    "sweep_atr", "recovery_pct",
 ]
 
 
@@ -325,7 +359,7 @@ class ExitPredictor:
                     row[c] = float(market_features[c]) if hasattr(market_features[c], '__float__') else 0.0
                 else:
                     row[c] = 0.0
-            for c in ["bars_held", "pnl_atr", "peak_atr", "drawdown_pct", "entry_score", "atr_change", "wrong_streak"]:
+            for c in ["bars_held", "pnl_atr", "peak_atr", "drawdown_pct", "entry_score", "atr_change", "wrong_streak", "sweep_atr", "recovery_pct"]:
                 row[c] = float(trade_state.get(c, 0.0))
             vec = np.array([[row[c] for c in EXIT_FEATURE_COLS]], dtype=np.float32)
             probs = self.model.predict_proba(vec)

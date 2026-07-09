@@ -21,9 +21,13 @@ class AdaptiveConfirmation:
         self.p_norm = cfg.ADAPTIVE_CONF_P_NORM
         self.p_high = cfg.ADAPTIVE_CONF_P_HIGH if cfg.ADAPTIVE_CONF_P_HIGH >= 0 else None
         self._warmup_bars = min(self.max_window, 100)
+        self._last_bar_idx = 0
 
     def update(self, m1_data):
         """Update rolling windows with latest M1 bar."""
+        if hasattr(self, '_last_bar_idx') and self._last_bar_idx == len(m1_data):
+            return
+        self._last_bar_idx = len(m1_data)
         if len(m1_data) < 2:
             return
 
@@ -58,7 +62,7 @@ class AdaptiveConfirmation:
         if not cfg.ADAPTIVE_CONFIRMATION_ENABLED:
             return True
 
-        if len(self.br_window) < 20 or len(self.atr_window) < self._warmup_bars:
+        if len(self.br_window) < self._warmup_bars or len(self.atr_window) < self._warmup_bars:
             return True
 
         lo = float(np.nanpercentile(self.atr_window, 25))

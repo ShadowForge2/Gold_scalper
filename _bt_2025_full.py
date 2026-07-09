@@ -13,10 +13,11 @@ from app.direction_predictor import DirectionPredictor, ExitPredictor, compute_f
 from app.meta_strategy import MetaStrategy
 from app.risk_manager import EquityScaler
 
-CS = 100; LEV = 200; TRADE_MAX_BARS = 25
+CS = 100; LEV = 200; TRADE_MAX_BARS = 25; HP_COLLAPSE_THRESHOLD = 0.40
 SESSION_HOURS = {"ASIA": (0, 8), "LONDON": (7, 17), "NEW_YORK": (12, 22)}
 
-def in_allowed_session(ts):
+def in_allowed_session(ts, allow_all=False):
+    if allow_all: return True
     h = ts.hour
     for s in cfg.ALLOWED_SESSIONS.split(","):
         s = s.strip().upper()
@@ -30,7 +31,7 @@ def compute_atr_series(high, low, close, period=14):
     tr[0] = high[0] - low[0]
     return np.where(np.isnan(pd.Series(tr).rolling(period, min_periods=period).mean().values), 0.0, tr)
 
-def run_bt(year, pred, exit_predictor=None, mode="baseline"):
+def run_bt(year, pred, exit_predictor=None, mode="baseline", allow_all=False, trace_first=False):
     client = DukascopyClient()
     m1 = client.download_year(year).sort_values("time").drop_duplicates(subset="time")
     m5 = client.resample_to(m1, 5).set_index("time")
@@ -77,10 +78,11 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline"):
     exit_reasons = {}; meta = MetaStrategy()
     scaler = EquityScaler()
     scaler.initialize(bal)
+    event_log = []
 
     for i in range(100, n - 15):
         ts_i = m5.index[i]
-        if not in_allowed_session(ts_i): continue
+        if not in_allowed_session(ts_i, allow_all=allow_all): continue
         bias_val = m5_bias[i]
         if bias_val == 0: continue
         entry_dir = "BUY" if bias_val == 1 else "SELL"
@@ -98,9 +100,29 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline"):
             if entry_dir == "SELL" and pb_d[i] < cfg.ML_CONFIDENCE_THRESHOLD: continue
 
         ep = p; total_events += 1
-        n_lots = scaler.get_lot(bal); actual_trades = 1
+        ml_conf = pb_u[i] if entry_dir == "BUY" else pb_d[i]
+        ml_conf = ml_conf if not np.isnan(ml_conf) else 0.5
+        signal_score = ml_conf
+
+        # --- Position sizing (matches live bot.py:861-899) ---
+        lot_mult = float(meta.current_lot_mult)
+        if cfg.AGGRESSIVE_SIZING_ENABLED:
+            if signal_score >= cfg.AGGRESSIVE_VERY_STRONG_THRESHOLD:
+                lot_mult *= cfg.AGGRESSIVE_VERY_STRONG_LOT_MULT
+            elif signal_score >= cfg.AGGRESSIVE_STRONG_THRESHOLD:
+                lot_mult *= cfg.AGGRESSIVE_STRONG_LOT_MULT
+        if ml_conf >= cfg.ML_CONF_VERY_STRONG_THRESHOLD:
+            lot_mult *= cfg.ML_CONF_VERY_STRONG_LOT_MULT
+        elif ml_conf >= cfg.ML_CONF_STRONG_THRESHOLD:
+            lot_mult *= cfg.ML_CONF_STRONG_LOT_MULT
+        n_lots = min(scaler.get_lot(bal) * lot_mult, cfg.MAX_LOT)
+        n_lots = round(n_lots / cfg.LOT_STEP) * cfg.LOT_STEP
+        n_lots = max(cfg.MIN_LOT, n_lots)
+
+        actual_trades = meta.current_trades_per_event
         best_pnl = 0.0; w_streak = 0
-        exited = False
+        exited = False; hp_was_high = False
+        wrong_candles = []  # rolling wrong-direction marker per bar
 
         for j in range(i + 1, min(i + TRADE_MAX_BARS + 1, n - 1)):
             fp = float(m5_close[j]); fh = float(m5_high[j]); fl = float(m5_low[j])
@@ -108,8 +130,9 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline"):
             bars = j - i
             hi_diff = (fh - ep) if entry_dir == "BUY" else (ep - fl)
             best_pnl = max(best_pnl, hi_diff)
-            w_streak = (w_streak + 1) if (entry_dir == "BUY" and fp < m5_open[j]) or \
-                        (entry_dir == "SELL" and fp > m5_open[j]) else 0
+            is_wrong = (entry_dir == "BUY" and fp < m5_open[j]) or (entry_dir == "SELL" and fp > m5_open[j])
+            w_streak = (w_streak + 1) if is_wrong else 0
+            wrong_candles.append(1 if is_wrong else 0)
             atr_j = max(float(m5_atr[j]), 0.01)
 
             hp = 0.5
@@ -120,6 +143,7 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline"):
                 ts = {"bars_held": bars, "pnl_atr": round(pnl_a, 4), "peak_atr": round(peak_a, 4),
                       "drawdown_pct": round(dd_pct, 4), "entry_score": 0.5, "atr_change": 1.0, "wrong_streak": w_streak}
                 hp = exit_predictor.predict_hold_prob(mf, ts)
+                hp_was_high = hp_was_high or (hp >= 0.60)
 
             # --- Mechanical exits (always check first) ---
             mech_now = False; mech_reason = None
@@ -139,6 +163,11 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline"):
                     else: break
                 if streak >= cfg.DIRECTION_LOSS_STREAK:
                     mech_now = True; mech_reason = "direction_loss"
+                # Cumulative direction loss: 5+ wrong out of last 7
+                if not mech_now and bars >= 7:
+                    recent = wrong_candles[-7:]
+                    if sum(recent) >= 5:
+                        mech_now = True; mech_reason = "direction_loss_cum"
 
             if not mech_now and bars >= cfg.PEAK_HARVEST_MIN_BARS_EXIT:
                 start = max(0, j - 19)
@@ -178,14 +207,16 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline"):
             elif mode == "narrow":
                 # Exit model only suppresses mechanical exits, NOT ml_reversal
                 if hp >= 0.70:
-                    # strong hold: suppress ALL mechanical fallsbacks
+                    # strong hold: suppress all mechanical fallbacks
                     pass
                 elif hp >= 0.60:
                     # moderate hold: suppress mechanical exits
                     pass
                 else:
-                    # uncertain or weak: allow mechanical exits
-                    if mech_now:
+                    # HP collapse guard: if model was confident then lost conviction while in loss
+                    if hp_was_high and hp < HP_COLLAPSE_THRESHOLD and diff <= 0 and bars >= 4:
+                        exit_now = True; exit_reason = "hp_collapse"
+                    elif mech_now:
                         exit_now = True; exit_reason = mech_reason
                 # ML reversal always works
                 if not exit_now and ml_rev:
@@ -216,6 +247,21 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline"):
 
             if exit_now:
                 prof = diff * CS * n_lots * actual_trades
+                event_log.append({"event": total_events, "entry_time": ts_i, "exit_time": m5.index[j],
+                                  "dir": entry_dir, "entry_px": ep, "exit_px": fp,
+                                  "reason": exit_reason, "profit": prof,
+                                  "bars": bars, "hp": hp, "lots": n_lots, "trades": actual_trades})
+                if trace_first and total_events == 1:
+                    entry_time = ts_i
+                    exit_time = m5.index[j]
+                    mins = (exit_time - entry_time).total_seconds() / 60
+                    bar_duration = bars * 5
+                    print(f"\n  FIRST EVENT:")
+                    print(f"    Entry: {entry_time} {entry_dir} @ ${ep:.2f}")
+                    print(f"    Exit:  {exit_time} ({exit_reason}) @ ${fp:.2f}")
+                    print(f"    Duration: {bar_duration} min ({bars} bars)")
+                    print(f"    Profit: ${prof:.2f}")
+                    print(f"    Exit model hold_prob: {hp:.3f}")
                 bal += prof
                 if prof > 0: wins += 1
                 exit_reasons[exit_reason] = exit_reasons.get(exit_reason, 0) + 1
@@ -226,6 +272,21 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline"):
             fp = float(fb["close"])
             diff = (fp - ep) if entry_dir == "BUY" else (ep - fp)
             prof = diff * CS * n_lots * actual_trades
+            event_log.append({"event": total_events, "entry_time": ts_i, "exit_time": m5.index[min(i + TRADE_MAX_BARS, len(m5) - 1)],
+                              "dir": entry_dir, "entry_px": ep, "exit_px": fp,
+                              "reason": "max_hold", "profit": prof,
+                              "bars": min(TRADE_MAX_BARS, len(m5) - 1 - i), "hp": 0.5,
+                              "lots": n_lots, "trades": actual_trades})
+            if trace_first and total_events == 1:
+                entry_time = ts_i
+                exit_time = m5.index[min(i + TRADE_MAX_BARS, len(m5) - 1)]
+                mins = (exit_time - entry_time).total_seconds() / 60
+                bar_duration = bars * 5
+                print(f"\n  FIRST EVENT:")
+                print(f"    Entry: {entry_time} {entry_dir} @ ${ep:.2f}")
+                print(f"    Exit:  {exit_time} (max_hold) @ ${fp:.2f}")
+                print(f"    Duration: {bar_duration} min ({bars} bars)")
+                print(f"    Profit: ${prof:.2f}")
             bal += prof
             if prof > 0: wins += 1
             exit_reasons["max_hold"] = exit_reasons.get("max_hold", 0) + 1
@@ -237,7 +298,7 @@ def run_bt(year, pred, exit_predictor=None, mode="baseline"):
         meta.update(bal, {"bias": "BULLISH" if h1_bias[h1_idx_map[i]] == 1 else "BEARISH",
                           "strength": abs(h1_bias[h1_idx_map[i]]) if abs(h1_bias[h1_idx_map[i]]) > 0 else 0.5})
 
-    return {"events": total_events, "wins": wins, "net_pnl": round(bal - 20, 2), "dd": round(dd, 2), "exit_reasons": exit_reasons}
+    return {"events": total_events, "wins": wins, "net_pnl": round(bal - 20, 2), "dd": round(dd, 2), "exit_reasons": exit_reasons, "event_log": event_log}
 
 def _compute_bias(h1):
     c = h1["close"].values.astype(np.float64)
@@ -280,27 +341,83 @@ if __name__ == "__main__":
     pred = DirectionPredictor.load("models/direction_xgb_m5.joblib")
     ep = ExitPredictor(model_path="models/exit_xgb_m5.joblib")
 
-    for year in [2024]:
-        print(f"\n{'='*60}\n=== {year} ===\n{'='*60}")
+    for year in [2024, 2025]:
+        print(f"\n{'='*80}\n=== {year} - baseline vs exit model comparison ===\n{'='*80}")
         t0 = time.time()
 
         b = run_bt(year, pred, exit_predictor=None, mode="baseline")
         n = run_bt(year, pred, exit_predictor=ep, mode="narrow")
 
-        print(f"{'':>20}  {'Events':>8} {'WR':>8} {'PnL':>14} {'DD':>10} {'AvgPnL':>10}")
-        print(f"{'BASELINE (no exit model):':>20}  {b['events']:>8} {b['wins']/max(1,b['events']):>7.1%} "
-              f"${b['net_pnl']:>10.2f} ${b['dd']:>7.2f} ${b['net_pnl']/max(1,b['events']):>8.2f}", flush=True)
-        print(f"{'EXIT MODEL (narrow):':>20}  {n['events']:>8} {n['wins']/max(1,n['events']):>7.1%} "
-              f"${n['net_pnl']:>10.2f} ${n['dd']:>7.2f} ${n['net_pnl']/max(1,n['events']):>8.2f}", flush=True)
-        delta_pnl = n['net_pnl'] - b['net_pnl']
-        delta_dd = n['dd'] - b['dd']
-        print(f"{'DELTA:':>20}  {'':>8} {'':>8} ${delta_pnl:>+10.2f} ${delta_dd:>+8.2f}")
-        print(f"\n  BASELINE exits: {dict(sorted(b['exit_reasons'].items(), key=lambda x: -x[1]))}")
-        print(f"  EXIT MODEL exits: {dict(sorted(n['exit_reasons'].items(), key=lambda x: -x[1]))}")
+        # Compare event logs to find disagreements
+        min_events = min(len(b["event_log"]), len(n["event_log"]))
+        disagreements = []
+        for idx in range(min_events):
+            be = b["event_log"][idx]
+            ne = n["event_log"][idx]
+            if be["reason"] != ne["reason"] or abs(be["profit"] - ne["profit"]) > 0.01:
+                disagreements.append((be, ne))
 
-        # Key metric: trail_stop + direction_loss + momentum_decay reduction
-        base_mech = sum(v for k, v in b['exit_reasons'].items() if k in ('trail_stop','direction_loss','momentum_decay'))
-        exit_mech = sum(v for k, v in n['exit_reasons'].items() if k in ('trail_stop','direction_loss','momentum_decay'))
-        print(f"\n  Mechanical exits (trail+dir_loss+mom_decay): {base_mech} -> {exit_mech} ({((base_mech-exit_mech)/max(1,base_mech))*100:.0f}% reduction)")
-        print(f"  ML reversal exits preserved: {b['exit_reasons'].get('ml_reversal',0)} → {n['exit_reasons'].get('ml_reversal',0)}")
-        print(f"  Time: {time.time()-t0:.1f}s")
+        print(f"\nTotal events: baseline={b['events']}, exit_model={n['events']}")
+        print(f"Disagreements found: {len(disagreements)}")
+
+        if disagreements:
+            # Filter to January only
+            jan_dis = [(be, ne) for be, ne in disagreements if be['entry_time'].month == 1]
+            show = len(jan_dis)
+            print(f"\n{'='*100}")
+            jan_count = len(jan_dis)
+            print(f"{f'January disagreements (all {jan_count}):':^100}")
+            print(f"{'='*100}")
+            for idx, (be, ne) in enumerate(jan_dis):
+                bals = "?"; nals = "?"
+                print(f"\n--- Disagreement #{idx+1} (event #{be['event']}) ---")
+                print(f"  Entry: {be['entry_time']} {be['dir']} @ ${be['entry_px']:.2f}")
+                print(f"  {'':>10} {'BASELINE':>25} {'EXIT MODEL':>25}")
+                print(f"  {'Exit time':>10} {str(be['exit_time']):>25} {str(ne['exit_time']):>25}")
+                print(f"  {'Reason':>10} {be['reason']:>25} {ne['reason']:>25}")
+                print(f"  {'Bars held':>10} {be['bars']:>25} {ne['bars']:>25}")
+                print(f"  {'Lots':>10} {be['lots']:>25.3f} {ne['lots']:>25.3f}")
+                print(f"  {'Trades':>10} {be['trades']:>25} {ne['trades']:>25}")
+                print(f"  {'Profit':>10} ${be['profit']:>21.2f} ${ne['profit']:>21.2f}")
+                if ne['hp'] != 0.5:
+                    print(f"  {'ExitModel HP':>10} {'N/A':>25} {ne['hp']:>25.3f}")
+                diff = ne['profit'] - be['profit']
+                print(f"  {'Difference':>10} {'':>25} ${diff:>+21.2f}")
+
+        # Summary stats
+        for name, r in [("BASELINE", b), ("EXIT MODEL", n)]:
+            total = r["events"]
+            wins = r["wins"]
+            losses = total - wins
+            wr = wins / total * 100 if total else 0
+            gross_win = sum(e["profit"] for e in r["event_log"] if e["profit"] > 0)
+            gross_loss = abs(sum(e["profit"] for e in r["event_log"] if e["profit"] <= 0))
+            pf = gross_win / gross_loss if gross_loss else float("inf")
+            avg_win = gross_win / wins if wins else 0
+            avg_loss = gross_loss / losses if losses else 0
+            avg_trades = sum(e["trades"] for e in r["event_log"]) / total if total else 0
+            max_dd = r["dd"]
+            print(f"\n  [{name}] Net PnL: ${r['net_pnl']:+.2f} | WR: {wr:.1f}% | PF: {pf:.2f} | "
+                  f"Wins: {wins}/{total} | AvgW: ${avg_win:.2f} | AvgL: ${avg_loss:.2f} | "
+                  f"AvgTrades/Event: {avg_trades:.1f} | MaxDD: ${max_dd:.2f}")
+
+        # Monthly comparison
+        df_b = pd.DataFrame(b["event_log"])
+        df_n = pd.DataFrame(n["event_log"])
+        df_b["month"] = df_b["entry_time"].dt.to_period("M")
+        df_n["month"] = df_n["entry_time"].dt.to_period("M")
+        monthly_b = df_b.groupby("month").agg(events=("profit", "count"), net_pnl=("profit", "sum"),
+                                              wins=("profit", lambda x: (x > 0).sum()))
+        monthly_n = df_n.groupby("month").agg(events=("profit", "count"), net_pnl=("profit", "sum"),
+                                              wins=("profit", lambda x: (x > 0).sum()))
+        monthly_b["wr"] = monthly_b["wins"] / monthly_b["events"] * 100
+        monthly_n["wr"] = monthly_n["wins"] / monthly_n["events"] * 100
+        compare = pd.DataFrame({
+            "BL_events": monthly_b["events"], "BL_PnL": monthly_b["net_pnl"], "BL_WR": monthly_b["wr"],
+            "EX_events": monthly_n["events"], "EX_PnL": monthly_n["net_pnl"], "EX_WR": monthly_n["wr"],
+        })
+        compare["Diff_PnL"] = compare["EX_PnL"] - compare["BL_PnL"]
+        print(f"\n  Monthly comparison:")
+        print(compare.to_string())
+
+        print(f"\n  Time: {time.time()-t0:.1f}s")

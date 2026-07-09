@@ -27,14 +27,14 @@ class PositionManager:
             "type": pos_data.get("type", "UNKNOWN"),
             "volume": pos_data.get("volume", 0),
             "entry_price": pos_data.get("price_open", 0),
-            "exit_price": pos_data.get("price_current", 0),
+            "exit_price": pos_data.get("price_close", pos_data.get("price_current", 0)),
             "profit": pos_data.get("profit", 0),
             "swap": pos_data.get("swap", 0),
             "symbol": pos_data.get("symbol", ""),
             "closed_at": datetime.utcnow().isoformat(),
         })
         if len(self.closed_history) > 500:
-            self.closed_history[:100] = []
+            self.closed_history = self.closed_history[-400:]
 
     def refresh(self) -> Dict:
         if self.client is None:
@@ -50,7 +50,8 @@ class PositionManager:
             p for p in raw_positions
             if str(p.get("ticket", "")) not in self._closed_tickets
         ]
-        self.event_pnl = sum(p.get("profit", 0) for p in self.open_positions)
+        closed_pnl = sum(p.get("profit", 0) for p in self.closed_history)
+        self.event_pnl = sum(p.get("profit", 0) for p in self.open_positions) + closed_pnl
         self.daily_pnl = self.client.get_total_daily_pnl(self.magic) or 0.0
         self.in_event = len(self.open_positions) > 0
         self.open_count = len(self.open_positions)

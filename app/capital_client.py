@@ -5,7 +5,11 @@ import asyncio
 from typing import Optional, List, Dict, Tuple
 from datetime import datetime
 from collections import deque
+import logging
 import config as cfg
+
+
+logger = logging.getLogger(__name__)
 
 
 TIMEFRAME_MAP = {
@@ -166,7 +170,6 @@ class CapitalClient:
                     time.sleep(1)
                     continue
                 raise
-        return None
 
     def shutdown(self):
         if self.connected:
@@ -332,6 +335,8 @@ class CapitalClient:
                 rows = self._parse_prices(prices)
                 all_rows.extend(rows)
                 cursor_to = prices[0].get("snapshotTime", "")
+                if not cursor_to:
+                    break  # no valid cursor, stop paginating
                 if prices[-1].get("snapshotTime", "") <= target_from:
                     break
             except Exception:
@@ -429,10 +434,10 @@ class CapitalClient:
                         "type": "BUY" if p.get("direction") == "BUY" else "SELL",
                         "volume": float(p.get("size", 0)),
                         "price_open": float(p.get("level", 0)),
-                        "price_current": float(mkt.get("bid", p.get("level", 0))),
+                        "price_current": float(mkt.get("bid") or p.get("level", 0)),
                         "sl": float(p.get("stopLevel", 0)) if p.get("stopLevel") else 0.0,
                         "tp": float(p.get("profitLevel", 0)) if p.get("profitLevel") else 0.0,
-                        "profit": float(p.get("upl", 0)),
+                        "profit": float(p.get("upl") or 0),
                         "swap": 0,
                         "magic": magic or 0,
                         "comment": comment,
@@ -507,7 +512,11 @@ class CapitalClient:
 
     async def order_send(self, request: dict) -> Dict:
         epic = request.get("epic") or self._resolve_epic(request.get("symbol") or "GOLD")
-        direction = "BUY" if request.get("type") == 0 else "SELL"
+        req_type = request.get("type")
+        if req_type is None:
+            logger.error("Missing 'type' in request")
+            return None, "missing_order_type"
+        direction = "BUY" if req_type == 0 else "SELL"
         volume = request.get("volume", 0.01)
 
         sl = request.get("sl")

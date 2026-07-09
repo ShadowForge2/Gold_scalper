@@ -31,6 +31,8 @@ class SignalEngine:
         self._logger = logger
         self._last_ml_override_log_time = 0.0
         self._last_ml_override_result_value = None
+        self._last_ml_exit_result = None
+        self._last_ml_exit_log_ts = 0
 
     def _reject(self, reason: str, **context) -> None:
         self.last_rejection = {
@@ -40,11 +42,7 @@ class SignalEngine:
         }
         return None
 
-    def _get_features(self, m1_data: pd.DataFrame = None, idx: int = None) -> Optional[pd.DataFrame]:
-        if hasattr(self, '_precomputed_features') and self._precomputed_features is not None and idx is not None:
-            feat = self._precomputed_features[idx]
-            if feat is not None and isinstance(feat, pd.DataFrame) and len(feat) > 0:
-                return feat
+    def _get_features(self, m1_data: pd.DataFrame = None) -> Optional[pd.DataFrame]:
         if m1_data is None:
             return None
         try:
@@ -140,7 +138,7 @@ class SignalEngine:
                         result = "exit"
                 if self._logger:
                     now_t = _time.time()
-                    if result != getattr(self, '_last_ml_exit_result', None) or now_t - getattr(self, '_last_ml_exit_log_ts', 0) > 60:
+                    if result != self._last_ml_exit_result or now_t - self._last_ml_exit_log_ts > 60:
                         self._logger.info(f"[ML] Exit signal: {result} | {trade_direction} "
                                           f"DOWN={prob_down:.3f} UP={prob_up:.3f} "
                                           f"hold_thr={hold_threshold} exit_thr={exit_threshold}")
@@ -201,12 +199,13 @@ class SignalEngine:
         # ML bias override: if ML confidently predicts opposite direction, trust ML
         ml_override = False
         ml_features = None
+        ml_conf = 0.0
         if self._direction_predictor is not None and _HAS_ML:
-            today = datetime.utcnow().day
+            today = datetime.utcnow().date()
             if today != self._ml_override_day:
                 self._ml_override_count = 0
                 self._ml_override_day = today
-            ml_features = self._get_features(m1_data, idx=idx)
+            ml_features = self._get_features(m1_data)
             if ml_features is not None and len(ml_features) > 0:
                 ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
                 if ml_dir is not None and ml_dir != direction:
@@ -287,28 +286,29 @@ class SignalEngine:
 
         # ML direction validation (skip if already overridden by ML)
         if not ml_override and self._direction_predictor is not None and _HAS_ML:
-            ml_direction = self._get_ml_direction(expected_direction=direction, features=ml_features)
-            if ml_direction is None:
-                return self._reject(
-                    "ml_confidence_too_low",
-                    direction=direction,
-                    bias=bias_dir,
-                    price=current_price,
-                    h1_high=h1_high,
-                    h1_low=h1_low,
-                    score=round(score, 3),
-                )
-            if ml_direction != direction:
-                return self._reject(
-                    "ml_direction_conflict",
-                    direction=direction,
-                    ml_direction=ml_direction,
-                    bias=bias_dir,
-                    price=current_price,
-                    h1_high=h1_high,
-                    h1_low=h1_low,
-                    score=round(score, 3),
-                )
+            if ml_features is not None and len(ml_features) > 0:
+                ml_direction = self._get_ml_direction(expected_direction=direction, features=ml_features)
+                if ml_direction is None:
+                    return self._reject(
+                        "ml_confidence_too_low",
+                        direction=direction,
+                        bias=bias_dir,
+                        entry=current_price,
+                        at=datetime.utcnow().isoformat(),
+                        ml_confidence=ml_conf,
+                        ml_direction=ml_direction,
+                    )
+                if ml_direction != direction:
+                    return self._reject(
+                        "ml_direction_conflict",
+                        direction=direction,
+                        ml_direction=ml_direction,
+                        bias=bias_dir,
+                        price=current_price,
+                        h1_high=h1_high,
+                        h1_low=h1_low,
+                        score=round(score, 3),
+                    )
 
         atr_val = atr if atr > 0 else (current_price * 0.001)
         if direction == "BUY":
@@ -337,6 +337,7 @@ class SignalEngine:
             "tp3": round(tp3, 2),
             "atr_value": round(atr_val, 4),
             "ml_override": ml_override,
+            "ml_confidence": round(ml_conf, 4) if ml_features is not None else 0.0,
             "timestamp": datetime.now().isoformat(),
         }
 
@@ -357,7 +358,7 @@ class SignalEngine:
                       trail_retrace: float = None,
                       trail_to_breakeven: bool = True,
                       signal: dict = None,
-                      bars_since_entry: int = 0) -> Tuple[bool, float, str]:
+                       bars_since_entry: Optional[int] = None) -> Tuple[bool, float, str]:
 
         if m1_data is None or len(m1_data) < 5:
             return False, 0.0, "insufficient_data"
@@ -455,8 +456,8 @@ class SignalEngine:
             reason = "breakeven" if (trail_to_breakeven and triggered and stop_loss >= 0) else "stop_loss"
             return True, 1.0, reason
 
-        if triggered and peak > 0:
-            pullback = peak - max(0, diff)
+        if triggered and peak > 0 and diff > 0:
+            pullback = peak - diff
             if pullback / peak > trail_retrace_pct:
                 return True, 0.85, "trail_stop"
 
@@ -515,7 +516,7 @@ class SignalEngine:
             return True, round(exit_score, 3), "momentum_decay"
         return False, round(exit_score, 3), "holding"
 
-    def _exit_mode_peak_harvest(self, df, entry, direction, entry_score, bars_since_entry=0):
+    def _exit_mode_peak_harvest(self, df, entry, direction, entry_score, bars_since_entry=None):
         """
         Peak-harvest exit — no hard stop loss, trail only after significant profit,
         close when directional confidence breaks down.
@@ -553,7 +554,15 @@ class SignalEngine:
                             else: break
                     pnl_atr = diff / atr
                     peak_atr = peak / atr
-                    drawdown = (peak - max(0, diff)) / max(peak, 0.001)
+                    drawdown = max(0, peak - diff) / max(peak, 0.001)
+                    if direction == "BUY":
+                        lowest = df["low"].min()
+                        sweep_dist = max(0, entry - lowest)
+                        rec_pct = (px - lowest) / (entry - lowest + 1e-9) if sweep_dist > 0 else 0.0
+                    else:
+                        highest = df["high"].max()
+                        sweep_dist = max(0, highest - entry)
+                        rec_pct = (highest - px) / (highest - entry + 1e-9) if sweep_dist > 0 else 0.0
                     trade_state = {
                         "bars_held": bars,
                         "pnl_atr": round(pnl_atr, 4),
@@ -562,6 +571,8 @@ class SignalEngine:
                         "entry_score": round(entry_score if entry_score is not None else 0.5, 4),
                         "atr_change": 1.0,
                         "wrong_streak": wrong_streak,
+                        "sweep_atr": round(sweep_dist / atr, 4),
+                        "recovery_pct": round(rec_pct, 4),
                     }
                     hold_prob = self._exit_predictor.predict_hold_prob(mf_row, trade_state)
                     exit_model_hold = hold_prob
@@ -587,7 +598,7 @@ class SignalEngine:
                 # Strong exit signal — exit now via exit model
                 return True, round(1.0 - exit_model_hold, 3), "exit_model_exit"
 
-        # --- ML exit signal (always checked, even during exit model hold) ---
+        # --- ML exit signal ---
         ml_features = self._get_features(df)
         ml_signal = self._get_ml_exit_signal(ml_features, direction)
         if ml_signal == "exit":
@@ -631,9 +642,6 @@ class SignalEngine:
             exit_score = 1.0 - momentum
             if exit_score > cfg.PEAK_HARVEST_MOMENTUM_THRESHOLD:
                 return True, round(exit_score, 3), "momentum_decay"
-
-        if bars > cfg.PEAK_HARVEST_MAX_HOLD_BARS:
-            return True, 0.50, "max_hold"
 
         return False, 0.0, "holding"
 
@@ -790,7 +798,7 @@ class SignalEngine:
         older = closes[-6:-3] if len(closes) >= 6 else closes[:3]
 
         recent_change = abs(recent[-1] - recent[0])
-        older_change = abs(older[-1] - older[0]) if len(older) >= 2 else recent_change
+        older_change = abs(older[-1] - older[0])
 
         avg_body = np.mean(np.abs(
             df["close"].iloc[-5:].values - df["open"].iloc[-5:].values

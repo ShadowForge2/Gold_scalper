@@ -16,6 +16,7 @@ MODEL_PATH = "models/exit_xgb_m5.joblib"
 EXIT_FEATURE_COLS = FEATURE_COLS + [
     "bars_held", "pnl_atr", "peak_atr", "drawdown_pct",
     "entry_score", "atr_change", "wrong_streak",
+    "sweep_atr", "recovery_pct",
 ]
 TRADE_MAX_BARS = 25
 SESSION_HOURS = {"ASIA": (0, 8), "LONDON": (7, 17), "NEW_YORK": (12, 22)}
@@ -137,6 +138,7 @@ def process_year(year, client=None):
         if ei % 2000 == 0 and ei > 0:
             print(f"    [{year}] {ei}/{len(entries)} rows={len(rows)} ({time.time()-t0:.1f}s)", flush=True)
         best_pnl = 0.0
+        worst_price = low[ebar] if direction == "BUY" else high[ebar]
         w_streak = 0
         atr_e = max(atr[ebar], 0.01)
         max_j = min(ebar + TRADE_MAX_BARS + 1, n - 1)
@@ -146,6 +148,10 @@ def process_year(year, client=None):
             bars = j - ebar
             hi = (high[j] - ep) if direction == "BUY" else (ep - low[j])
             best_pnl = max(best_pnl, hi)
+            if direction == "BUY":
+                worst_price = min(worst_price, low[j])
+            else:
+                worst_price = max(worst_price, high[j])
             w_streak = (w_streak + 1) if (direction == "BUY" and close[j] < open_[j]) or \
                         (direction == "SELL" and close[j] > open_[j]) else 0
 
@@ -174,6 +180,14 @@ def process_year(year, client=None):
             mf["entry_score"] = round(score, 4)
             mf["atr_change"] = round(atr[j] / atr_e, 4)
             mf["wrong_streak"] = w_streak
+            if direction == "BUY":
+                sweep_dist = max(0, ep - worst_price)
+                rec_pct = (close[j] - worst_price) / (ep - worst_price + 1e-9) if sweep_dist > 0 else 0.0
+            else:
+                sweep_dist = max(0, worst_price - ep)
+                rec_pct = (worst_price - close[j]) / (worst_price - ep + 1e-9) if sweep_dist > 0 else 0.0
+            mf["sweep_atr"] = round(sweep_dist / atr_e, 4)
+            mf["recovery_pct"] = round(rec_pct, 4)
             mf["target"] = label
             mf["year"] = year
             rows.append(mf)

@@ -45,7 +45,7 @@ class EquityScaler:
         lot = round(lot / cfg.LOT_STEP) * cfg.LOT_STEP
         return max(cfg.MIN_LOT, min(lot, cfg.MAX_LOT))
 
-    def get_trades_per_event(self, balance: float, signal_score: float) -> int:
+    def get_trades_per_event(self, balance: float, signal_score: float, ml_confidence: float = 0.0) -> int:
         t = self._tier(balance)
         tier_mults = [1.0, 1.5, 2.0, 3.0, 5.0, 10.0]
         tm = tier_mults[min(t - 1, len(tier_mults) - 1)]
@@ -57,7 +57,14 @@ class EquityScaler:
         else:
             cm = 1.0
 
-        trades = int(self.base_trades * tm * cm)
+        if ml_confidence >= 0.88:
+            ml_cm = 3.0
+        elif ml_confidence >= 0.75:
+            ml_cm = 2.0
+        else:
+            ml_cm = 1.0
+
+        trades = int(self.base_trades * tm * cm * ml_cm)
         trades = max(1, trades)
         if self.in_drawdown(balance):
             trades = 1
@@ -135,6 +142,9 @@ class RiskManager:
             return False, f"session_not_allowed ({session_name})"
 
         return True, "ok"
+
+    def set_event_trade_limit(self, limit: int):
+        self.max_trades_per_event = max(1, limit)
 
     def can_add_to_event(self) -> Tuple[bool, str]:
         if self.event_trades >= self.max_trades_per_event:

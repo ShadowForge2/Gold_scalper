@@ -17,7 +17,7 @@ class _OnboardingTutorialState extends State<OnboardingTutorial> {
   static const _pages = [
     _TutorialPage(
       icon: Icons.auto_awesome_rounded,
-      title: 'Welcome to Gold Scalper Pro',
+      title: 'QuantoraFX AI Trading Core',
       body: 'Automate your XAUUSD trading with precision.\n\n'
           'This quick guide will show you how to get started in 3 steps.',
       color: kGold,

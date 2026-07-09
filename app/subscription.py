@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import os
 import time
 import uuid
@@ -10,6 +11,8 @@ from typing import Optional, Dict, List, Any
 import httpx
 
 from app import database as db_mod
+
+logger = logging.getLogger("GoldScalper")
 
 PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "")
 MAXELPAY_API_KEY = os.getenv("MAXELPAY_API_KEY", "")
@@ -462,10 +465,15 @@ async def verify_payment(reference: str) -> Optional[Dict]:
                 record["subscription_end"] = (datetime.fromisoformat(existing_end) + timedelta(days=30)).isoformat()
             else:
                 record["subscription_end"] = (datetime.utcnow() + timedelta(days=30)).isoformat()
+            remaining = amount_paid
             for p in record.get("monthly_periods", []):
                 if not p.get("fee_paid") and p.get("fee_15pct", 0) > 0:
-                    p["fee_paid"] = True
-                    p["paid_at"] = datetime.utcnow().isoformat()
+                    if remaining >= p["fee_15pct"]:
+                        p["fee_paid"] = True
+                        p["paid_at"] = datetime.utcnow().isoformat()
+                        remaining -= p["fee_15pct"]
+                    else:
+                        break
             await _save_sub_record(record)
             await _mark_payment_processed(reference, identifier, "paystack", amount_paid)
 
@@ -609,7 +617,8 @@ async def process_maxelpay_callback(order_id: str, status: str, amount: float) -
         return False
     record = await _get_sub_record(ident)
     if not record:
-        return False
+        logger.warning("MaxelPay callback: no subscription record for %s (order %s), payment $%.2f dropped", ident, order_id, amount)
+        return True
     record["paid_amount"] = record.get("paid_amount", 0) + amount
     record["subscribed"] = True
     existing_end = record.get("subscription_end")
@@ -617,10 +626,15 @@ async def process_maxelpay_callback(order_id: str, status: str, amount: float) -
         record["subscription_end"] = (datetime.fromisoformat(existing_end) + timedelta(days=30)).isoformat()
     else:
         record["subscription_end"] = (datetime.utcnow() + timedelta(days=30)).isoformat()
+    remaining = amount
     for p in record.get("monthly_periods", []):
         if not p.get("fee_paid") and p.get("fee_15pct", 0) > 0:
-            p["fee_paid"] = True
-            p["paid_at"] = datetime.utcnow().isoformat()
+            if remaining >= p["fee_15pct"]:
+                p["fee_paid"] = True
+                p["paid_at"] = datetime.utcnow().isoformat()
+                remaining -= p["fee_15pct"]
+            else:
+                break
     await _save_sub_record(record)
     await _mark_payment_processed(ref_key, ident, "maxelpay", amount)
     return True

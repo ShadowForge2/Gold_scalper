@@ -28,14 +28,14 @@ class TradeExecutor:
             )
             return ticket
         else:
-            detail = ""
             err_attr = getattr(self.client, "last_order_error", None)
+            err_detail = ""
             if err_attr is not None:
                 try:
-                    detail = err_attr() if callable(err_attr) else str(err_attr)
+                    err_detail = err_attr() if callable(err_attr) else str(err_attr)
                 except Exception:
-                    detail = str(err_attr) if not callable(err_attr) else "unknown error"
-            suffix = f": {detail}" if detail else ""
+                    err_detail = str(getattr(self.client, "last_order_error", ""))
+            suffix = f": {err_detail}" if err_detail else ""
             self.logger.error(f"Order failed for {symbol} {direction}{suffix}")
             return None
 

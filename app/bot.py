@@ -279,6 +279,7 @@ class Bot:
             )
             self.state = self.STATES["IN_TRADE"]
             if not getattr(self.position_manager, '_event_start_ts', None):
+                # Best-effort: can't backdate without position age, so use discovery time
                 self.position_manager._event_start_ts = time.time()
 
         if self.state == self.STATES["STOPPED"]:
@@ -292,7 +293,7 @@ class Bot:
                 self._winding_down = True
                 self.logger.warning("Subscription expired. Completing open trades, then stopping.")
             if self._winding_down and pnl_data["open_count"] == 0:
-                reason = "shutdown" if hasattr(self, '_shutdown_deadline') else "expired subscription"
+                reason = "shutdown" if self._shutdown_deadline is not None else "expired subscription"
                 self.logger.warning(f"All trades closed. Stopping bot due to {reason}.")
                 self.state = self.STATES["STOPPED"]
                 self._running = False
@@ -433,7 +434,7 @@ class Bot:
             return
 
         bias_dir = self._bias_summary.get("bias", "NEUTRAL")
-        current_price = symbol_info["ask"] if bias_dir == "BULLISH" else symbol_info["bid"]
+        current_price = symbol_info.get("ask", 0) if bias_dir == "BULLISH" else symbol_info.get("bid", 0)
 
         h1_high = None
         h1_low = None
@@ -461,24 +462,29 @@ class Bot:
         except Exception as e:
             self.logger.warning(f"H1 range computation failed: {e}")
 
-        if h1_high is None or h1_low is None or h1_high <= h1_low:
-            h1_data = self.client.get_rates(
-                self.symbol, cfg.BIAS_TIMEFRAME, 3
-            )
-            if h1_data is not None and len(h1_data) >= 2:
-                has_bid_ask = "high_ask" in h1_data.columns
-                if has_bid_ask and bias_dir == "BULLISH":
-                    h1_high = h1_data["high_ask"].iloc[-2]
-                    h1_low = h1_data["low_ask"].iloc[-2]
-                elif has_bid_ask and bias_dir == "BEARISH":
-                    h1_high = h1_data["high_bid"].iloc[-2]
-                    h1_low = h1_data["low_bid"].iloc[-2]
+        try:
+            if h1_high is None or h1_low is None or h1_high <= h1_low:
+                h1_data = self.client.get_rates(
+                    self.symbol, cfg.BIAS_TIMEFRAME, 3
+                )
+                if h1_data is not None and len(h1_data) >= 2:
+                    has_bid_ask = "high_ask" in h1_data.columns
+                    if has_bid_ask and bias_dir == "BULLISH":
+                        h1_high = h1_data["high_ask"].iloc[-2]
+                        h1_low = h1_data["low_ask"].iloc[-2]
+                    elif has_bid_ask and bias_dir == "BEARISH":
+                        h1_high = h1_data["high_bid"].iloc[-2]
+                        h1_low = h1_data["low_bid"].iloc[-2]
+                    else:
+                        h1_high = h1_data["high"].iloc[-2]
+                        h1_low = h1_data["low"].iloc[-2]
                 else:
-                    h1_high = h1_data["high"].iloc[-2]
-                    h1_low = h1_data["low"].iloc[-2]
-            else:
-                h1_high = None
-                h1_low = None
+                    h1_high = None
+                    h1_low = None
+        except Exception as e:
+            self.logger.warning(f"H1 fallback range computation failed: {e}")
+            h1_high = None
+            h1_low = None
 
         signal = self.signal_engine.evaluate(
             m1_data, self._bias_summary, current_price,
@@ -870,17 +876,31 @@ class Bot:
                     f"→ lot_mult={lot_mult:.1f}x"
                 )
 
+        ml_conf = signal.get("ml_confidence", 0.0)
+        if ml_conf >= cfg.ML_CONF_VERY_STRONG_THRESHOLD:
+            lot_mult *= cfg.ML_CONF_VERY_STRONG_LOT_MULT
+            self.logger.info(
+                f"ML confidence LOT: ml_conf={ml_conf:.4f} >= {cfg.ML_CONF_VERY_STRONG_THRESHOLD} "
+                f"→ lot_mult={lot_mult:.1f}x"
+            )
+        elif ml_conf >= cfg.ML_CONF_STRONG_THRESHOLD:
+            lot_mult *= cfg.ML_CONF_STRONG_LOT_MULT
+            self.logger.info(
+                f"ML confidence LOT: ml_conf={ml_conf:.4f} >= {cfg.ML_CONF_STRONG_THRESHOLD} "
+                f"→ lot_mult={lot_mult:.1f}x"
+            )
+
         lot = min(self.scaler.get_lot(balance) * lot_mult, cfg.MAX_LOT)
         vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
         lot = round(lot / vol_step) * vol_step
         lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), min(lot, fresh_info.get("volume_max", cfg.MAX_LOT)))
-        max_trades = self.scaler.get_trades_per_event(balance, score)
+        max_trades = self.scaler.get_trades_per_event(balance, score, ml_conf)
         if self.meta:
             max_trades = self.meta.current_trades_per_event
 
         # Price drift check — reject if price moved outside allowed drift
-        current_price = fresh_info["bid"] if direction == "SELL" else fresh_info["ask"]
-        signal_price = symbol_info["bid"] if direction == "SELL" else symbol_info["ask"]
+        current_price = fresh_info.get("bid", fresh_info.get("price", 0)) if direction == "SELL" else fresh_info.get("ask", fresh_info.get("price", 0))
+        signal_price = symbol_info.get("bid", 0) if direction == "SELL" else symbol_info.get("ask", 0)
         point = fresh_info.get("point", 0.01)
         drift_amount = abs(current_price - signal_price)
         drift_pct = drift_amount / signal_price * 100
@@ -929,6 +949,7 @@ class Bot:
         )
 
         any_opened = False
+        self.risk_manager.set_event_trade_limit(max_trades)
         for i in range(max_trades):
             can_add, add_msg = self.risk_manager.can_add_to_event()
             if not can_add:
