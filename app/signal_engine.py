@@ -207,15 +207,20 @@ class SignalEngine:
                 self._ml_override_day = today
             ml_features = self._get_features(m1_data)
             if ml_features is not None and len(ml_features) > 0:
-                ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
-                if ml_dir is not None:
-                    if ml_dir != direction:
-                        direction = ml_dir
-                        ml_override = True
-                    elif ml_conf >= getattr(cfg, 'ML_CONF_STRONG_THRESHOLD', 0.75):
-                        ml_override = True
-                        if self._logger:
-                            self._logger.info(f"[ML] Override: {direction} (conf={ml_conf:.3f}) same-direction strong")
+                override_max = getattr(cfg, 'ML_OVERRIDE_MAX_PER_SESSION', 999999)
+                if self._ml_override_count >= override_max:
+                    if self._logger:
+                        self._logger.info(f"[ML] Override blocked: {self._ml_override_count}/{override_max} used today")
+                else:
+                    ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
+                    if ml_dir is not None:
+                        if ml_dir != direction:
+                            direction = ml_dir
+                            ml_override = True
+                        elif ml_conf >= getattr(cfg, 'ML_CONF_STRONG_THRESHOLD', 0.75):
+                            ml_override = True
+                            if self._logger:
+                                self._logger.info(f"[ML] Override: {direction} (conf={ml_conf:.3f}) same-direction strong")
 
         if direction == "BUY":
             breakout_dist = current_price - h1_high
@@ -574,7 +579,7 @@ class SignalEngine:
                         "peak_atr": round(peak_atr, 4),
                         "drawdown_pct": round(drawdown, 4),
                         "entry_score": round(entry_score if entry_score is not None else 0.5, 4),
-                        "atr_change": 1.0,
+                        "atr_change": round(atr / max(self._compute_atr_m5(df.head(20), 14), 0.001), 4),
                         "wrong_streak": wrong_streak,
                         "sweep_atr": round(sweep_dist / atr, 4),
                         "recovery_pct": round(rec_pct, 4),
