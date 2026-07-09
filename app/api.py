@@ -261,6 +261,14 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                 bot_pool.add_log(ident, "Account was previously active — auto-starting...", "INFO")
                 bot_pool.start(identifier=ident, api_key=data.api_key, password=data.password, demo=data.demo)
                 await set_account_active(ident, True)
+                if not data.demo:
+                    bal = 0.0
+                    tc = CapitalClient()
+                    if tc.initialize(api_key=data.api_key, identifier=ident, password=data.password, demo=False):
+                        bi = tc.get_account_info()
+                        if bi: bal = bi.get("balance", 0.0)
+                        tc.shutdown()
+                    await start_trial(ident, bal)
                 break
         return {"success": True, "accounts": [sanitize_account(a) for a in (dev.get("accounts") or [])]}
 

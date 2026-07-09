@@ -177,10 +177,8 @@ class Bot:
 
     async def initialize_with_credentials(self, api_key: str, identifier: str, password: str, demo: bool = True) -> bool:
         self._creds = {"api_key": api_key, "identifier": identifier, "password": password, "demo": demo}
-        self.logger.info("Connecting to broker...")
         self.client = CapitalClient()
-        self.logger.info("Establishing secure connection...")
-        self.logger.info("Authenticating client...")
+        self.logger.info("Connecting to Capital.com...")
         success = self.client.initialize(
             api_key=api_key,
             identifier=identifier,
@@ -345,7 +343,13 @@ class Bot:
                 return
         elif self.state == self.STATES["MARKET_CLOSED"]:
             dyn = self._check_market_dynamic()
-            if dyn is True:
+            if dyn is None:
+                if market_open:
+                    self.logger.info("Market reopened, resuming normal operation")
+                    self.state = self.STATES["IDLE"]
+                else:
+                    return
+            elif dyn:
                 self.logger.info("Market reopened, resuming normal operation")
                 self.state = self.STATES["IDLE"]
             else:

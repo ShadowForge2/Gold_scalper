@@ -6,7 +6,7 @@ from app.bot import Bot
 from app.bot_pool import BotPool
 from app import database as db_mod
 from app.database import init_db
-from app.subscription import get_active_accounts, can_start_live
+from app.subscription import get_active_accounts, can_start_live, start_trial
 import config as cfg
 
 bot = Bot()
@@ -32,6 +32,7 @@ async def _try_start_user_bot(ident: str, api_key: str, password: str, demo: boo
             if not await can_start_live(ident):
                 bot.logger.warning(f"Skipping live account {ident}: subscription not active")
                 return
+            await start_trial(ident, 0.0)
         except Exception as e:
             bot.logger.warning(f"Sub check failed for {ident}: {e}. Will still attempt.")
     result = bot_pool.start(identifier=ident, api_key=api_key, password=password, demo=demo)

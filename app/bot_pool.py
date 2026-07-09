@@ -218,7 +218,12 @@ class BotPool:
             orig_ident = creds.get("identifier", ident)
             async def _sub_check():
                 try:
-                    return await can_start_live(orig_ident, 0.0)
+                    bal = 0.0
+                    if bot.client and bot.client.is_connected():
+                        info = bot.client.get_account_info()
+                        if info:
+                            bal = info.get("balance", 0.0)
+                    return await can_start_live(orig_ident, bal)
                 except Exception:
                     return False
             bot.set_can_trade_callback(_sub_check)
