@@ -13,6 +13,8 @@ from app.signal_engine import SignalEngine
 from app.risk_manager import RiskManager, EquityScaler
 from app.trade_executor import TradeExecutor
 from app.position_manager import PositionManager
+from app.economic_calendar import EconomicCalendar
+from app.news_state_machine import NewsStateMachine
 
 try:
     from app.direction_predictor import DirectionPredictor, ExitPredictor
@@ -98,6 +100,26 @@ class Bot:
 
         self._can_trade_cb = None
         self._winding_down = False
+
+        # News-aware trading
+        self.news_calendar = EconomicCalendar(
+            cache_path="data/calendar_cache.pkl",
+            cache_ttl_hours=cfg.NEWS_CACHE_TTL_HOURS,
+            user_events_path=cfg.NEWS_USER_EVENTS_PATH,
+            jblanked_api_key=cfg.JBLANKED_API_KEY,
+        ) if cfg.NEWS_AWARE_ENABLED else None
+        self.news_state = NewsStateMachine(
+            pre_window_min=cfg.NEWS_PRE_WINDOW_MINUTES,
+            spike_window_min=cfg.NEWS_SPIKE_WINDOW_MINUTES,
+            post_window_min=cfg.NEWS_POST_WINDOW_MINUTES,
+        ) if cfg.NEWS_AWARE_ENABLED else None
+        if self.news_state and self.news_calendar:
+            self.news_state.set_calendar(self.news_calendar)
+            ev = self.news_calendar.get_next_event()
+            if ev:
+                self.logger.info(f"[NEWS] Next event: '{ev['title']}' @ {ev['datetime'].strftime('%H:%M UTC %d-%b')}")
+            else:
+                self.logger.info("[NEWS] No upcoming events found")
         self._shutdown_deadline = None
         self._last_sub_check = 0.0
         self._ml_heartbeat_ticks = 0
@@ -355,6 +377,8 @@ class Bot:
             else:
                 return
 
+        self._update_news_state()
+
         self._ml_heartbeat_ticks += 1
         if self._ml_heartbeat_ticks >= 100 and self._direction_predictor is not None:
             self._ml_heartbeat_ticks = 0
@@ -368,6 +392,33 @@ class Bot:
             await self._handle_search(pnl_data)
 
         self._write_state()
+
+    def _update_news_state(self):
+        if self.news_state is None:
+            return
+        try:
+            state = self.news_state.update()
+            prev = getattr(self, '_prev_news_state', None)
+            if state != prev:
+                self.logger.info(f"[NEWS] State: {state}")
+                self._prev_news_state = state
+        except Exception as e:
+            self.logger.debug(f"[NEWS] State update failed: {e}")
+
+    def _feed_m5_volatility(self, m1_data):
+        if self.news_state is None or m1_data is None or len(m1_data) < 5:
+            return
+        try:
+            if "time" not in m1_data.columns:
+                return
+            m1_idx = m1_data.set_index("time") if m1_data.index.name != "time" else m1_data
+            m5 = m1_idx.resample("5min").agg({"high": "max", "low": "min", "close": "last"}).dropna()
+            for _, row in m5.iterrows():
+                self.news_state.feed_m5_bar(
+                    float(row["high"]), float(row["low"]), float(row["close"])
+                )
+        except Exception as e:
+            self.logger.debug(f"[NEWS] M5 feed failed: {e}")
 
     async def _handle_search(self, pnl_data: Dict):
         if self._winding_down:
@@ -383,6 +434,8 @@ class Bot:
                 {"bars": 0 if m1_data is None else len(m1_data)},
             )
             return
+
+        self._feed_m5_volatility(m1_data)
 
         symbol_info = self.client.get_symbol_info(self.symbol)
         if symbol_info is None:
@@ -408,6 +461,15 @@ class Bot:
                 "bias_not_tradeable",
                 {"bias": self._bias_summary.get("bias", "UNKNOWN"),
                  "strength": self._bias_summary.get("strength", 0)},
+            )
+            return
+
+        if self.news_state is not None and self.news_state.should_block_entry():
+            info = self.news_state.get_state_info()
+            self._log_signal_diagnostic(
+                f"news_blocked_{info['state']}",
+                {"bias": self._bias_summary.get("bias", "UNKNOWN"),
+                 "news_state": info["state"]},
             )
             return
 
@@ -591,6 +653,8 @@ class Bot:
         if m1_data is None:
             return
 
+        self._feed_m5_volatility(m1_data)
+
         positions = self.position_manager.summary().get("positions", [])
         if not positions:
             return
@@ -612,7 +676,12 @@ class Bot:
         else:
             self._recovery_ticks = 0
 
-        exit_thresh = getattr(self, '_exit_threshold_override', cfg.EXIT_THRESHOLD_TIGHT)
+        # Widen exit threshold in POST_NEWS mode (let winners run)
+        if self.news_state is not None and self.news_state.state == "POST_NEWS":
+            post_exit_thresh = min(cfg.EXIT_THRESHOLD_TIGHT * cfg.NEWS_WIDER_TP_MULT, 1.0)
+        else:
+            post_exit_thresh = None
+        exit_thresh = post_exit_thresh or getattr(self, '_exit_threshold_override', cfg.EXIT_THRESHOLD_TIGHT)
         effective_exit_mode = getattr(self, '_exit_mode_override', cfg.EXIT_MODE)
         event_start = getattr(self.position_manager, '_event_start_ts', None)
         bars_since_entry = max(0, int((time.time() - event_start) / (cfg.EXIT_CHECK_INTERVAL or 300))) if event_start else 0
@@ -844,12 +913,14 @@ class Bot:
         current_balance = account["balance"] if account else 0
 
         signal = self._current_signal or {}
+        news = self.news_state.get_state_info() if self.news_state else {"state": "DISABLED"}
         return {
             "state": self.state,
             "symbol": self.symbol,
             "magic": self.magic,
             "bias": self._bias_summary,
             "signal": signal,
+            "news": news,
             "positions": self.position_manager.summary(),
             "risk": {},
             "scaler": self.scaler.summary(current_balance) if self.scaler.starting_balance else None,

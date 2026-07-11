@@ -114,6 +114,7 @@ MARKET_DAILY_CLOSE_END = _env_float("MARKET_DAILY_CLOSE_END", 22.0)  # 22:00 UTC
 
 # ML direction prediction
 ML_CONFIDENCE_THRESHOLD = _env_float("ML_CONFIDENCE_THRESHOLD", 0.75)
+ML_NO_TRADE_THRESHOLD = _env_float("ML_NO_TRADE_THRESHOLD", 0.50)
 ML_MODEL_PATH = _env_str("ML_MODEL_PATH", "models/direction_xgb_m5.joblib")
 ML_M1_HISTORY_BARS = _env_int("ML_M1_HISTORY_BARS", 500)
 ML_EXIT_MODEL_PATH = _env_str("ML_EXIT_MODEL_PATH", "models/exit_xgb_m5.joblib")
@@ -139,6 +140,17 @@ MAXELPAY_API_KEY = _env_str("MAXELPAY_API_KEY", "")
 # USD to NGN exchange rate for Paystack payments
 USD_TO_NGN_RATE = _env_float("USD_TO_NGN_RATE", 1500.0)
 
+
+# News-aware trading
+NEWS_AWARE_ENABLED = _env_bool("NEWS_AWARE_ENABLED", True)
+NEWS_PRE_WINDOW_MINUTES = _env_int("NEWS_PRE_WINDOW_MINUTES", 15)
+NEWS_SPIKE_WINDOW_MINUTES = _env_int("NEWS_SPIKE_WINDOW_MINUTES", 3)
+NEWS_POST_WINDOW_MINUTES = _env_int("NEWS_POST_WINDOW_MINUTES", 60)
+NEWS_CACHE_TTL_HOURS = _env_int("NEWS_CACHE_TTL_HOURS", 6)
+NEWS_WIDER_SL_MULT = _env_float("NEWS_WIDER_SL_MULT", 1.5)
+NEWS_WIDER_TP_MULT = _env_float("NEWS_WIDER_TP_MULT", 1.5)
+NEWS_USER_EVENTS_PATH = _env_str("NEWS_USER_EVENTS_PATH", "data/user_events.json")
+JBLANKED_API_KEY = _env_str("JBLANKED_API_KEY", "")
 
 def is_market_open() -> bool:
     from datetime import datetime as _dt

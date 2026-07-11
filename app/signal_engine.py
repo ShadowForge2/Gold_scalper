@@ -70,11 +70,11 @@ class SignalEngine:
         try:
             override_threshold = getattr(cfg, 'ML_BIAS_OVERRIDE_THRESHOLD', 0.70)
             if self._direction_predictor is not None:
-                prob_down, prob_up = self._direction_predictor.predict_proba(features)
+                prob_down, prob_up, prob_no = self._direction_predictor.predict_proba(features)
                 should_log = self._logger and _time.monotonic() - self._last_ml_override_log_time >= 30
                 if should_log:
                     self._last_ml_override_log_time = _time.monotonic()
-                    self._logger.info(f"[ML] Override check: DOWN prob={prob_down:.3f} UP prob={prob_up:.3f} threshold={override_threshold}")
+                    self._logger.info(f"[ML] Override check: DOWN={prob_down:.3f} UP={prob_up:.3f} NO_TRADE={prob_no:.3f} threshold={override_threshold}")
                 if prob_up >= override_threshold and prob_up > prob_down:
                     if should_log or self._last_ml_override_result_value != f"UP_{prob_up:.3f}":
                         self._last_ml_override_result_value = f"UP_{prob_up:.3f}"
@@ -99,7 +99,7 @@ class SignalEngine:
             return None
         try:
             if self._direction_predictor is not None:
-                prob_down, prob_up = self._direction_predictor.predict_proba(features)
+                prob_down, prob_up, prob_no = self._direction_predictor.predict_proba(features)
                 hold_threshold = getattr(cfg, 'ML_HOLD_CONFIDENCE', 0.50)
                 exit_threshold = getattr(cfg, 'ML_BIAS_OVERRIDE_THRESHOLD', 0.70)
                 result = None
@@ -117,7 +117,7 @@ class SignalEngine:
                     now_t = _time.time()
                     if result != self._last_ml_exit_result or now_t - self._last_ml_exit_log_ts > 60:
                         self._logger.info(f"[ML] Exit signal: {result} | {trade_direction} "
-                                          f"DOWN={prob_down:.3f} UP={prob_up:.3f} "
+                                          f"DOWN={prob_down:.3f} UP={prob_up:.3f} NO_TRADE={prob_no:.3f} "
                                           f"hold_thr={hold_threshold} exit_thr={exit_threshold}")
                         self._last_ml_exit_result = result
                         self._last_ml_exit_log_ts = now_t
@@ -198,6 +198,20 @@ class SignalEngine:
         if self._direction_predictor is not None and _HAS_ML:
             ml_features = self._get_features(m1_data)
             if ml_features is not None and len(ml_features) > 0:
+                prob_down, prob_up, prob_no = self._direction_predictor.predict_proba(ml_features)
+                no_trade_threshold = getattr(cfg, 'ML_NO_TRADE_THRESHOLD', 0.50)
+                if prob_no >= no_trade_threshold:
+                    return self._reject(
+                        "ml_no_trade",
+                        direction=direction, bias=bias_dir,
+                        prob_no=round(prob_no, 4),
+                        prob_down=round(prob_down, 4),
+                        prob_up=round(prob_up, 4),
+                        threshold=no_trade_threshold,
+                        price=current_price,
+                        h1_high=h1_high,
+                        h1_low=h1_low,
+                    )
                 ml_dir, ml_conf = self._get_ml_unbiased_prediction(ml_features)
                 if ml_dir is not None and ml_dir != direction:
                     # ML flips direction — re-check breakout for flipped direction

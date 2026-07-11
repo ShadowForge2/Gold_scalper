@@ -1,9 +1,11 @@
-import os
+import os, logging
 import numpy as np
 import pandas as pd
 import xgboost as xgb
 from typing import Optional, Tuple
 import joblib
+
+logger = logging.getLogger(__name__)
 
 
 SWEEP_LOOKBACK = 12  # M5 bars (~1 hour)
@@ -14,6 +16,10 @@ FEATURE_COLS = [
     "rsi_14",
     "atr_norm",
     "bb_position",
+    "bb_width",
+    "range_ratio",
+    "inside_bar_count",
+    "micro_slope",
     "hl_ratio",
     "volume_ratio",
     "hour_sin", "hour_cos",
@@ -25,6 +31,7 @@ FEATURE_COLS = [
     "close_position",
     "return_vol_ratio",
     "sweep_low_atr", "sweep_high_atr", "close_vs_range_12",
+    "minutes_until_event", "minutes_since_event", "event_impact",
 ]
 
 
@@ -41,6 +48,9 @@ def _ensure_dtindex(df: pd.DataFrame) -> pd.DataFrame:
 def compute_features(df: pd.DataFrame, h1_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     """Compute feature matrix from M5 OHLCV data. Returns DataFrame with same index as df."""
     df = _ensure_dtindex(df.copy())
+    if len(df) < 20:
+        logger.warning("compute_features: insufficient data (%d rows)", len(df))
+        return pd.DataFrame(index=df.index)
     closes = df["close"].values.astype(np.float64)
     highs = df["high"].values.astype(np.float64)
     lows = df["low"].values.astype(np.float64)
@@ -88,6 +98,23 @@ def compute_features(df: pd.DataFrame, h1_df: Optional[pd.DataFrame] = None) -> 
     bb_lower = bb_mid - 2 * bb_std
     bb_range = (bb_upper - bb_lower).replace(0, np.nan)
     features["bb_position"] = (closes - bb_lower) / bb_range
+    features["bb_width"] = bb_range / closes
+
+    candle_range = highs - lows
+    atr_safe_feat = atr_series.replace(0, np.nan)
+    features["range_ratio"] = candle_range / atr_safe_feat.values
+
+    inside = np.zeros(len(df), dtype=float)
+    inside[1:] = ((highs[1:] <= highs[:-1]) & (lows[1:] >= lows[:-1])).astype(float)
+    features["inside_bar_count"] = pd.Series(inside, index=df.index).rolling(5, min_periods=1).sum()
+
+    n = len(closes)
+    weights = np.array([0, 1, 2, 3, 4], dtype=np.float64)
+    weighted_sum = np.convolve(closes, weights, mode="valid")
+    simple_sum = np.convolve(closes, np.ones(5, dtype=np.float64), mode="valid")
+    slope_vals = np.full(n, np.nan, dtype=np.float64)
+    slope_vals[4:] = (5.0 * weighted_sum - 10.0 * simple_sum) / 50.0
+    features["micro_slope"] = pd.Series(slope_vals, index=df.index) / atr_safe_feat.values
 
     ema12 = pd.Series(closes, index=df.index).ewm(span=12, adjust=False).mean()
     ema26 = pd.Series(closes, index=df.index).ewm(span=26, adjust=False).mean()
@@ -124,7 +151,6 @@ def compute_features(df: pd.DataFrame, h1_df: Optional[pd.DataFrame] = None) -> 
     short_vol = pd.Series(tr, index=df.index).rolling(5, min_periods=2).mean()
     features["volatility_ratio"] = short_vol / sess_vol.replace(0, np.nan)
 
-    candle_range = highs - lows
     features["close_position"] = np.divide(
         closes - lows, candle_range, where=candle_range > 0,
         out=np.full_like(closes, 0.5, dtype=float)
@@ -158,15 +184,28 @@ def compute_features(df: pd.DataFrame, h1_df: Optional[pd.DataFrame] = None) -> 
     features["day_sin"] = np.sin(2 * np.pi * days / 7)
     features["day_cos"] = np.cos(2 * np.pi * days / 7)
 
-    nan_cols = features.columns[features.isna().all()]
-    features = features.drop(columns=nan_cols)
+    # Default calendar features (neutral: no event near)
+    features["minutes_until_event"] = 999.0
+    features["minutes_since_event"] = -999.0
+    features["event_impact"] = 0.0
 
+    nan_pct = features.isna().mean()
+    high_nan = nan_pct[nan_pct > 0.1]
+    if len(high_nan):
+        logger.debug("compute_features: cols with >10%% NaN: %s", dict(high_nan))
+    nan_cols = features.columns[features.isna().all()]
+    if len(nan_cols):
+        logger.warning("compute_features: dropping %d all-NaN cols: %s", len(nan_cols), list(nan_cols))
+    features = features.drop(columns=nan_cols)
+    missing_from_schema = [c for c in FEATURE_COLS if c not in features.columns]
+    if missing_from_schema:
+        logger.debug("compute_features: %d cols missing from FEATURE_COLS: %s", len(missing_from_schema), missing_from_schema)
     features = features[~features.index.duplicated(keep="first")]
     return features
 
 
 def create_target(df: pd.DataFrame, horizon: int = 3, atr_threshold: float = 0.3) -> pd.Series:
-    """Create binary target: 1 if close[n+horizon] > close[n] + threshold, 0 if < -threshold, else NaN."""
+    """Create 3-class target: 1=UP, 0=DOWN, 2=NO_TRADE (|move| <= 0.3*ATR)."""
     closes = df["close"].values.astype(np.float64)
     tr = np.maximum(
         df["high"].values.astype(np.float64) - df["low"].values.astype(np.float64),
@@ -180,10 +219,10 @@ def create_target(df: pd.DataFrame, horizon: int = 3, atr_threshold: float = 0.3
     future_close = np.roll(closes, -horizon)
     threshold = atr_threshold * atr
 
+    target = np.full(len(closes), 2.0)  # default NO_TRADE
+
     up = future_close > closes + threshold
     down = future_close < closes - threshold
-
-    target = np.full(len(closes), np.nan)
     target[up] = 1.0
     target[down] = 0.0
 
@@ -206,7 +245,9 @@ def prepare_dataset(features: pd.DataFrame, target: pd.Series) -> Tuple[pd.DataF
 def train_model(X_train: pd.DataFrame, y_train: pd.Series,
                 X_val: pd.DataFrame, y_val: pd.Series,
                 **params) -> xgb.XGBClassifier:
-    """Train XGBoost classifier with early stopping."""
+    """Train XGBoost classifier (binary or multi-class) with early stopping."""
+    n_classes = len(np.unique(y_train.dropna()))
+    is_multi = n_classes >= 3
     model = xgb.XGBClassifier(
         n_estimators=500,
         max_depth=5,
@@ -216,7 +257,9 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series,
         min_child_weight=3,
         reg_alpha=0.1,
         reg_lambda=0.1,
-        eval_metric="logloss",
+        objective="multi:softprob" if is_multi else "binary:logistic",
+        num_class=n_classes if is_multi else None,
+        eval_metric="mlogloss" if is_multi else "logloss",
         early_stopping_rounds=30,
         random_state=42,
         n_jobs=-1,
@@ -240,27 +283,52 @@ class DirectionPredictor:
             self.model = None
         self._feature_cols = FEATURE_COLS
 
-    def predict_proba(self, features: pd.DataFrame) -> Tuple[float, float]:
-        """Return (prob_down, prob_up) for the most recent bar."""
-        if self.model is None or features is None or len(features) == 0:
-            return 0.5, 0.5
+    def predict_proba(self, features: pd.DataFrame) -> Tuple[float, float, float]:
+        """Return (prob_down, prob_up, prob_no_trade) for the most recent bar.
+        For binary model: prob_no_trade = 0.0."""
+        if self.model is None:
+            logger.warning("predict_proba: model is None")
+            return 0.5, 0.5, 0.0
+        if features is None or len(features) == 0:
+            logger.warning("predict_proba: empty features")
+            return 0.5, 0.5, 0.0
         missing = [c for c in self._feature_cols if c not in features.columns]
         if missing:
+            logger.warning("predict_proba: %d missing features filled with 0: %s", len(missing), missing)
+            features = features.copy()
             for c in missing:
                 features[c] = 0.0
-        row = features[self._feature_cols].iloc[[-1]]
-        probs = self.model.predict_proba(row.values)
-        if self.model.classes_[0] == 0:
-            return float(probs[0][0]), float(probs[0][1])
-        return float(probs[0][1]), float(probs[0][0])
+        try:
+            row = features[self._feature_cols].iloc[[-1]]
+            nan_count = int(row.isna().sum().sum())
+            if nan_count:
+                logger.warning("predict_proba: %d NaN values in feature row", nan_count)
+            probs = self.model.predict_proba(row.values)
+            classes = list(self.model.classes_)
+            if 0 in classes and 1 in classes and 2 in classes:
+                result = (float(probs[0][classes.index(0)]), float(probs[0][classes.index(1)]), float(probs[0][classes.index(2)]))
+                if result[2] > 0.40:
+                    logger.info("predict_proba: NO_TRADE=%.4f (DOWN=%.4f UP=%.4f)", result[2], result[0], result[1])
+                return result
+            prob_down = float(probs[0][classes.index(0)]) if 0 in classes else float(probs[0][0])
+            prob_up = float(probs[0][classes.index(1)]) if 1 in classes else float(probs[0][1])
+            return prob_down, prob_up, 0.0
+        except Exception as e:
+            logger.error("predict_proba exception: %s", e, exc_info=True)
+            return 0.5, 0.5, 0.0
 
     def predict(self, features: pd.DataFrame, confidence_threshold: float = 0.55) -> Optional[str]:
-        """Return 'BUY' or 'SELL' if confidence exceeds threshold, else None."""
-        prob_down, prob_up = self.predict_proba(features)
-        if prob_up >= confidence_threshold and prob_up >= prob_down:
+        """Return 'BUY', 'SELL', or 'NO_TRADE' based on confidence."""
+        prob_down, prob_up, prob_no = self.predict_proba(features)
+        if prob_up >= confidence_threshold and prob_up >= prob_down and prob_up >= prob_no:
+            logger.debug("predict: BUY (UP=%.4f DOWN=%.4f NT=%.4f thr=%.2f)", prob_up, prob_down, prob_no, confidence_threshold)
             return "BUY"
-        if prob_down >= confidence_threshold:
+        if prob_down >= confidence_threshold and prob_down >= prob_up and prob_down >= prob_no:
+            logger.debug("predict: SELL (DOWN=%.4f UP=%.4f NT=%.4f thr=%.2f)", prob_down, prob_up, prob_no, confidence_threshold)
             return "SELL"
+        if prob_no >= confidence_threshold:
+            logger.info("predict: NO_TRADE (NT=%.4f thr=%.2f)", prob_no, confidence_threshold)
+            return None
         return None
 
     def save(self, path: str):
