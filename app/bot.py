@@ -107,6 +107,7 @@ class Bot:
             cache_ttl_hours=cfg.NEWS_CACHE_TTL_HOURS,
             user_events_path=cfg.NEWS_USER_EVENTS_PATH,
             jblanked_api_key=cfg.JBLANKED_API_KEY,
+            finnhub_api_key=cfg.FINNHUB_API_KEY,
         ) if cfg.NEWS_AWARE_ENABLED else None
         self.news_state = NewsStateMachine(
             pre_window_min=cfg.NEWS_PRE_WINDOW_MINUTES,

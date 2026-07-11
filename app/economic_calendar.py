@@ -1,7 +1,11 @@
 """
 Economic calendar — fetches high-impact gold-relevant events.
-Primary source: Forex Factory (scrape, best effort).
-Fallback: hardcoded repeating events + user JSON file.
+Sources (priority order):
+  1. Forex Factory (scrape) — currently 403 Forbidden
+  2. JBlanked API — needs JBLANKED_API_KEY, 1 req/day free
+  3. Finnhub API — needs FINNHUB_API_KEY, 60 req/min free (signup: finnhub.io)
+  4. Hardcoded repeating events (always works, date approximations)
+  5. User JSON override file
 """
 import json
 import os
@@ -13,7 +17,6 @@ from typing import Optional
 import logging
 
 import httpx
-from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -176,11 +179,12 @@ def _is_relevant(title: str) -> bool:
 
 
 class EconomicCalendar:
-    def __init__(self, cache_path: str = "data/calendar_cache.pkl", cache_ttl_hours: int = 6, user_events_path: str = "", jblanked_api_key: str = ""):
+    def __init__(self, cache_path: str = "data/calendar_cache.pkl", cache_ttl_hours: int = 6, user_events_path: str = "", jblanked_api_key: str = "", finnhub_api_key: str = ""):
         self.cache_path = Path(cache_path)
         self.cache_ttl = timedelta(hours=cache_ttl_hours)
         self.user_events_path = user_events_path
         self.jblanked_api_key = jblanked_api_key
+        self.finnhub_api_key = finnhub_api_key
         self.events: list[dict] = []
         self._last_fetch_ok = False
         self._load_cache()
@@ -230,6 +234,16 @@ class EconomicCalendar:
             except Exception as e:
                 logger.debug(f"JBlanked fetch failed: {e}")
 
+        # Try Finnhub API (generous free tier, 60 req/min)
+        if not events and self.finnhub_api_key:
+            try:
+                fh_events = self._fetch_finnhub()
+                if fh_events:
+                    logger.info(f"Calendar: fetched {len(fh_events)} events from Finnhub")
+                    events = fh_events
+            except Exception as e:
+                logger.debug(f"Finnhub fetch failed: {e}")
+
         # Hardcoded fallback
         if not events:
             events = _build_hardcoded_events()
@@ -262,6 +276,7 @@ class EconomicCalendar:
         resp = httpx.get(url, headers=headers, timeout=30, follow_redirects=True)
         resp.raise_for_status()
 
+        from bs4 import BeautifulSoup
         soup = BeautifulSoup(resp.text, "html.parser")
         events: list[dict] = []
         current_date: Optional[date] = None
@@ -347,6 +362,51 @@ class EconomicCalendar:
                 "currency": cur, "impact": impact, "source": "jblanked",
             })
         return events
+
+    def _fetch_finnhub(self) -> list[dict]:
+        """Fetch events from Finnhub API (free, 60 req/min)."""
+        today = date.today()
+        from_str = today.isoformat()
+        to_str = (today + timedelta(days=30)).isoformat()
+        url = f"https://finnhub.io/api/v1/calendar-economic?token={self.finnhub_api_key}&from={from_str}&to={to_str}"
+        resp = httpx.get(url, headers={"Accept": "application/json"}, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        raw_events = data.get("economicCalendar", [])
+        events = []
+        for item in raw_events:
+            title = item.get("event") or ""
+            if not _is_relevant(title):
+                continue
+            country = (item.get("country") or "").upper()
+            cur = {"US": "USD", "UK": "GBP", "EU": "EUR", "JP": "JPY", "CH": "CHF", "CN": "CNY", "GB": "GBP"}.get(country, country)
+            if cur not in GOLD_RELEVANT_CURRENCIES:
+                continue
+            impact_str = (item.get("impact") or "").lower()
+            impact = 2 if impact_str in ("high", "⭐high") else (1 if impact_str in ("medium", "⭐medium") else 0)
+            if impact < 2:
+                continue
+            time_str = item.get("time") or ""
+            dt = self._parse_finnhub_date(time_str)
+            if not dt:
+                continue
+            events.append({
+                "datetime": dt, "title": title,
+                "currency": cur, "impact": impact, "source": "finnhub",
+            })
+        return events
+
+    @staticmethod
+    def _parse_finnhub_date(date_str: str) -> Optional[datetime]:
+        """Parse Finnhub ISO date format."""
+        if not date_str:
+            return None
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+        return None
 
     @staticmethod
     def _parse_jb_date(date_str: str) -> Optional[datetime]:

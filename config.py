@@ -151,6 +151,7 @@ NEWS_WIDER_SL_MULT = _env_float("NEWS_WIDER_SL_MULT", 1.5)
 NEWS_WIDER_TP_MULT = _env_float("NEWS_WIDER_TP_MULT", 1.5)
 NEWS_USER_EVENTS_PATH = _env_str("NEWS_USER_EVENTS_PATH", "data/user_events.json")
 JBLANKED_API_KEY = _env_str("JBLANKED_API_KEY", "")
+FINNHUB_API_KEY = _env_str("FINNHUB_API_KEY", "")
 
 def is_market_open() -> bool:
     from datetime import datetime as _dt
