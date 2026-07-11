@@ -13,7 +13,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from app.dukascopy_client import DukascopyClient
 from app.direction_predictor import (
-    compute_features, create_target, prepare_dataset,
+    compute_features, compute_chop_score, create_target, prepare_dataset,
     train_model, FEATURE_COLS, DirectionPredictor,
 )
 
@@ -122,9 +122,11 @@ train_features = compute_features(train_m5, h1_train)
 train_features = add_calendar_features(train_features, train_m5)
 print(f"  {len(train_features)} rows, {len(train_features.columns)} features, {time.time()-t0:.1f}s")
 
-print("Creating 3-class target...")
+print("Creating 3-class target (chop-based NO_TRADE)...")
 t0 = time.time()
-train_target = create_target(train_m5, horizon=HORIZON, atr_threshold=ATR_THRESHOLD)
+train_chop = compute_chop_score(train_m5)
+train_target = create_target(train_m5, horizon=HORIZON, atr_threshold=ATR_THRESHOLD,
+                              chop_score=train_chop, chop_pct=0.33)
 n_ups = int((train_target == 1).sum())
 n_downs = int((train_target == 0).sum())
 n_notrade = int((train_target == 2).sum())
@@ -172,7 +174,9 @@ for ty in TEST_YEARS:
 
     test_features = compute_features(test_m5, h1_test)
     test_features = add_calendar_features(test_features, test_m5)
-    test_target = create_target(test_m5, horizon=HORIZON, atr_threshold=ATR_THRESHOLD)
+    test_chop = compute_chop_score(test_m5)
+    test_target = create_target(test_m5, horizon=HORIZON, atr_threshold=ATR_THRESHOLD,
+                                chop_score=test_chop, chop_pct=0.33)
 
     X_test, y_test = prepare_dataset(test_features, test_target)
     print(f"  {len(X_test)} test rows, {time.time()-t0:.1f}s")

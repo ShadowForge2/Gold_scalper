@@ -527,9 +527,11 @@ class Bot:
             h1_high = None
             h1_low = None
 
+        calendar_events = getattr(self.news_calendar, 'events', None) if self.news_calendar is not None else None
         signal = self.signal_engine.evaluate(
             m1_data, self._bias_summary, current_price,
-            h1_high=h1_high, h1_low=h1_low
+            h1_high=h1_high, h1_low=h1_low,
+            events=calendar_events,
         )
         if signal:
             ml_tag = " [ML OVERRIDE]" if signal.get("ml_override") else ""

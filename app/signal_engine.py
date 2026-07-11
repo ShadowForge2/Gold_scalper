@@ -2,7 +2,7 @@ import time as _time
 import pandas as pd
 import numpy as np
 from typing import Optional, Dict, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 import config as cfg
 
@@ -62,6 +62,35 @@ class SignalEngine:
             return compute_features(m5, h1)
         except Exception:
             return None
+
+    def _override_calendar_features(self, features: pd.DataFrame, events: list, ts: datetime) -> pd.DataFrame:
+        """Override default calendar features in the feature DataFrame with actual event proximity.
+
+        Computes minutes_until_event, minutes_since_event, event_impact from
+        the events list for the given timestamp, applied to all rows.
+        """
+        if not events or ts is None:
+            return features
+        feats = features.copy()
+        ev_dts = np.array([e["datetime"] for e in events], dtype="datetime64[us]")
+        ev_imp = np.array([e.get("impact", 2) for e in events])
+        ts64 = np.datetime64(ts).astype("datetime64[us]")
+        p = np.searchsorted(ev_dts, ts64, side="right")
+        mins_until = 999.0
+        mins_since = -999.0
+        impact = 0
+        if p < len(ev_dts):
+            diff = (ev_dts[p] - ts64).astype(np.float64) / 6e7
+            mins_until = abs(diff)
+            impact = max(impact, ev_imp[p])
+        if p > 0:
+            diff = (ts64 - ev_dts[p - 1]).astype(np.float64) / 6e7
+            mins_since = abs(diff)
+            impact = max(impact, ev_imp[p - 1])
+        feats["minutes_until_event"] = mins_until
+        feats["minutes_since_event"] = mins_since
+        feats["event_impact"] = impact
+        return feats
 
     def _get_ml_unbiased_prediction(self, features: pd.DataFrame) -> Tuple[Optional[str], float]:
         """Get ML prediction without bias filtering. Returns (direction, confidence) or (None, 0.0)."""
@@ -130,7 +159,8 @@ class SignalEngine:
     def evaluate(self, m1_data: pd.DataFrame, bias: Dict,
                  current_price: float,
                  h1_high: float = None, h1_low: float = None,
-                 idx: int = None) -> Optional[Dict]:
+                 idx: int = None,
+                 events: Optional[list] = None) -> Optional[Dict]:
 
         if m1_data is None or len(m1_data) < 10:
             return self._reject(
@@ -197,6 +227,10 @@ class SignalEngine:
         ml_features = None
         if self._direction_predictor is not None and _HAS_ML:
             ml_features = self._get_features(m1_data)
+            # Override default calendar features with actual event proximity
+            if ml_features is not None and len(ml_features) > 0 and events:
+                last_bar_ts = ml_features.index[-1].to_pydatetime() if hasattr(ml_features.index[-1], 'to_pydatetime') else pd.Timestamp(ml_features.index[-1]).to_pydatetime()
+                ml_features = self._override_calendar_features(ml_features, events, last_bar_ts)
             if ml_features is not None and len(ml_features) > 0:
                 prob_down, prob_up, prob_no = self._direction_predictor.predict_proba(ml_features)
                 no_trade_threshold = getattr(cfg, 'ML_NO_TRADE_THRESHOLD', 0.50)

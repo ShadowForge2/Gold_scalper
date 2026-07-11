@@ -204,29 +204,110 @@ def compute_features(df: pd.DataFrame, h1_df: Optional[pd.DataFrame] = None) -> 
     return features
 
 
-def create_target(df: pd.DataFrame, horizon: int = 3, atr_threshold: float = 0.3) -> pd.Series:
-    """Create 3-class target: 1=UP, 0=DOWN, 2=NO_TRADE (|move| <= 0.3*ATR)."""
+def compute_chop_score(df: pd.DataFrame) -> pd.Series:
+    """Compute a composite chop score (0-1, higher = choppier) from OHLC data.
+
+    Uses the same 4 chop features as the ML model: bb_width, range_ratio,
+    inside_bar_count, micro_slope. Each is rank-normalized and averaged.
+    """
     closes = df["close"].values.astype(np.float64)
+    highs = df["high"].values.astype(np.float64)
+    lows = df["low"].values.astype(np.float64)
+    prev_close = np.concatenate([[np.nan], closes[:-1]])
     tr = np.maximum(
-        df["high"].values.astype(np.float64) - df["low"].values.astype(np.float64),
-        np.maximum(
-            np.abs(df["high"].values.astype(np.float64) - np.roll(closes, 1)),
-            np.abs(df["low"].values.astype(np.float64) - np.roll(closes, 1)),
-        ),
+        highs - lows,
+        np.maximum(np.abs(highs - prev_close), np.abs(lows - prev_close)),
     )
-    atr = pd.Series(tr, index=df.index).rolling(14, min_periods=2).mean().values
+    atr_series = pd.Series(tr, index=df.index).rolling(14, min_periods=2).mean()
+    atr_safe = atr_series.replace(0, np.nan)
 
-    future_close = np.roll(closes, -horizon)
-    threshold = atr_threshold * atr
+    # 1. bb_width: narrow → high chop
+    sma20 = pd.Series(closes, index=df.index).rolling(20, min_periods=2).mean()
+    bb_std = pd.Series(closes, index=df.index).rolling(20, min_periods=2).std()
+    bb_width = (4 * bb_std / sma20.replace(0, np.nan))
+    # Invert so narrow → high score
+    bb_pct = bb_width.rank(pct=True)
+    bb_chop = (1 - bb_pct).fillna(0.5)
 
-    target = np.full(len(closes), 2.0)  # default NO_TRADE
+    # 2. range_ratio: small candles relative to ATR → high chop
+    candle_range = highs - lows
+    rr = pd.Series(candle_range / atr_safe.values, index=df.index) if atr_safe is not None else pd.Series(candle_range, index=df.index)
+    rr_chop = (1 - rr.rank(pct=True)).fillna(0.5)
 
-    up = future_close > closes + threshold
-    down = future_close < closes - threshold
-    target[up] = 1.0
-    target[down] = 0.0
+    # 3. inside_bar_count: many inside bars → high chop
+    inside = np.zeros(len(df), dtype=float)
+    inside[1:] = ((highs[1:] <= highs[:-1]) & (lows[1:] >= lows[:-1])).astype(float)
+    ibc = pd.Series(inside, index=df.index).rolling(5, min_periods=1).sum()
+    ibc_chop = ibc.rank(pct=True).fillna(0.5)
 
-    target[np.isnan(atr)] = np.nan
+    # 4. micro_slope: flat → high chop
+    n = len(closes)
+    weights = np.array([0, 1, 2, 3, 4], dtype=np.float64)
+    weighted_sum = np.convolve(closes, weights, mode="valid")
+    simple_sum = np.convolve(closes, np.ones(5, dtype=np.float64), mode="valid")
+    slope_vals = np.full(n, np.nan, dtype=np.float64)
+    slope_vals[4:] = (5.0 * weighted_sum - 10.0 * simple_sum) / 50.0
+    ms = pd.Series(np.abs(slope_vals) / atr_safe.values if atr_safe is not None else np.abs(slope_vals), index=df.index)
+    ms_chop = (1 - ms.rank(pct=True)).fillna(0.5)
+
+    composite = (bb_chop + rr_chop + ibc_chop + ms_chop) / 4
+    return composite.clip(0, 1)
+
+
+def create_target(df: pd.DataFrame, horizon: int = 3, atr_threshold: float = 0.3,
+                  chop_score: Optional[pd.Series] = None, chop_pct: float = 0.33) -> pd.Series:
+    """Create 3-class target: 1=UP, 0=DOWN, 2=NO_TRADE.
+
+    When chop_score is provided, the most choppy `chop_pct` fraction of bars
+    are labeled NO_TRADE based on market structure (narrow BB, small candles,
+    inside bars, flat micro-trend). Remaining bars use forward return + ATR.
+
+    When chop_score is None, falls back to |forward move| <= atr_threshold*ATR.
+    """
+    closes = df["close"].values.astype(np.float64)
+
+    if chop_score is not None:
+        chop_arr = chop_score.values.astype(np.float64)
+        threshold = np.nanpercentile(chop_arr, (1 - chop_pct) * 100)
+        target = np.full(len(closes), np.nan, dtype=np.float64)
+        is_chop = chop_arr >= threshold
+        target[is_chop] = 2.0  # NO_TRADE for choppy bars
+        # UP/DOWN for the rest based on forward return
+        future_close = np.roll(closes, -horizon)
+        non_chop = ~is_chop
+        if non_chop.any():
+            tr = np.maximum(
+                df["high"].values.astype(np.float64) - df["low"].values.astype(np.float64),
+                np.maximum(
+                    np.abs(df["high"].values.astype(np.float64) - np.roll(closes, 1)),
+                    np.abs(df["low"].values.astype(np.float64) - np.roll(closes, 1)),
+                ),
+            )
+            atr = pd.Series(tr, index=df.index).rolling(14, min_periods=2).mean().values
+            thresh = atr_threshold * atr
+            up = non_chop & (future_close > closes + thresh)
+            down = non_chop & (future_close < closes - thresh)
+            target[up] = 1.0
+            target[down] = 0.0
+    else:
+        tr = np.maximum(
+            df["high"].values.astype(np.float64) - df["low"].values.astype(np.float64),
+            np.maximum(
+                np.abs(df["high"].values.astype(np.float64) - np.roll(closes, 1)),
+                np.abs(df["low"].values.astype(np.float64) - np.roll(closes, 1)),
+            ),
+        )
+        atr = pd.Series(tr, index=df.index).rolling(14, min_periods=2).mean().values
+        future_close = np.roll(closes, -horizon)
+        threshold = atr_threshold * atr
+        target = np.full(len(closes), 2.0)
+        up = future_close > closes + threshold
+        down = future_close < closes - threshold
+        target[up] = 1.0
+        target[down] = 0.0
+        target[np.isnan(atr)] = np.nan
+
+    target[np.isnan(target)] = np.nan
     target[-horizon:] = np.nan
 
     result = pd.Series(target, index=df.index, name="target")
