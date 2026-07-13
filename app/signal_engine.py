@@ -1020,9 +1020,13 @@ class SignalEngine:
                 now = _time.monotonic()
                 if now - self._last_asp_log_time >= 30:
                     self._last_asp_log_time = now
+                    prob_dict = self._asp_predictor._get_raw_probs(last_row)
+                    prob_str = ""
+                    if prob_dict:
+                        prob_str = f" B={prob_dict['buy']:.3f} S={prob_dict['sell']:.3f} N={prob_dict['neutral']:.3f}"
                     self._logger.info(
                         f"[ASP_ML] dir={direction} conf={confidence:.3f} "
-                        f"price={current_price:.2f}"
+                        f"price={current_price:.2f}{prob_str}"
                     )
 
             if direction is None:
@@ -1087,6 +1091,7 @@ class SignalEngine:
                                             cfg.SL_ATR_MULTIPLIER, None, None, True)
 
         bars = bars_since_entry if bars_since_entry is not None else len(df)
+        min_bars = cfg.ML_TREND_EXIT_MIN_BARS
         atr = self._compute_atr_m5(df, 14)
         if atr <= 0:
             atr = entry_price * 0.001
@@ -1137,9 +1142,13 @@ class SignalEngine:
                 f"new_setup={p_new:.3f} pnl={diff/atr:.2f}atr bars={bars}"
             )
 
-        if exit_signal == "TREND_EXHAUSTED":
+        # Guard: require minimum bars before exit signals fire
+        # Prevents NEW_SETUP/TREND_EXHAUSTED from closing trades instantly at bars=0
+        if bars < min_bars:
+            pass  # skip exit signals, only safety SL applies
+        elif exit_signal == "TREND_EXHAUSTED":
             return True, 0.90, "trend_exhaustion"
-        if exit_signal == "NEW_SETUP":
+        elif exit_signal == "NEW_SETUP":
             return True, 0.85, "new_setup"
 
         # Hard SL as safety net (2x ATR)

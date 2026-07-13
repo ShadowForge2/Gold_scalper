@@ -50,11 +50,42 @@ class ASPPredictor:
 
         self.ready = True
 
+    def _get_raw_probs(self, asp_features_row: pd.Series) -> Optional[dict]:
+        """Get raw class probabilities from the model.
+
+        Returns dict with keys 'buy', 'sell', 'neutral' or None on error.
+        """
+        if not self.ready or self.model is None:
+            return None
+        try:
+            missing = [c for c in self.features if c not in asp_features_row.index]
+            if missing:
+                return None
+            x = asp_features_row[self.features].values.reshape(1, -1)
+            if np.any(np.isnan(x)):
+                return None
+
+            probs = self.model.predict_proba(x)[0]
+            classes = list(self.model.classes_)
+            result = {"buy": 0.0, "sell": 0.0, "neutral": 0.0}
+            for i, cls in enumerate(classes):
+                label = self.inv_map.get(cls, cls)
+                if label == 1:
+                    result["buy"] = float(probs[i])
+                elif label == -1:
+                    result["sell"] = float(probs[i])
+                else:
+                    result["neutral"] = float(probs[i])
+            return result
+        except Exception:
+            return None
+
     def predict(self, asp_features_row: pd.Series) -> Tuple[Optional[str], float]:
         """Predict direction from a single ASP feature row.
 
-        Args:
-            asp_features_row: Single row of ASP features (from compute_asp_features).
+        First checks argmax prediction. If NEUTRAL, falls back to
+        probability-based: if P(BUY) or P(SELL) exceeds a threshold,
+        use that direction instead.
 
         Returns:
             (direction, confidence) where direction is 'BUY', 'SELL', or None.
@@ -81,8 +112,21 @@ class ASPPredictor:
                 return "BUY", confidence
             elif label == -1:
                 return "SELL", confidence
-            else:
-                return None, confidence
+
+            # NEUTRAL argmax — check individual class probabilities
+            # Model may be overconfident on NEUTRAL. Use probability-based fallback.
+            prob_dict = self._get_raw_probs(asp_features_row)
+            if prob_dict is not None:
+                buy_p = prob_dict["buy"]
+                sell_p = prob_dict["sell"]
+                prob_threshold = 0.35
+                margin = 0.10
+                if buy_p >= prob_threshold and buy_p - sell_p >= margin:
+                    return "BUY", buy_p
+                if sell_p >= prob_threshold and sell_p - buy_p >= margin:
+                    return "SELL", sell_p
+
+            return None, confidence
 
         except Exception as e:
             logger.warning("ASP predict error: %s", e)
