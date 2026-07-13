@@ -585,9 +585,17 @@ class Bot:
         # Entry priority: ASP > Trend > Breakout
         signal = None
         if self._asp_predictor and self._asp_predictor.ready and cfg.ASP_ENABLED:
+            h1_for_asp = None
+            try:
+                h1_for_asp = self.client.get_rates(
+                    self.symbol, cfg.BIAS_TIMEFRAME, 96
+                )
+            except Exception:
+                pass
             signal = self.signal_engine.evaluate_asp_entry(
                 m1_data, current_price,
                 events=calendar_events,
+                h1_data=h1_for_asp,
             )
         if signal is None and self._trend_predictor is not None:
             signal = self.signal_engine.evaluate_trend_entry(

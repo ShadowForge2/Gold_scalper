@@ -977,7 +977,8 @@ class SignalEngine:
         return signal
 
     def evaluate_asp_entry(self, m1_data: pd.DataFrame, current_price: float,
-                           events: Optional[list] = None) -> Optional[Dict]:
+                           events: Optional[list] = None,
+                           h1_data: Optional[pd.DataFrame] = None) -> Optional[Dict]:
         """ASP-based entry: ML predicts swing turning points.
 
         SL = 2x ATR, TP = 1x ATR, timeout handled by bot.py.
@@ -1005,9 +1006,13 @@ class SignalEngine:
             if len(m5) < 20:
                 return self._reject("insufficient_m5_data", price=current_price)
 
-            h1 = m1_idx.resample("1h").agg({
-                "open": "first", "high": "max", "low": "min", "close": "last",
-            }).dropna()
+            if h1_data is not None and len(h1_data) >= 20:
+                h1_src = h1_data.set_index("time") if "time" in h1_data.columns else h1_data
+                h1 = h1_src[["open", "high", "low", "close"]].dropna()
+            else:
+                h1 = m1_idx.resample("1h").agg({
+                    "open": "first", "high": "max", "low": "min", "close": "last",
+                }).dropna()
 
             asp_feats = compute_asp_features(m5, h1)
             if asp_feats is None or len(asp_feats) == 0:
