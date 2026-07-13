@@ -422,11 +422,10 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
     @app.get("/api/device/bot/config")
     async def device_bot_config(device_id: str = Header(None, alias="X-Device-Id")):
         return {
-            "ML_CONFIDENCE_THRESHOLD": str(cfg.ML_CONFIDENCE_THRESHOLD),
+            "ASP_TIMEOUT_BARS": str(cfg.ASP_TIMEOUT_BARS),
             "LOT_MULTIPLIER": str(cfg.LOT_MULTIPLIER),
             "EXIT_THRESHOLD_TIGHT": str(cfg.EXIT_THRESHOLD_TIGHT),
             "MAX_SPREAD_PIPS": str(cfg.MAX_SPREAD_PIPS),
-            "BIAS_UPDATE_INTERVAL_SEC": str(cfg.BIAS_UPDATE_INTERVAL_SEC),
             "ALLOWED_SESSIONS": cfg.ALLOWED_SESSIONS,
             "MIN_BALANCE": str(cfg.MIN_BALANCE),
             "MAX_LOT": str(cfg.MAX_LOT),

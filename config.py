@@ -140,28 +140,6 @@ MARKET_DAILY_CLOSE_START = _env_float("MARKET_DAILY_CLOSE_START", 20.9833)  # 20
 MARKET_DAILY_CLOSE_END = _env_float("MARKET_DAILY_CLOSE_END", 22.0)  # 22:00 UTC
 
 
-# ML direction prediction
-ML_CONFIDENCE_THRESHOLD = _env_float("ML_CONFIDENCE_THRESHOLD", 0.75)
-ML_NO_TRADE_THRESHOLD = _env_float("ML_NO_TRADE_THRESHOLD", 0.50)
-ML_MODEL_PATH = _env_str("ML_MODEL_PATH", "models/direction_xgb_m5.joblib")
-ML_M1_HISTORY_BARS = _env_int("ML_M1_HISTORY_BARS", 500)
-ML_EXIT_MODEL_PATH = _env_str("ML_EXIT_MODEL_PATH", "models/exit_xgb_m5.joblib")
-ML_EXIT_HOLD_THRESHOLD = _env_float("ML_EXIT_HOLD_THRESHOLD", 0.60)
-ML_BIAS_OVERRIDE_THRESHOLD = _env_float("ML_BIAS_OVERRIDE_THRESHOLD", 0.60)
-ML_HOLD_CONFIDENCE = _env_float("ML_HOLD_CONFIDENCE", 0.50)
-
-# Trend-following ML model (H1 structure)
-ML_TREND_MODEL_PATH = _env_str("ML_TREND_MODEL_PATH", "models/trend_xgb_h1.joblib")
-ML_TREND_CONFIDENCE_THRESHOLD = _env_float("ML_TREND_CONFIDENCE_THRESHOLD", 0.55)
-ML_TREND_EXIT_MODEL_PATH = _env_str("ML_TREND_EXIT_MODEL_PATH", "models/exit_trend_xgb_m5.joblib")
-ML_TREND_EXIT_EXHAUSTION_THRESHOLD = _env_float("ML_TREND_EXIT_EXHAUSTION_THRESHOLD", 0.70)
-ML_TREND_EXIT_NEW_SETUP_THRESHOLD = _env_float("ML_TREND_EXIT_NEW_SETUP_THRESHOLD", 0.80)
-ML_TREND_EXIT_MIN_BARS = _env_int("ML_TREND_EXIT_MIN_BARS", 2)
-
-# Trend model features: 12 H1 bars forward, ATR-based swing detection
-ML_TREND_FORWARD_BARS = _env_int("ML_TREND_FORWARD_BARS", 12)
-ML_TREND_ATR_SWING_MULT = _env_float("ML_TREND_ATR_SWING_MULT", 1.0)
-
 # ASP (Adaptive Swing Probability) model
 ASP_ENABLED = _env_bool("ASP_ENABLED", True)
 ASP_MODEL_PATH = _env_str("ASP_MODEL_PATH", "models/asp_swing_xgb_m5.joblib")
@@ -170,18 +148,6 @@ ASP_SL_ATR_MULTIPLIER = _env_float("ASP_SL_ATR_MULTIPLIER", 2.0)
 ASP_TP_ATR_MULTIPLIER = _env_float("ASP_TP_ATR_MULTIPLIER", 1.0)
 ASP_TIMEOUT_BARS = _env_int("ASP_TIMEOUT_BARS", 6)
 ASP_MIN_ATR_DIST = _env_float("ASP_MIN_ATR_DIST", 0.50)
-
-# Conviction tiers — ML confidence determines position count (no other filters)
-ML_CONF_STRONG_THRESHOLD = _env_float("ML_CONF_STRONG_THRESHOLD", 0.82)
-ML_CONF_VERY_STRONG_THRESHOLD = _env_float("ML_CONF_VERY_STRONG_THRESHOLD", 0.92)
-ML_POSITIONS_STRONG = _env_int("ML_POSITIONS_STRONG", 3)
-ML_POSITIONS_VERY_STRONG = _env_int("ML_POSITIONS_VERY_STRONG", 5)
-ML_POSITIONS_MAX = _env_int("ML_POSITIONS_MAX", 7)
-
-# Conviction sizing (lot multiplier per confidence tier)
-ML_LOT_MULTIPLIER = _env_float("ML_LOT_MULTIPLIER", 1.5)
-ML_LOT_MULT_STRONG = _env_float("ML_LOT_MULT_STRONG", 2.0)
-ML_LOT_MULT_VERY_STRONG = _env_float("ML_LOT_MULT_VERY_STRONG", 3.0)
 
 # MaxelPay
 MAXELPAY_API_KEY = _env_str("MAXELPAY_API_KEY", "")

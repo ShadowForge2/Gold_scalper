@@ -10,7 +10,7 @@ class EquityScaler:
         self.starting_balance: Optional[float] = None
         self.peak_balance: Optional[float] = None
         self.base_lot = cfg.LOT_SIZE
-        self.base_trades = cfg.ML_POSITIONS_STRONG
+        self.base_trades = 1
 
     def initialize(self, balance: float):
         self.starting_balance = balance

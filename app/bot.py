@@ -8,26 +8,12 @@ from typing import Optional, Dict, List
 import config as cfg
 from app.logger import BotLogger
 from app.capital_client import CapitalClient
-from app.bias_engine import BiasEngine
 from app.signal_engine import SignalEngine
 from app.risk_manager import RiskManager, EquityScaler
 from app.trade_executor import TradeExecutor
 from app.position_manager import PositionManager
 from app.economic_calendar import EconomicCalendar
 from app.news_state_machine import NewsStateMachine
-
-try:
-    from app.direction_predictor import (
-        DirectionPredictor, ExitPredictor,
-        TrendPredictor, TrendExhaustionPredictor,
-    )
-    _HAS_ML = True
-except ImportError:
-    DirectionPredictor = None
-    ExitPredictor = None
-    TrendPredictor = None
-    TrendExhaustionPredictor = None
-    _HAS_ML = False
 
 try:
     from app.asp_predictor import ASPPredictor
@@ -40,11 +26,8 @@ except ImportError:
 class Bot:
     STATES = {
         "IDLE": "IDLE",
-        "BIAS_ANALYSIS": "BIAS_ANALYSIS",
-        "AWAITING_SIGNAL": "AWAITING_SIGNAL",
         "ENTERING": "ENTERING",
         "IN_TRADE": "IN_TRADE",
-        "EXITING": "EXITING",
         "STOPPED": "STOPPED",
         "WAITING_FOR_FUNDS": "WAITING_FOR_FUNDS",
         "MARKET_CLOSED": "MARKET_CLOSED",
@@ -53,40 +36,7 @@ class Bot:
     def __init__(self, logger: Optional[BotLogger] = None):
         self.logger = logger or BotLogger()
         self.client: object = None
-        self.bias_engine = BiasEngine()
-        self._direction_predictor = None
-        self._exit_predictor = None
-        self._trend_predictor = None
-        self._trend_exhaustion_predictor = None
         self._asp_predictor = None
-        if _HAS_ML:
-            try:
-                if os.path.exists(cfg.ML_MODEL_PATH):
-                    self._direction_predictor = DirectionPredictor.load(cfg.ML_MODEL_PATH)
-                    self.logger.info(f"Direction model loaded from {cfg.ML_MODEL_PATH}")
-            except Exception as e:
-                self.logger.warning(f"Failed to load direction model: {e}")
-            try:
-                if os.path.exists(cfg.ML_EXIT_MODEL_PATH):
-                    self._exit_predictor = ExitPredictor(model_path=cfg.ML_EXIT_MODEL_PATH)
-                    self.logger.info(f"Exit model loaded from {cfg.ML_EXIT_MODEL_PATH}")
-            except Exception as e:
-                self.logger.warning(f"Failed to load exit model: {e}")
-            # Trend-following models
-            try:
-                if os.path.exists(cfg.ML_TREND_MODEL_PATH):
-                    self._trend_predictor = TrendPredictor.load(cfg.ML_TREND_MODEL_PATH)
-                    self.logger.info(f"Trend model loaded from {cfg.ML_TREND_MODEL_PATH}")
-            except Exception as e:
-                self.logger.warning(f"Failed to load trend model: {e}")
-            try:
-                if os.path.exists(cfg.ML_TREND_EXIT_MODEL_PATH):
-                    self._trend_exhaustion_predictor = TrendExhaustionPredictor(
-                        model_path=cfg.ML_TREND_EXIT_MODEL_PATH
-                    )
-                    self.logger.info(f"Trend exit model loaded from {cfg.ML_TREND_EXIT_MODEL_PATH}")
-            except Exception as e:
-                self.logger.warning(f"Failed to load trend exit model: {e}")
         # ASP swing model
         if _HAS_ASP and cfg.ASP_ENABLED:
             try:
@@ -102,27 +52,11 @@ class Bot:
             except Exception as e:
                 self.logger.warning(f"Failed to load ASP model: {e}")
         self.signal_engine = SignalEngine(
-            direction_predictor=self._direction_predictor,
-            exit_predictor=self._exit_predictor,
-            trend_predictor=self._trend_predictor,
-            trend_exhaustion_predictor=self._trend_exhaustion_predictor,
             asp_predictor=self._asp_predictor,
             logger=self.logger,
         )
-        ml_status = []
         if self._asp_predictor and self._asp_predictor.ready:
-            ml_status.append("ASP model loaded")
-        if self._direction_predictor:
-            ml_status.append("Direction model loaded")
-        if self._exit_predictor:
-            ml_status.append("Exit model loaded")
-        if self._trend_predictor:
-            ml_status.append("Trend model loaded")
-        if self._trend_exhaustion_predictor:
-            ml_status.append("Trend exit model loaded")
-        if ml_status:
-            self.logger.info(f"[ML] Active: {', '.join(ml_status)} | "
-                             f"confidence_threshold={cfg.ML_CONFIDENCE_THRESHOLD}")
+            self.logger.info("[ML] Active: ASP model loaded")
         else:
             self.logger.info("[ML] Not available")
         self.risk_manager = RiskManager()
@@ -134,7 +68,6 @@ class Bot:
         self._running = False
 
         self._current_signal: Optional[Dict] = None
-        self._bias_summary: Dict = {}
         self._last_tick: Optional[Dict] = None
         self._last_signal_diag_key: Optional[str] = None
         self._last_signal_diag_time = 0.0
@@ -176,7 +109,6 @@ class Bot:
                 self.logger.info("[NEWS] No upcoming events found")
         self._shutdown_deadline = None
         self._last_sub_check = 0.0
-        self._ml_heartbeat_ticks = 0
         self._creds: Optional[Dict] = None
         self._last_market_status_check = 0.0
         self._market_check_interval = 60
@@ -209,8 +141,8 @@ class Bot:
             pass
 
     async def initialize(self) -> bool:
-        self.logger.info(f"Initializing {self.symbol} scalping bot...")
-        self.logger.info(f"Config: EXIT_THRESHOLD_TIGHT={cfg.EXIT_THRESHOLD_TIGHT} LOT_MULTIPLIER={cfg.LOT_MULTIPLIER}")
+        self.logger.info(f"Initializing {self.symbol} scalping bot (ASP-only mode)...")
+        self.logger.info(f"Config: ASP_TIMEOUT_BARS={cfg.ASP_TIMEOUT_BARS} LOT_MULTIPLIER={cfg.LOT_MULTIPLIER}")
 
         self.logger.info("Broker: Capital.com (REST API)")
         self.client = CapitalClient()
@@ -433,11 +365,6 @@ class Bot:
 
         self._update_news_state()
 
-        self._ml_heartbeat_ticks += 1
-        if self._ml_heartbeat_ticks >= 100 and self._direction_predictor is not None:
-            self._ml_heartbeat_ticks = 0
-            self.logger.info("[ML] Heartbeat: models=active")
-
         if self.state == self.STATES["IN_TRADE"]:
             await self._handle_in_trade(pnl_data)
         elif self.state == self.STATES["WAITING_FOR_FUNDS"]:
@@ -478,9 +405,8 @@ class Bot:
         if self._winding_down:
             return
 
-        m1_count = cfg.ML_M1_HISTORY_BARS if (hasattr(self, '_direction_predictor') and self._direction_predictor is not None) else 100
         m1_data = self.client.get_rates(
-            self.symbol, cfg.SIGNAL_TIMEFRAME, m1_count
+            self.symbol, cfg.SIGNAL_TIMEFRAME, 100
         )
         if m1_data is None or len(m1_data) < 10:
             self._log_signal_diagnostic(
@@ -496,93 +422,16 @@ class Bot:
             self._log_signal_diagnostic("symbol_info_unavailable", {})
             return
 
-        now = time.monotonic()
-        if not hasattr(self, '_last_bias_time'):
-            self._last_bias_time = 0.0
-        bias_interval = getattr(self, '_bias_update_interval', cfg.BIAS_UPDATE_INTERVAL_SEC)
-        if now - self._last_bias_time >= bias_interval or \
-           self.state == self.STATES["IDLE"]:
-            self._last_bias_time = now
-            if await self._update_bias():
-                self.state = self.STATES["AWAITING_SIGNAL"]
-                self.logger.info("Looking for clear setup...")
-
-        if self.state != self.STATES["AWAITING_SIGNAL"]:
-            return
-
-        if not self.bias_engine.is_tradeable():
-            self._log_signal_diagnostic(
-                "bias_not_tradeable",
-                {"bias": self._bias_summary.get("bias", "UNKNOWN"),
-                 "strength": self._bias_summary.get("strength", 0)},
-            )
-            return
-
         if self.news_state is not None and self.news_state.should_block_entry():
             info = self.news_state.get_state_info()
             self._log_signal_diagnostic(
                 f"news_blocked_{info['state']}",
-                {"bias": self._bias_summary.get("bias", "UNKNOWN"),
-                 "news_state": info["state"]},
+                {"news_state": info["state"]},
             )
             return
 
-        bias_dir = self._bias_summary.get("bias", "NEUTRAL")
-        current_price = symbol_info.get("ask", 0) if bias_dir == "BULLISH" else symbol_info.get("bid", 0)
+        current_price = symbol_info.get("ask", 0)
 
-        h1_high = None
-        h1_low = None
-        try:
-            if m1_data is not None and len(m1_data) >= 60:
-                m1_idx = m1_data.set_index("time")
-                has_bid_ask_m1 = "high_ask" in m1_idx.columns
-                if has_bid_ask_m1:
-                    h1_agg = m1_idx.resample("1h").agg({
-                        "high_ask": "max", "low_ask": "min",
-                        "high_bid": "max", "low_bid": "min",
-                        "high": "max", "low": "min",
-                    }).dropna()
-                else:
-                    h1_agg = m1_idx.resample("1h").agg({
-                        "high": "max", "low": "min",
-                    }).dropna()
-                if len(h1_agg) >= 2:
-                    bar = h1_agg.iloc[-2]
-                    h1_high = bar.get("high_ask" if (has_bid_ask_m1 and bias_dir == "BULLISH") else "high_bid" if (has_bid_ask_m1 and bias_dir == "BEARISH") else "high")
-                    h1_low = bar.get("low_ask" if (has_bid_ask_m1 and bias_dir == "BULLISH") else "low_bid" if (has_bid_ask_m1 and bias_dir == "BEARISH") else "low")
-                    if h1_high is None or h1_low is None or not (h1_high > 0 and h1_low > 0):
-                        h1_high = None
-                        h1_low = None
-        except Exception as e:
-            self.logger.warning(f"H1 range computation failed: {e}")
-
-        try:
-            if h1_high is None or h1_low is None or h1_high <= h1_low:
-                h1_data = self.client.get_rates(
-                    self.symbol, cfg.BIAS_TIMEFRAME, 3
-                )
-                if h1_data is not None and len(h1_data) >= 2:
-                    has_bid_ask = "high_ask" in h1_data.columns
-                    if has_bid_ask and bias_dir == "BULLISH":
-                        h1_high = h1_data["high_ask"].iloc[-2]
-                        h1_low = h1_data["low_ask"].iloc[-2]
-                    elif has_bid_ask and bias_dir == "BEARISH":
-                        h1_high = h1_data["high_bid"].iloc[-2]
-                        h1_low = h1_data["low_bid"].iloc[-2]
-                    else:
-                        h1_high = h1_data["high"].iloc[-2]
-                        h1_low = h1_data["low"].iloc[-2]
-                else:
-                    h1_high = None
-                    h1_low = None
-        except Exception as e:
-            self.logger.warning(f"H1 fallback range computation failed: {e}")
-            h1_high = None
-            h1_low = None
-
-        calendar_events = getattr(self.news_calendar, 'events', None) if self.news_calendar is not None else None
-
-        # Entry priority: ASP > Trend > Breakout
         signal = None
         if self._asp_predictor and self._asp_predictor.ready and cfg.ASP_ENABLED:
             h1_for_asp = None
@@ -594,48 +443,26 @@ class Bot:
                 pass
             signal = self.signal_engine.evaluate_asp_entry(
                 m1_data, current_price,
-                events=calendar_events,
                 h1_data=h1_for_asp,
             )
-        if signal is None and self._trend_predictor is not None:
-            signal = self.signal_engine.evaluate_trend_entry(
-                m1_data, current_price,
-                h1_high=h1_high, h1_low=h1_low,
-                events=calendar_events,
-            )
-        if signal is None:
-            # Fallback to original breakout-based entry
-            signal = self.signal_engine.evaluate(
-                m1_data, self._bias_summary, current_price,
-                h1_high=h1_high, h1_low=h1_low,
-                events=calendar_events,
-            )
+
         if signal:
-            ml_tag = " [ML OVERRIDE]" if signal.get("ml_override") else ""
-            asp_tag = " [ASP]" if signal.get("asp_model") else ""
-            trend_tag = " [TREND]" if signal.get("trend_model") else ""
             sig_dir = signal.get('direction', 'UNKNOWN')
-            if signal.get("asp_model"):
-                reason = f"ASP swing prediction: {sig_dir} at ${current_price:.2f}"
-            elif sig_dir == 'BUY':
-                reason = f"Price broke above H1 high (${h1_high:.2f}) with bullish momentum"
-            else:
-                reason = f"Price broke below H1 low (${h1_low:.2f}) with bearish momentum"
-            sf_key = f"{signal['direction']}|{signal.get('ml_override')}|{signal.get('asp_model')}|{signal['score']:.2f}"
+            sf_key = f"{sig_dir}|{signal['score']:.2f}"
             sf_now = time.monotonic()
             if sf_key != self._last_signal_found_key or sf_now - self._last_signal_found_time >= 30:
                 self._last_signal_found_key = sf_key
                 self._last_signal_found_time = sf_now
                 self.logger.signal(
-                    f"Signal found: {signal['direction']}{ml_tag}{asp_tag}{trend_tag} | {reason} "
+                    f"Signal found: [ASP] {sig_dir} | "
+                    f"ASP swing prediction at ${current_price:.2f} "
                     f"(score={signal['score']:.3f} SL={signal.get('sl', 'n/a')} TP={signal.get('tp1', 'n/a')})"
                 )
         else:
             rejection = self.signal_engine.last_rejection or {}
             self._log_signal_diagnostic(
-                rejection.get("reason", "signal_not_generated"),
-                {"bias": bias_dir, "price": current_price,
-                 "h1_high": h1_high, "h1_low": h1_low, **rejection},
+                rejection.get("reason", "asp_no_signal"),
+                {"price": current_price, **rejection},
             )
 
         if signal:
@@ -657,9 +484,8 @@ class Bot:
                 return
 
             self._current_signal = signal
-            ml_tag = f" (ML conf={signal.get('ml_confidence', 0):.2f} × {signal.get('num_positions', 1)} pos)"
             self.logger.signal(
-                f"Signal triggered: {signal.get('direction', 'UNKNOWN')}{ml_tag} "
+                f"Signal triggered: [ASP] {signal.get('direction', 'UNKNOWN')} "
                 f"score={signal['score']:.2f}"
             )
             await self._execute_entry(signal, symbol_info)
@@ -676,10 +502,7 @@ class Bot:
 
     def _log_signal_diagnostic(self, reason: str, context: Dict):
         now = time.monotonic()
-        key = (
-            f"{reason}|{context.get('bias')}|{context.get('direction')}|"
-            f"{context.get('h1_high')}|{context.get('h1_low')}"
-        )
+        key = f"{reason}|{context.get('direction')}|{context.get('price')}"
         if key == self._last_signal_diag_key and now - self._last_signal_diag_time < 30:
             return
 
@@ -696,13 +519,8 @@ class Bot:
 
         self.logger.signal(
             f"No entry: {reason} | "
-            f"bias={context.get('bias', 'UNKNOWN')} "
             f"direction={context.get('direction', 'n/a')} "
             f"price={fmt_num(context.get('price'))} "
-            f"h1_high={fmt_num(context.get('h1_high'))} "
-            f"h1_low={fmt_num(context.get('h1_low'))} "
-            f"breakout={fmt_num(context.get('breakout_dist'))} "
-            f"range={fmt_num(context.get('range_size'))} "
             f"score={fmt_num(context.get('score'), 3)} "
             f"threshold={fmt_num(context.get('threshold', 0.75), 3)}"
         )
@@ -729,9 +547,8 @@ class Bot:
             self.state = self.STATES["IDLE"]
             return
 
-        m1_count = cfg.ML_M1_HISTORY_BARS if (hasattr(self, '_direction_predictor') and self._direction_predictor is not None) else 20
         m1_data = self.client.get_rates(
-            self.symbol, cfg.SIGNAL_TIMEFRAME, m1_count
+            self.symbol, cfg.SIGNAL_TIMEFRAME, 20
         )
         if m1_data is None:
             return
@@ -798,39 +615,13 @@ class Bot:
                 self.state = self.STATES["IDLE"]
                 return
 
-        # Widen exit threshold in POST_NEWS mode (let winners run)
-        if self.news_state is not None and self.news_state.state == "POST_NEWS":
-            post_exit_thresh = min(cfg.EXIT_THRESHOLD_TIGHT * cfg.NEWS_WIDER_TP_MULT, 1.0)
-        else:
-            post_exit_thresh = None
-        exit_thresh = post_exit_thresh or getattr(self, '_exit_threshold_override', cfg.EXIT_THRESHOLD_TIGHT)
-        effective_exit_mode = getattr(self, '_exit_mode_override', cfg.EXIT_MODE)
         event_start = getattr(self.position_manager, '_event_start_ts', None)
         bars_since_entry = max(0, int((time.time() - event_start) / (cfg.EXIT_CHECK_INTERVAL or 300))) if event_start else 0
 
-        # Use trend exhaustion model if available
-        if self._trend_exhaustion_predictor is not None and self._trend_predictor is not None:
-            should_exit, exit_score, reason = self.signal_engine._exit_mode_trend_exhaustion(
-                m1_data, entry_price, direction, entry_score, bars_since_entry,
-            )
-        else:
-            should_exit, exit_score, reason = self.signal_engine.evaluate_exit(
-                    m1_data, entry_price, direction, entry_score,
-                    exit_mode=effective_exit_mode, exit_threshold=exit_thresh,
-                    signal=self._current_signal, bars_since_entry=bars_since_entry,
-                )
-
-        if not should_exit and reason == "ml_hold":
-            now_t = time.time()
-            if not hasattr(self, '_last_ml_hold_log'):
-                self._last_ml_hold_log = 0.0
-            if now_t - self._last_ml_hold_log >= 30.0:
-                self._last_ml_hold_log = now_t
-                self.logger.signal(f"ML hold: suppressing exit, ML still confident in {direction}")
-
-        if should_exit:
+        # Timeout fallback: close if held too long without ASP exit triggering
+        if bars_since_entry >= cfg.ASP_TIMEOUT_BARS:
             self.logger.signal(
-                f"Exit signal: score={exit_score:.2f} reason={reason}"
+                f"Timeout exit: held {bars_since_entry} bars without SL/TP hit"
             )
             closed = self.trade_executor.close_all_bot_positions()
             for pos_data in closed:
@@ -848,25 +639,6 @@ class Bot:
                 f"Funds detected: ${info['balance']:.2f}. Starting bot."
             )
             self.state = self.STATES["IDLE"]
-
-    async def _update_bias(self) -> bool:
-        h1_data = self.client.get_rates(
-            self.symbol, cfg.BIAS_TIMEFRAME, 96
-        )
-        if h1_data is None or len(h1_data) < 20:
-            self.logger.warning("Cannot update bias: insufficient H1 data")
-            return False
-
-        summary = self.bias_engine.update(h1_data)
-        self._bias_summary = summary
-
-        tradeable = self.bias_engine.is_tradeable()
-        self.logger.bias(
-            f"{summary['bias']} (strength={summary['strength']:.2f}, "
-            f"H1={summary['primary_trend']}) "
-            f"{'TRADEABLE' if tradeable else 'WAITING'}"
-        )
-        return True
 
     async def _execute_entry(self, signal: Dict, symbol_info: Dict):
         self.state = self.STATES["ENTERING"]
@@ -907,8 +679,7 @@ class Bot:
         vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
         lot = round(lot / vol_step) * vol_step
         lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), min(lot, fresh_info.get("volume_max", cfg.MAX_LOT)))
-        # Single position per trend when trend model is active
-        max_trades = 1 if (signal.get("trend_model") or signal.get("asp_model")) else signal.get("num_positions", 1)
+        max_trades = 1
 
         # Price drift check — reject if price moved outside allowed drift
         current_price = fresh_info.get("bid", fresh_info.get("price", 0)) if direction == "SELL" else fresh_info.get("ask", fresh_info.get("price", 0))
@@ -1049,7 +820,6 @@ class Bot:
             "state": self.state,
             "symbol": self.symbol,
             "magic": self.magic,
-            "bias": self._bias_summary,
             "signal": signal,
             "news": news,
             "positions": self.position_manager.summary(),
@@ -1089,15 +859,9 @@ class Bot:
         if "lot_multiplier" in settings:
             clamped["lot_multiplier"] = max(0.1, min(float(settings["lot_multiplier"]), 100.0))
             self._lot_multiplier_override = clamped["lot_multiplier"]
-        if "exit_threshold_tight" in settings:
-            clamped["exit_threshold_tight"] = max(0.01, min(float(settings["exit_threshold_tight"]), 1.0))
-            self._exit_threshold_override = clamped["exit_threshold_tight"]
         if "max_spread_pips" in settings:
             clamped["max_spread_pips"] = max(1.0, min(float(settings["max_spread_pips"]), 500.0))
             self.risk_manager.max_spread = clamped["max_spread_pips"]
-        if "bias_update_interval_sec" in settings:
-            clamped["bias_update_interval_sec"] = max(1, min(float(settings["bias_update_interval_sec"]), 3600.0))
-            self._bias_update_interval = clamped["bias_update_interval_sec"]
         if "allowed_sessions" in settings:
             sessions_raw = settings["allowed_sessions"]
             if isinstance(sessions_raw, list):
@@ -1105,9 +869,6 @@ class Bot:
             else:
                 sessions_str = str(sessions_raw)
             self.risk_manager.allowed_sessions = [s.strip().upper() for s in sessions_str.split(",") if s.strip()]
-        if "exit_mode" in settings:
-            clamped["exit_mode"] = max(1, min(int(settings["exit_mode"]), 6))
-            self._exit_mode_override = clamped["exit_mode"]
         self.logger.info(f"Bot settings updated: {clamped}")
 
     def login(self, server: str, account: str, password: str) -> Dict:
