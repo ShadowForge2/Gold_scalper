@@ -368,8 +368,8 @@ def liquidity_features(df: pd.DataFrame) -> pd.DataFrame:
     feats["failed_breakout"] = (broke_above & (np.roll(closes, -1) < recent_high.values)).astype(float)
     feats["failed_breakdown"] = (broke_below & (np.roll(closes, -1) > recent_low.values)).astype(float)
     # Fix last bar
-    feats["failed_breakout"].iloc[-1] = 0.0
-    feats["failed_breakdown"].iloc[-1] = 0.0
+    feats.iloc[-1, feats.columns.get_loc("failed_breakout")] = 0.0
+    feats.iloc[-1, feats.columns.get_loc("failed_breakdown")] = 0.0
 
     # Wick extensions
     a = atr_safe.values

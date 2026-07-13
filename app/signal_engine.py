@@ -1020,11 +1020,10 @@ class SignalEngine:
                 now = _time.monotonic()
                 if now - self._last_asp_log_time >= 30:
                     self._last_asp_log_time = now
-                    if direction is not None:
-                        self._logger.info(
-                            f"[ASP_ML] dir={direction} conf={confidence:.3f} "
-                            f"price={current_price:.2f}"
-                        )
+                    self._logger.info(
+                        f"[ASP_ML] dir={direction} conf={confidence:.3f} "
+                        f"price={current_price:.2f}"
+                    )
 
             if direction is None:
                 return self._reject("asp_no_signal", price=current_price,
