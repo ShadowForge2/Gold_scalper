@@ -96,10 +96,13 @@ class ASPPredictor:
         try:
             missing = [c for c in self.features if c not in asp_features_row.index]
             if missing:
+                logger.warning("ASP predict: %d missing features: %s", len(missing), missing[:5])
                 return None, 0.0
 
             x = asp_features_row[self.features].values.reshape(1, -1)
-            if np.any(np.isnan(x)):
+            nan_count = int(np.sum(np.isnan(x)))
+            if nan_count > 0:
+                logger.warning("ASP predict: %d NaN values in features", nan_count)
                 return None, 0.0
 
             raw_pred = self.model.predict(x)[0]
@@ -114,7 +117,6 @@ class ASPPredictor:
                 return "SELL", confidence
 
             # NEUTRAL argmax — check individual class probabilities
-            # Model may be overconfident on NEUTRAL. Use probability-based fallback.
             prob_dict = self._get_raw_probs(asp_features_row)
             if prob_dict is not None:
                 buy_p = prob_dict["buy"]
@@ -129,7 +131,7 @@ class ASPPredictor:
             return None, confidence
 
         except Exception as e:
-            logger.warning("ASP predict error: %s", e)
+            logger.warning("ASP predict error: %s", e, exc_info=True)
             return None, 0.0
 
     def predict_batch(self, asp_features_df: pd.DataFrame) -> pd.Series:
