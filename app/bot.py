@@ -17,12 +17,24 @@ from app.economic_calendar import EconomicCalendar
 from app.news_state_machine import NewsStateMachine
 
 try:
-    from app.direction_predictor import DirectionPredictor, ExitPredictor
+    from app.direction_predictor import (
+        DirectionPredictor, ExitPredictor,
+        TrendPredictor, TrendExhaustionPredictor,
+    )
     _HAS_ML = True
 except ImportError:
     DirectionPredictor = None
     ExitPredictor = None
+    TrendPredictor = None
+    TrendExhaustionPredictor = None
     _HAS_ML = False
+
+try:
+    from app.asp_predictor import ASPPredictor
+    _HAS_ASP = True
+except ImportError:
+    ASPPredictor = None
+    _HAS_ASP = False
 
 
 class Bot:
@@ -44,6 +56,9 @@ class Bot:
         self.bias_engine = BiasEngine()
         self._direction_predictor = None
         self._exit_predictor = None
+        self._trend_predictor = None
+        self._trend_exhaustion_predictor = None
+        self._asp_predictor = None
         if _HAS_ML:
             try:
                 if os.path.exists(cfg.ML_MODEL_PATH):
@@ -57,16 +72,54 @@ class Bot:
                     self.logger.info(f"Exit model loaded from {cfg.ML_EXIT_MODEL_PATH}")
             except Exception as e:
                 self.logger.warning(f"Failed to load exit model: {e}")
+            # Trend-following models
+            try:
+                if os.path.exists(cfg.ML_TREND_MODEL_PATH):
+                    self._trend_predictor = TrendPredictor.load(cfg.ML_TREND_MODEL_PATH)
+                    self.logger.info(f"Trend model loaded from {cfg.ML_TREND_MODEL_PATH}")
+            except Exception as e:
+                self.logger.warning(f"Failed to load trend model: {e}")
+            try:
+                if os.path.exists(cfg.ML_TREND_EXIT_MODEL_PATH):
+                    self._trend_exhaustion_predictor = TrendExhaustionPredictor(
+                        model_path=cfg.ML_TREND_EXIT_MODEL_PATH
+                    )
+                    self.logger.info(f"Trend exit model loaded from {cfg.ML_TREND_EXIT_MODEL_PATH}")
+            except Exception as e:
+                self.logger.warning(f"Failed to load trend exit model: {e}")
+        # ASP swing model
+        if _HAS_ASP and cfg.ASP_ENABLED:
+            try:
+                self._asp_predictor = ASPPredictor(
+                    model_path=cfg.ASP_MODEL_PATH,
+                    feature_path=cfg.ASP_FEATURE_PATH,
+                )
+                if self._asp_predictor.ready:
+                    self.logger.info(f"ASP model loaded from {cfg.ASP_MODEL_PATH}")
+                else:
+                    self.logger.warning("ASP model failed to initialize")
+                    self._asp_predictor = None
+            except Exception as e:
+                self.logger.warning(f"Failed to load ASP model: {e}")
         self.signal_engine = SignalEngine(
             direction_predictor=self._direction_predictor,
             exit_predictor=self._exit_predictor,
+            trend_predictor=self._trend_predictor,
+            trend_exhaustion_predictor=self._trend_exhaustion_predictor,
+            asp_predictor=self._asp_predictor,
             logger=self.logger,
         )
         ml_status = []
+        if self._asp_predictor and self._asp_predictor.ready:
+            ml_status.append("ASP model loaded")
         if self._direction_predictor:
             ml_status.append("Direction model loaded")
         if self._exit_predictor:
             ml_status.append("Exit model loaded")
+        if self._trend_predictor:
+            ml_status.append("Trend model loaded")
+        if self._trend_exhaustion_predictor:
+            ml_status.append("Trend exit model loaded")
         if ml_status:
             self.logger.info(f"[ML] Active: {', '.join(ml_status)} | "
                              f"confidence_threshold={cfg.ML_CONFIDENCE_THRESHOLD}")
@@ -528,27 +581,46 @@ class Bot:
             h1_low = None
 
         calendar_events = getattr(self.news_calendar, 'events', None) if self.news_calendar is not None else None
-        signal = self.signal_engine.evaluate(
-            m1_data, self._bias_summary, current_price,
-            h1_high=h1_high, h1_low=h1_low,
-            events=calendar_events,
-        )
+
+        # Entry priority: ASP > Trend > Breakout
+        signal = None
+        if self._asp_predictor and self._asp_predictor.ready and cfg.ASP_ENABLED:
+            signal = self.signal_engine.evaluate_asp_entry(
+                m1_data, current_price,
+                events=calendar_events,
+            )
+        if signal is None and self._trend_predictor is not None:
+            signal = self.signal_engine.evaluate_trend_entry(
+                m1_data, current_price,
+                h1_high=h1_high, h1_low=h1_low,
+                events=calendar_events,
+            )
+        if signal is None:
+            # Fallback to original breakout-based entry
+            signal = self.signal_engine.evaluate(
+                m1_data, self._bias_summary, current_price,
+                h1_high=h1_high, h1_low=h1_low,
+                events=calendar_events,
+            )
         if signal:
             ml_tag = " [ML OVERRIDE]" if signal.get("ml_override") else ""
+            asp_tag = " [ASP]" if signal.get("asp_model") else ""
+            trend_tag = " [TREND]" if signal.get("trend_model") else ""
             sig_dir = signal.get('direction', 'UNKNOWN')
-            reason = (
-                f"Price broke above H1 high (${h1_high:.2f}) with bullish momentum"
-                if sig_dir == 'BUY'
-                else f"Price broke below H1 low (${h1_low:.2f}) with bearish momentum"
-            )
-            sf_key = f"{signal['direction']}|{signal.get('ml_override')}|{signal['score']:.2f}"
+            if signal.get("asp_model"):
+                reason = f"ASP swing prediction: {sig_dir} at ${current_price:.2f}"
+            elif sig_dir == 'BUY':
+                reason = f"Price broke above H1 high (${h1_high:.2f}) with bullish momentum"
+            else:
+                reason = f"Price broke below H1 low (${h1_low:.2f}) with bearish momentum"
+            sf_key = f"{signal['direction']}|{signal.get('ml_override')}|{signal.get('asp_model')}|{signal['score']:.2f}"
             sf_now = time.monotonic()
             if sf_key != self._last_signal_found_key or sf_now - self._last_signal_found_time >= 30:
                 self._last_signal_found_key = sf_key
                 self._last_signal_found_time = sf_now
                 self.logger.signal(
-                    f"Signal found: {signal['direction']}{ml_tag} | {reason} "
-                    f"(score={signal['score']:.3f})"
+                    f"Signal found: {signal['direction']}{ml_tag}{asp_tag}{trend_tag} | {reason} "
+                    f"(score={signal['score']:.3f} SL={signal.get('sl', 'n/a')} TP={signal.get('tp1', 'n/a')})"
                 )
         else:
             rejection = self.signal_engine.last_rejection or {}
@@ -679,6 +751,45 @@ class Bot:
         else:
             self._recovery_ticks = 0
 
+        # ASP fixed exits: SL/TP/timeout
+        is_asp = self._current_signal and self._current_signal.get("asp_model")
+        if is_asp:
+            asp_sl = self._current_signal.get("sl")
+            asp_tp = self._current_signal.get("tp1")
+            event_start = getattr(self.position_manager, '_event_start_ts', None)
+            bars_held = max(0, int((time.time() - event_start) / (cfg.EXIT_CHECK_INTERVAL or 300))) if event_start else 0
+
+            current_px = positions[0].get("current_price", entry_price)
+            should_exit = False
+            exit_reason = ""
+
+            if direction == "BUY":
+                if asp_sl and current_px <= asp_sl:
+                    should_exit = True
+                    exit_reason = "asp_sl_hit"
+                elif asp_tp and current_px >= asp_tp:
+                    should_exit = True
+                    exit_reason = "asp_tp_hit"
+            else:
+                if asp_sl and current_px >= asp_sl:
+                    should_exit = True
+                    exit_reason = "asp_sl_hit"
+                elif asp_tp and current_px <= asp_tp:
+                    should_exit = True
+                    exit_reason = "asp_tp_hit"
+
+            if not should_exit and bars_held >= cfg.ASP_TIMEOUT_BARS:
+                should_exit = True
+                exit_reason = f"asp_timeout_{bars_held}bars"
+
+            if should_exit:
+                self.logger.signal(f"ASP exit: {exit_reason} | dir={direction} entry={entry_price:.2f} px={current_px:.2f}")
+                closed = self.trade_executor.close_all_bot_positions()
+                for pos_data in closed:
+                    self.position_manager.note_closed(pos_data)
+                self.state = self.STATES["IDLE"]
+                return
+
         # Widen exit threshold in POST_NEWS mode (let winners run)
         if self.news_state is not None and self.news_state.state == "POST_NEWS":
             post_exit_thresh = min(cfg.EXIT_THRESHOLD_TIGHT * cfg.NEWS_WIDER_TP_MULT, 1.0)
@@ -688,11 +799,18 @@ class Bot:
         effective_exit_mode = getattr(self, '_exit_mode_override', cfg.EXIT_MODE)
         event_start = getattr(self.position_manager, '_event_start_ts', None)
         bars_since_entry = max(0, int((time.time() - event_start) / (cfg.EXIT_CHECK_INTERVAL or 300))) if event_start else 0
-        should_exit, exit_score, reason = self.signal_engine.evaluate_exit(
-                m1_data, entry_price, direction, entry_score,
-                exit_mode=effective_exit_mode, exit_threshold=exit_thresh,
-                signal=self._current_signal, bars_since_entry=bars_since_entry,
+
+        # Use trend exhaustion model if available
+        if self._trend_exhaustion_predictor is not None and self._trend_predictor is not None:
+            should_exit, exit_score, reason = self.signal_engine._exit_mode_trend_exhaustion(
+                m1_data, entry_price, direction, entry_score, bars_since_entry,
             )
+        else:
+            should_exit, exit_score, reason = self.signal_engine.evaluate_exit(
+                    m1_data, entry_price, direction, entry_score,
+                    exit_mode=effective_exit_mode, exit_threshold=exit_thresh,
+                    signal=self._current_signal, bars_since_entry=bars_since_entry,
+                )
 
         if not should_exit and reason == "ml_hold":
             now_t = time.time()
@@ -781,7 +899,8 @@ class Bot:
         vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
         lot = round(lot / vol_step) * vol_step
         lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), min(lot, fresh_info.get("volume_max", cfg.MAX_LOT)))
-        max_trades = signal.get("num_positions", 1)
+        # Single position per trend when trend model is active
+        max_trades = 1 if (signal.get("trend_model") or signal.get("asp_model")) else signal.get("num_positions", 1)
 
         # Price drift check — reject if price moved outside allowed drift
         current_price = fresh_info.get("bid", fresh_info.get("price", 0)) if direction == "SELL" else fresh_info.get("ask", fresh_info.get("price", 0))
@@ -826,6 +945,7 @@ class Bot:
 
         self.logger.info(
             f"Entry: {direction} | score={score:.2f} | "
+            f"ASP={signal.get('asp_model', False)} | "
             f"balance=${balance:.2f} | lot={lot:.2f} | "
             f"max_trades={max_trades} | drift={drift_pct:.3f}% | "
             f"margin=${free_margin:.2f} | "

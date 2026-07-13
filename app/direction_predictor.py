@@ -474,6 +474,24 @@ TRADE_STATE_COLS = [
 EXIT_FEATURE_COLS = FEATURE_COLS + TRADE_STATE_COLS
 
 
+# =========================================================================
+# Trend model feature columns (35 base + 10 H1 structure = 45)
+# =========================================================================
+TREND_FEATURE_COLS = FEATURE_COLS + [
+    "h1_rsi", "h1_macd_hist", "h1_ema_spread",
+    "h1_consecutive_up", "h1_consecutive_down",
+    "h1_swing_distance", "h1_atr_expanding",
+    "m5_h1_alignment", "trend_duration", "h1_structure_break",
+]
+
+# Exit-trend model feature columns (35 base + 5 trade-state = 40)
+TRADE_STATE_TREND_COLS = [
+    "bars_held", "trend_pnl_atr", "trend_peak_atr", "trend_drawdown_pct",
+    "trend_momentum_decay",
+]
+EXIT_TREND_FEATURE_COLS = FEATURE_COLS + TRADE_STATE_TREND_COLS
+
+
 class ExitPredictor:
     """Predicts whether to hold or exit during an active trade.
     Features: market state (26 cols from compute_features) + trade state (7 cols)."""
@@ -502,3 +520,276 @@ class ExitPredictor:
             return float(probs[0][idx])
         except Exception:
             return 0.5
+
+
+# =========================================================================
+# H1 structure feature computation (for trend model)
+# =========================================================================
+
+def _compute_h1_structure_features(m5_df: pd.DataFrame, h1_df: pd.DataFrame) -> pd.DataFrame:
+    """Compute 10 H1 structure features aligned to M5 index.
+
+    Features:
+      h1_rsi, h1_macd_hist, h1_ema_spread,
+      h1_consecutive_up, h1_consecutive_down,
+      h1_swing_distance, h1_atr_expanding,
+      m5_h1_alignment, trend_duration, h1_structure_break
+    """
+    if h1_df is None or len(h1_df) < 60:
+        return pd.DataFrame(index=m5_df.index)
+
+    h1 = h1_df.copy()
+    if not isinstance(h1.index, pd.DatetimeIndex):
+        h1.index = pd.to_datetime(h1.index)
+    h1 = h1[~h1.index.duplicated(keep="first")]
+
+    c = h1["close"].values.astype(np.float64)
+    h = h1["high"].values.astype(np.float64)
+    lo = h1["low"].values.astype(np.float64)
+    o = h1["open"].values.astype(np.float64)
+    n_h1 = len(c)
+
+    feats = pd.DataFrame(index=h1.index)
+
+    # 1. h1_rsi
+    delta = np.diff(c, prepend=np.nan)
+    gain = pd.Series(np.where(delta > 0, delta, 0)).rolling(14, min_periods=2).mean()
+    loss = pd.Series(np.where(delta < 0, -delta, 0)).rolling(14, min_periods=2).mean()
+    rs = gain / loss.replace(0, np.nan)
+    feats["h1_rsi"] = (100 - (100 / (1 + rs))).fillna(50.0).values
+
+    # 2. h1_macd_hist
+    ema12 = pd.Series(c).ewm(span=12, adjust=False).mean()
+    ema26 = pd.Series(c).ewm(span=26, adjust=False).mean()
+    macd_line = ema12 - ema26
+    macd_sig = macd_line.ewm(span=9, adjust=False).mean()
+    feats["h1_macd_hist"] = (macd_line - macd_sig).fillna(0.0).values
+
+    # 3. h1_ema_spread
+    ema20 = pd.Series(c).ewm(span=20, adjust=False).mean()
+    ema50 = pd.Series(c).ewm(span=50, adjust=False).mean()
+    feats["h1_ema_spread"] = ((ema20 - ema50) / np.where(c > 0, c, 1)).fillna(0.0).values
+
+    # 4/5. consecutive up/down
+    bull = c > o
+    bear = c < o
+    cu = np.zeros(n_h1)
+    cd = np.zeros(n_h1)
+    for i in range(1, n_h1):
+        cu[i] = (cu[i - 1] + 1) if bull[i] else 0
+        cd[i] = (cd[i - 1] + 1) if bear[i] else 0
+    feats["h1_consecutive_up"] = cu
+    feats["h1_consecutive_down"] = cd
+
+    # 6. h1_swing_distance
+    tr_h1 = np.maximum(h[1:] - lo[1:],
+                       np.maximum(np.abs(h[1:] - c[:-1]), np.abs(lo[1:] - c[:-1])))
+    atr_h1 = np.concatenate([[tr_h1[0] if len(tr_h1) > 0 else 1.0], tr_h1])
+    atr_h1 = pd.Series(atr_h1).rolling(14, min_periods=14).mean().bfill().fillna(1.0).values
+    atr_h1 = np.where(atr_h1 <= 0, 1.0, atr_h1)
+
+    lookback = 3
+    swing_h = np.zeros(n_h1, dtype=bool)
+    swing_l = np.zeros(n_h1, dtype=bool)
+    for i in range(lookback, n_h1 - lookback):
+        if h[i] == np.max(h[i - lookback:i + lookback + 1]):
+            swing_h[i] = True
+        if lo[i] == np.min(lo[i - lookback:i + lookback + 1]):
+            swing_l[i] = True
+
+    dist = np.zeros(n_h1)
+    for i in range(n_h1):
+        sh_pos = np.where(swing_h[:i + 1])[0]
+        sl_pos = np.where(swing_l[:i + 1])[0]
+        d_up = abs(c[i] - h[sh_pos[-1]]) if len(sh_pos) > 0 else atr_h1[i]
+        d_dn = abs(c[i] - lo[sl_pos[-1]]) if len(sl_pos) > 0 else atr_h1[i]
+        dist[i] = min(d_up, d_dn) / max(atr_h1[i], 0.01)
+    feats["h1_swing_distance"] = dist
+
+    # 7. h1_atr_expanding
+    atr_ma = pd.Series(atr_h1).rolling(20, min_periods=2).mean().values
+    feats["h1_atr_expanding"] = np.where(atr_ma > 0, atr_h1 / atr_ma, 1.0)
+
+    # 8. trend_duration
+    td = np.zeros(n_h1)
+    for i in range(1, n_h1):
+        if bull[i]:
+            td[i] = td[i - 1] + 1 if bull[i - 1] else 1
+        elif bear[i]:
+            td[i] = td[i - 1] + 1 if bear[i - 1] else 1
+        else:
+            td[i] = 0
+    feats["trend_duration"] = td
+
+    # 9. h1_structure_break
+    sb = np.zeros(n_h1)
+    for i in range(3, n_h1):
+        sh_pos = np.where(swing_h[:i])[0]
+        sl_pos = np.where(swing_l[:i])[0]
+        if len(sh_pos) > 0 and c[i] > h[sh_pos[-1]]:
+            sb[i] = 1.0
+        elif len(sl_pos) > 0 and c[i] < lo[sl_pos[-1]]:
+            sb[i] = -1.1
+    feats["h1_structure_break"] = sb
+
+    # 10. m5_h1_alignment — H1 direction as proxy (filled later)
+    feats["m5_h1_alignment"] = 0.0
+
+    # Align to M5 index
+    m5_idx = m5_df.index if isinstance(m5_df.index, pd.DatetimeIndex) else pd.to_datetime(m5_df.index)
+    aligned = feats.reindex(m5_idx, method="ffill")
+    return aligned
+
+
+def compute_trend_features(m5_df: pd.DataFrame, h1_df: pd.DataFrame) -> pd.DataFrame:
+    """Compute combined features: M5 base (35) + H1 structure (10) = 45 total."""
+    m5_feats = compute_features(m5_df, h1_df)
+    if m5_feats is None or len(m5_feats) == 0:
+        return None
+
+    h1_feats = _compute_h1_structure_features(m5_df, h1_df)
+    if h1_feats is None or len(h1_feats) == 0:
+        for c in TREND_FEATURE_COLS:
+            if c not in m5_feats.columns:
+                m5_feats[c] = 0.0
+        return m5_feats
+
+    combined = m5_feats.join(h1_feats, how="left", rsuffix="_dup")
+    # m5_h1_alignment: use h1_dir from base features
+    if "h1_dir" in combined.columns:
+        combined["m5_h1_alignment"] = combined["h1_dir"]
+    for c in TREND_FEATURE_COLS:
+        if c not in combined.columns:
+            combined[c] = 0.0
+    return combined
+
+
+# =========================================================================
+# TrendPredictor — predicts H1 trend (UP_TREND/DOWN_TREND/RANGING)
+# =========================================================================
+
+class TrendPredictor:
+    """Predicts H1 trend structure using M5+H1 features.
+
+    Classes: 0=DOWN_TREND, 1=UP_TREND, 2=RANGING
+    Model expects TREND_FEATURE_COLS (45 features).
+    """
+    def __init__(self, model_path: str = None, model: xgb.XGBClassifier = None):
+        if model is not None:
+            self.model = model
+        elif model_path and os.path.exists(model_path):
+            self.model = joblib.load(model_path)
+        else:
+            self.model = None
+        self._feature_cols = TREND_FEATURE_COLS
+
+    def predict_proba(self, features: pd.DataFrame) -> Tuple[float, float, float]:
+        """Return (prob_down, prob_up, prob_ranging) for the most recent bar."""
+        if self.model is None:
+            logger.warning("TrendPredictor.predict_proba: model is None")
+            return 0.33, 0.33, 0.34
+        if features is None or len(features) == 0:
+            logger.warning("TrendPredictor.predict_proba: empty features")
+            return 0.33, 0.33, 0.34
+
+        missing = [c for c in self._feature_cols if c not in features.columns]
+        if missing:
+            features = features.copy()
+            for c in missing:
+                features[c] = 0.0
+
+        try:
+            row = features[self._feature_cols].iloc[[-1]]
+            probs = self.model.predict_proba(row.values)
+            classes = list(self.model.classes_)
+            result = [0.33, 0.33, 0.34]
+            for i, cls in enumerate(classes):
+                if cls == 0:
+                    result[0] = float(probs[0][i])
+                elif cls == 1:
+                    result[1] = float(probs[0][i])
+                elif cls == 2:
+                    result[2] = float(probs[0][i])
+            return tuple(result)
+        except Exception as e:
+            logger.error("TrendPredictor.predict_proba error: %s", e)
+            return 0.33, 0.33, 0.34
+
+    def predict(self, features: pd.DataFrame, confidence_threshold: float = 0.55) -> Optional[str]:
+        """Return 'UP_TREND', 'DOWN_TREND', or None (RANGING/too low confidence)."""
+        prob_down, prob_up, prob_ranging = self.predict_proba(features)
+        if prob_up >= confidence_threshold and prob_up >= prob_down and prob_up >= prob_ranging:
+            return "UP_TREND"
+        if prob_down >= confidence_threshold and prob_down >= prob_up and prob_down >= prob_ranging:
+            return "DOWN_TREND"
+        return None  # RANGING or low confidence
+
+    def save(self, path: str):
+        joblib.dump(self.model, path)
+
+    @classmethod
+    def load(cls, path: str) -> "TrendPredictor":
+        return cls(model_path=path)
+
+
+# =========================================================================
+# TrendExhaustionPredictor — predicts when to exit (ALIVE/EXHAUSTED/NEW_SETUP)
+# =========================================================================
+
+class TrendExhaustionPredictor:
+    """Predicts trend exhaustion during open trades.
+
+    Classes: 0=TREND_EXHAUSTED, 1=TREND_ALIVE, 2=NEW_SETUP
+    Features: 35 base + 5 trade-state = 40 total.
+    """
+    def __init__(self, model_path: str = None):
+        self.model = joblib.load(model_path) if model_path and os.path.exists(model_path) else None
+        self._feature_cols = EXIT_TREND_FEATURE_COLS
+
+    def predict_proba(self, market_features: pd.DataFrame, trade_state: dict) -> Tuple[float, float, float]:
+        """Return (prob_exhausted, prob_alive, prob_new_setup)."""
+        if self.model is None:
+            return 0.2, 0.6, 0.2
+        try:
+            row = {}
+            for c in FEATURE_COLS:
+                if c in market_features:
+                    row[c] = float(market_features[c]) if hasattr(market_features[c], '__float__') else 0.0
+                else:
+                    row[c] = 0.0
+            for c in TRADE_STATE_TREND_COLS:
+                row[c] = float(trade_state.get(c, 0.0))
+            vec = np.array([[row.get(c, 0.0) for c in self._feature_cols]], dtype=np.float32)
+            probs = self.model.predict_proba(vec)
+            classes = list(self.model.classes_)
+            result = [0.2, 0.6, 0.2]
+            for i, cls in enumerate(classes):
+                if cls == 0:
+                    result[0] = float(probs[0][i])
+                elif cls == 1:
+                    result[1] = float(probs[0][i])
+                elif cls == 2:
+                    result[2] = float(probs[0][i])
+            return tuple(result)
+        except Exception:
+            return 0.2, 0.6, 0.2
+
+    def predict_exit(self, market_features: pd.DataFrame, trade_state: dict,
+                     exhaustion_threshold: float = 0.70,
+                     new_setup_threshold: float = 0.80) -> Optional[str]:
+        """Return 'TREND_ALIVE', 'TREND_EXHAUSTED', 'NEW_SETUP', or None (undecided)."""
+        prob_exhausted, prob_alive, prob_new_setup = self.predict_proba(market_features, trade_state)
+        if prob_exhausted >= exhaustion_threshold:
+            return "TREND_EXHAUSTED"
+        if prob_new_setup >= new_setup_threshold:
+            return "NEW_SETUP"
+        if prob_alive >= 0.50:
+            return "TREND_ALIVE"
+        return None
+
+    def save(self, path: str):
+        joblib.dump(self.model, path)
+
+    @classmethod
+    def load(cls, path: str) -> "TrendExhaustionPredictor":
+        return cls(model_path=path)

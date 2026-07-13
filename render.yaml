@@ -28,7 +28,7 @@ services:
       - key: MIN_LOT
         value: "0.01"
       - key: MAX_LOT
-        value: "100.00"
+        value: "9999.00"
       - key: LOT_STEP
         value: "0.01"
       - key: LOT_MULTIPLIER
@@ -71,6 +71,16 @@ services:
         value: "50.0"
       - key: MAX_SLIPPAGE_PIPS
         value: "10"
+      - key: ASP_ENABLED
+        value: "true"
+      - key: ASP_TIMEOUT_BARS
+        value: "6"
+      - key: ASP_SL_ATR_MULTIPLIER
+        value: "2.0"
+      - key: ASP_TP_ATR_MULTIPLIER
+        value: "1.0"
+      - key: ASP_MIN_ATR_DIST
+        value: "0.50"
       - key: MIN_BALANCE
         value: "10.0"
       - key: MIN_VOLATILITY_PIPS

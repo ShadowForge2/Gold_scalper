@@ -7,30 +7,53 @@ from datetime import datetime, timezone
 import config as cfg
 
 try:
-    from app.direction_predictor import DirectionPredictor, ExitPredictor, compute_features
+    from app.direction_predictor import (
+        DirectionPredictor, ExitPredictor, compute_features,
+        TrendPredictor, TrendExhaustionPredictor, compute_trend_features,
+    )
     _HAS_ML = True
 except ImportError:
     DirectionPredictor = None
     ExitPredictor = None
     compute_features = None
+    TrendPredictor = None
+    TrendExhaustionPredictor = None
+    compute_trend_features = None
     _HAS_ML = False
+
+try:
+    from app.asp_predictor import ASPPredictor
+    from app.asp_features import compute_asp_features
+    _HAS_ASP = True
+except ImportError:
+    ASPPredictor = None
+    compute_asp_features = None
+    _HAS_ASP = False
 
 
 class SignalEngine:
     def __init__(self,
                  direction_predictor: Optional["DirectionPredictor"] = None,
                  exit_predictor: Optional["ExitPredictor"] = None,
+                 trend_predictor: Optional["TrendPredictor"] = None,
+                 trend_exhaustion_predictor: Optional["TrendExhaustionPredictor"] = None,
+                 asp_predictor: Optional["ASPPredictor"] = None,
                  logger=None):
         self.current_signal: Optional[Dict] = None
         self.last_signal_time: Optional[datetime] = None
         self.last_rejection: Optional[Dict] = None
         self._direction_predictor = direction_predictor
         self._exit_predictor = exit_predictor
+        self._trend_predictor = trend_predictor
+        self._trend_exhaustion_predictor = trend_exhaustion_predictor
+        self._asp_predictor = asp_predictor
         self._logger = logger
         self._last_ml_override_log_time = 0.0
         self._last_ml_override_result_value = None
         self._last_ml_exit_result = None
         self._last_ml_exit_log_ts = 0
+        self._last_trend_log_time = 0.0
+        self._last_asp_log_time = 0.0
 
     def _reject(self, reason: str, **context) -> None:
         self.last_rejection = {
@@ -838,3 +861,290 @@ class SignalEngine:
         if total_range == 0:
             return 0.0
         return min(body / total_range, 1.0)
+
+    # =================================================================
+    # Trend-following entry/exit (new ML approach)
+    # =================================================================
+
+    def _get_trend_features(self, m1_data: pd.DataFrame = None) -> Optional[pd.DataFrame]:
+        """Compute trend model features (M5 base + H1 structure = 45 features)."""
+        if m1_data is None or compute_trend_features is None:
+            return None
+        try:
+            if "time" in m1_data.columns:
+                m1_idx = m1_data.set_index("time")
+            else:
+                m1_idx = m1_data
+            if len(m1_idx) < 10:
+                return None
+            m5 = m1_idx.resample("5min").agg({
+                "open": "first", "high": "max", "low": "min", "close": "last",
+                "tick_volume": "sum",
+            }).dropna()
+            if len(m5) < 5:
+                return None
+            h1 = m1_idx.resample("1h").agg({
+                "open": "first", "high": "max", "low": "min", "close": "last",
+            }).dropna()
+            return compute_trend_features(m5, h1)
+        except Exception:
+            return None
+
+    def _get_trend_prediction(self, features: pd.DataFrame) -> Tuple[Optional[str], float]:
+        """Get trend model prediction. Returns (direction, confidence)."""
+        if features is None or len(features) == 0 or self._trend_predictor is None:
+            return None, 0.0
+        try:
+            prob_down, prob_up, prob_ranging = self._trend_predictor.predict_proba(features)
+            confidence = max(prob_down, prob_up, prob_ranging)
+
+            should_log = self._logger and _time.monotonic() - self._last_trend_log_time >= 30
+            if should_log:
+                self._last_trend_log_time = _time.monotonic()
+                trend_dir = "UP" if prob_up == max(prob_down, prob_up, prob_ranging) else "DOWN" if prob_down == max(prob_down, prob_up, prob_ranging) else "RANGING"
+                self._logger.info(
+                    f"[TREND_ML] DOWN={prob_down:.3f} UP={prob_up:.3f} RANGING={prob_ranging:.3f} "
+                    f"dir={trend_dir} conf={confidence:.3f} thr={cfg.ML_TREND_CONFIDENCE_THRESHOLD}"
+                )
+
+            if confidence < cfg.ML_TREND_CONFIDENCE_THRESHOLD:
+                return None, confidence
+
+            if prob_up >= prob_down and prob_up >= prob_ranging:
+                return "BUY", prob_up
+            elif prob_down >= prob_up and prob_down >= prob_ranging:
+                return "SELL", prob_down
+            return None, confidence
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"[TREND_ML] prediction error: {e}")
+            return None, 0.0
+
+    def evaluate_trend_entry(self, m1_data: pd.DataFrame, current_price: float,
+                             h1_high: float = None, h1_low: float = None,
+                             events: Optional[list] = None) -> Optional[Dict]:
+        """Trend-based entry: single position based on H1 trend prediction.
+
+        No breakout filter — ML trend prediction is the only entry gate.
+        SL = 2x ATR, TP = ML exhaustion exit (no fixed TP).
+        """
+        if m1_data is None or len(m1_data) < 10:
+            return self._reject("insufficient_m1_data", price=current_price)
+
+        if self._trend_predictor is None or not _HAS_ML:
+            return self._reject("no_trend_model", price=current_price)
+
+        features = self._get_trend_features(m1_data)
+        if features is None or len(features) == 0:
+            return self._reject("no_trend_features", price=current_price)
+
+        direction, confidence = self._get_trend_prediction(features)
+        if direction is None:
+            return self._reject("trend_no_signal", price=current_price,
+                                confidence=round(confidence, 4))
+
+        atr_val = self._compute_atr_m5(m1_data, cfg.ATR_PERIOD)
+        if atr_val <= 0:
+            atr_val = current_price * 0.001
+
+        sl_distance = atr_val * cfg.SL_ATR_MULTIPLIER  # 2x ATR
+        if direction == "BUY":
+            sl_price = current_price - sl_distance
+        else:
+            sl_price = current_price + sl_distance
+
+        signal = {
+            "direction": direction,
+            "score": round(confidence, 3),
+            "conviction": round(confidence, 3),
+            "breakout_dist": 0.0,
+            "range_size": 0.0,
+            "entry_price": current_price,
+            "sl": round(sl_price, 2),
+            "tp1": None,  # no fixed TP — exhaustion model decides exit
+            "tp2": None,
+            "tp3": None,
+            "atr_value": round(atr_val, 4),
+            "ml_confidence": round(confidence, 4),
+            "num_positions": 1,  # single position per trend
+            "lot_mult": 1.0,
+            "trend_model": True,  # flag for bot.py to use trend entry
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        self.current_signal = signal
+        self.last_rejection = None
+        return signal
+
+    def evaluate_asp_entry(self, m1_data: pd.DataFrame, current_price: float,
+                           events: Optional[list] = None) -> Optional[Dict]:
+        """ASP-based entry: ML predicts swing turning points.
+
+        SL = 2x ATR, TP = 1x ATR, timeout handled by bot.py.
+        No breakout filter — ASP model is the only entry gate.
+        """
+        if m1_data is None or len(m1_data) < 10:
+            return self._reject("insufficient_m1_data", price=current_price)
+
+        if not _HAS_ASP or self._asp_predictor is None or not self._asp_predictor.ready:
+            return self._reject("no_asp_model", price=current_price)
+
+        try:
+            if "time" in m1_data.columns:
+                m1_idx = m1_data.set_index("time")
+            else:
+                m1_idx = m1_data
+
+            if len(m1_idx) < 10:
+                return self._reject("insufficient_m1_data", price=current_price)
+
+            m5 = m1_idx.resample("5min").agg({
+                "open": "first", "high": "max", "low": "min", "close": "last",
+                "tick_volume": "sum",
+            }).dropna()
+            if len(m5) < 20:
+                return self._reject("insufficient_m5_data", price=current_price)
+
+            h1 = m1_idx.resample("1h").agg({
+                "open": "first", "high": "max", "low": "min", "close": "last",
+            }).dropna()
+
+            asp_feats = compute_asp_features(m5, h1)
+            if asp_feats is None or len(asp_feats) == 0:
+                return self._reject("no_asp_features", price=current_price)
+
+            last_row = asp_feats.iloc[-1]
+            direction, confidence = self._asp_predictor.predict(last_row)
+
+            if self._logger:
+                now = _time.monotonic()
+                if now - self._last_asp_log_time >= 30:
+                    self._last_asp_log_time = now
+                    if direction is not None:
+                        self._logger.info(
+                            f"[ASP_ML] dir={direction} conf={confidence:.3f} "
+                            f"price={current_price:.2f}"
+                        )
+
+            if direction is None:
+                return self._reject("asp_no_signal", price=current_price,
+                                    confidence=round(confidence, 4))
+
+            atr_val = self._compute_atr_m5(m1_data, cfg.ATR_PERIOD)
+            if atr_val <= 0:
+                atr_val = current_price * 0.001
+
+            sl_distance = atr_val * cfg.ASP_SL_ATR_MULTIPLIER
+            tp_distance = atr_val * cfg.ASP_TP_ATR_MULTIPLIER
+
+            if direction == "BUY":
+                sl_price = current_price - sl_distance
+                tp_price = current_price + tp_distance
+            else:
+                sl_price = current_price + sl_distance
+                tp_price = current_price - tp_distance
+
+            if sl_distance < cfg.ASP_MIN_ATR_DIST:
+                return self._reject("asp_atr_too_small", price=current_price,
+                                    atr=round(atr_val, 4), dist=round(sl_distance, 4))
+
+            signal = {
+                "direction": direction,
+                "score": round(confidence, 3),
+                "conviction": round(confidence, 3),
+                "breakout_dist": 0.0,
+                "range_size": 0.0,
+                "entry_price": current_price,
+                "sl": round(sl_price, 2),
+                "tp1": round(tp_price, 2),
+                "tp2": None,
+                "tp3": None,
+                "atr_value": round(atr_val, 4),
+                "ml_confidence": round(confidence, 4),
+                "num_positions": 1,
+                "lot_mult": 1.0,
+                "asp_model": True,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            self.current_signal = signal
+            self.last_rejection = None
+            return signal
+
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"[ASP_ML] entry error: {e}")
+            return self._reject("asp_error", price=current_price, error=str(e))
+
+    def _exit_mode_trend_exhaustion(self, df, entry_price, direction,
+                                    entry_score=None, bars_since_entry=None):
+        """Exit mode: ML exhaustion model decides when to close.
+
+        Returns (should_exit, exit_score, reason).
+        """
+        if self._trend_exhaustion_predictor is None:
+            # Fallback to simple ATR trailing SL
+            return self._exit_mode_trail_sl(df, entry_price, direction, 0.50,
+                                            cfg.SL_ATR_MULTIPLIER, None, None, True)
+
+        bars = bars_since_entry if bars_since_entry is not None else len(df)
+        atr = self._compute_atr_m5(df, 14)
+        if atr <= 0:
+            atr = entry_price * 0.001
+
+        px = df["close"].iloc[-1]
+        diff = px - entry_price if direction == "BUY" else entry_price - px
+
+        # Compute trend features
+        mf = self._get_features(df)
+        if mf is None or len(mf) == 0:
+            return False, 0.0, "no_features"
+
+        # Compute trade-state features
+        if direction == "BUY":
+            peak = float(np.max(df["high"].values - entry_price))
+        else:
+            peak = float(np.max(entry_price - df["low"].values))
+
+        momentum_decay = 0.5
+        if bars > 5:
+            if direction == "BUY":
+                recent = px - df["close"].iloc[-5]
+                entry_m = df["close"].iloc[min(4, bars - 1)] - entry_price
+            else:
+                recent = df["close"].iloc[-5] - px
+                entry_m = entry_price - df["close"].iloc[min(4, bars - 1)]
+            momentum_decay = 1.0 - min(abs(recent) / max(abs(entry_m), 0.001), 2.0)
+
+        trade_state = {
+            "bars_held": bars,
+            "trend_pnl_atr": round(diff / atr, 4),
+            "trend_peak_atr": round(peak / atr, 4),
+            "trend_drawdown_pct": round(max(0, peak - diff) / max(peak, 0.001), 4),
+            "trend_momentum_decay": round(momentum_decay, 4),
+        }
+
+        mf_row = mf.iloc[-1] if hasattr(mf, 'iloc') else mf
+        exit_signal = self._trend_exhaustion_predictor.predict_exit(
+            mf_row, trade_state,
+            exhaustion_threshold=cfg.ML_TREND_EXIT_EXHAUSTION_THRESHOLD,
+            new_setup_threshold=cfg.ML_TREND_EXIT_NEW_SETUP_THRESHOLD,
+        )
+
+        if self._logger:
+            p_alive, p_exh, p_new = self._trend_exhaustion_predictor.predict_proba(mf_row, trade_state)
+            self._logger.info(
+                f"[EXIT_TREND] signal={exit_signal} alive={p_alive:.3f} exhausted={p_exh:.3f} "
+                f"new_setup={p_new:.3f} pnl={diff/atr:.2f}atr bars={bars}"
+            )
+
+        if exit_signal == "TREND_EXHAUSTED":
+            return True, 0.90, "trend_exhaustion"
+        if exit_signal == "NEW_SETUP":
+            return True, 0.85, "new_setup"
+
+        # Hard SL as safety net (2x ATR)
+        if diff <= -(2.0 * atr):
+            return True, 1.0, "safety_stop"
+
+        return False, 0.0, "trend_alive"

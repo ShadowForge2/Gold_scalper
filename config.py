@@ -47,7 +47,7 @@ COMMENT = _env_str("COMMENT", "Gold Scalper")
 # Lot sizing
 LOT_SIZE = _env_float("LOT_SIZE", 0.01)
 MIN_LOT = _env_float("MIN_LOT", 0.01)
-MAX_LOT = 1.0
+MAX_LOT = 9999.0
 LOT_STEP = _env_float("LOT_STEP", 0.01)
 LOT_MULTIPLIER = _env_int("LOT_MULTIPLIER", 5)
 
@@ -84,8 +84,36 @@ TP3_MULTIPLIER = _env_float("TP3_MULTIPLIER", 6.0)
 TP_CLOSE_THRESHOLD = _env_float("TP_CLOSE_THRESHOLD", 0.8)
 TP_CLOSE_MOMENTUM_MIN = _env_float("TP_CLOSE_MOMENTUM_MIN", 0.25)
 
+# Meta strategy
+META_LOOKBACK_WINDOW = _env_int("META_LOOKBACK_WINDOW", 20)
+META_THRESHOLD_MIN = _env_float("META_THRESHOLD_MIN", 0.03)
+META_THRESHOLD_MAX = _env_float("META_THRESHOLD_MAX", 0.30)
+META_ENABLED = _env_bool("META_ENABLED", False)
+META_MIN_TRADES_FOR_REGIME = _env_int("META_MIN_TRADES_FOR_REGIME", 5)
+SIGNAL_ENTRY_THRESHOLD = _env_float("SIGNAL_ENTRY_THRESHOLD", 0.10)
+MAX_TRADES_PER_EVENT = _env_int("MAX_TRADES_PER_EVENT", 6)
+BIAS_STRENGTH_MIN = _env_float("BIAS_STRENGTH_MIN", 0.3)
+MAX_LOT = _env_float("MAX_LOT", 9999.0)
+
+# Aggressive sizing
+AGGRESSIVE_SIZING_ENABLED = _env_bool("AGGRESSIVE_SIZING_ENABLED", True)
+AGGRESSIVE_VERY_STRONG_THRESHOLD = _env_float("AGGRESSIVE_VERY_STRONG_THRESHOLD", 0.50)
+AGGRESSIVE_VERY_STRONG_LOT_MULT = _env_float("AGGRESSIVE_VERY_STRONG_LOT_MULT", 2.0)
+AGGRESSIVE_STRONG_THRESHOLD = _env_float("AGGRESSIVE_STRONG_THRESHOLD", 0.30)
+AGGRESSIVE_STRONG_LOT_MULT = _env_float("AGGRESSIVE_STRONG_LOT_MULT", 1.5)
+
+# ML override
+ML_OVERRIDE_MAX_PER_SESSION = _env_int("ML_OVERRIDE_MAX_PER_SESSION", 3)
+
 # Multi-symbol scanning (comma-separated list, e.g. "XAUUSD,XAGUSD")
 SYMBOLS = [s.strip() for s in _env_str("SYMBOLS", "XAUUSD").split(",")]
+
+# Adaptive confirmation
+ADAPTIVE_CONFIRMATION_ENABLED = _env_bool("ADAPTIVE_CONFIRMATION_ENABLED", True)
+ADAPTIVE_CONF_WINDOW = _env_int("ADAPTIVE_CONF_WINDOW", 200)
+ADAPTIVE_CONF_P_LOW = _env_int("ADAPTIVE_CONF_P_LOW", 60)
+ADAPTIVE_CONF_P_NORM = _env_int("ADAPTIVE_CONF_P_NORM", 40)
+ADAPTIVE_CONF_P_HIGH = _env_int("ADAPTIVE_CONF_P_HIGH", 0)
 
 # Filters
 MAX_SPREAD_PIPS = _env_float("MAX_SPREAD_PIPS", 35.0)
@@ -121,6 +149,26 @@ ML_EXIT_MODEL_PATH = _env_str("ML_EXIT_MODEL_PATH", "models/exit_xgb_m5.joblib")
 ML_EXIT_HOLD_THRESHOLD = _env_float("ML_EXIT_HOLD_THRESHOLD", 0.60)
 ML_BIAS_OVERRIDE_THRESHOLD = _env_float("ML_BIAS_OVERRIDE_THRESHOLD", 0.60)
 ML_HOLD_CONFIDENCE = _env_float("ML_HOLD_CONFIDENCE", 0.50)
+
+# Trend-following ML model (H1 structure)
+ML_TREND_MODEL_PATH = _env_str("ML_TREND_MODEL_PATH", "models/trend_xgb_h1.joblib")
+ML_TREND_CONFIDENCE_THRESHOLD = _env_float("ML_TREND_CONFIDENCE_THRESHOLD", 0.55)
+ML_TREND_EXIT_MODEL_PATH = _env_str("ML_TREND_EXIT_MODEL_PATH", "models/exit_trend_xgb_m5.joblib")
+ML_TREND_EXIT_EXHAUSTION_THRESHOLD = _env_float("ML_TREND_EXIT_EXHAUSTION_THRESHOLD", 0.70)
+ML_TREND_EXIT_NEW_SETUP_THRESHOLD = _env_float("ML_TREND_EXIT_NEW_SETUP_THRESHOLD", 0.80)
+
+# Trend model features: 12 H1 bars forward, ATR-based swing detection
+ML_TREND_FORWARD_BARS = _env_int("ML_TREND_FORWARD_BARS", 12)
+ML_TREND_ATR_SWING_MULT = _env_float("ML_TREND_ATR_SWING_MULT", 1.0)
+
+# ASP (Adaptive Swing Probability) model
+ASP_ENABLED = _env_bool("ASP_ENABLED", True)
+ASP_MODEL_PATH = _env_str("ASP_MODEL_PATH", "models/asp_swing_xgb_m5.joblib")
+ASP_FEATURE_PATH = _env_str("ASP_FEATURE_PATH", "models/asp_swing_m5_features.npy")
+ASP_SL_ATR_MULTIPLIER = _env_float("ASP_SL_ATR_MULTIPLIER", 2.0)
+ASP_TP_ATR_MULTIPLIER = _env_float("ASP_TP_ATR_MULTIPLIER", 1.0)
+ASP_TIMEOUT_BARS = _env_int("ASP_TIMEOUT_BARS", 6)
+ASP_MIN_ATR_DIST = _env_float("ASP_MIN_ATR_DIST", 0.50)
 
 # Conviction tiers — ML confidence determines position count (no other filters)
 ML_CONF_STRONG_THRESHOLD = _env_float("ML_CONF_STRONG_THRESHOLD", 0.82)
