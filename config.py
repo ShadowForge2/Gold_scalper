@@ -74,7 +74,7 @@ PEAK_HARVEST_MAX_HOLD_BARS = _env_int("PEAK_HARVEST_MAX_HOLD_BARS", 48)
 DIRECTION_LOSS_LOOKBACK = _env_int("DIRECTION_LOSS_LOOKBACK", 5)
 DIRECTION_LOSS_STREAK = _env_int("DIRECTION_LOSS_STREAK", 3)
 
-EXIT_CHECK_INTERVAL = _env_int("EXIT_CHECK_INTERVAL", 60)
+EXIT_CHECK_INTERVAL = _env_int("EXIT_CHECK_INTERVAL", 300)  # 5 min (M5 bar)
 
 # Multi-TP zone exit (mode 6)
 SL_ATR_MULTIPLIER = _env_float("SL_ATR_MULTIPLIER", 1.0)
@@ -146,7 +146,7 @@ ASP_MODEL_PATH = _env_str("ASP_MODEL_PATH", "models/asp_swing_xgb_m5.joblib")
 ASP_FEATURE_PATH = _env_str("ASP_FEATURE_PATH", "models/asp_swing_m5_features.npy")
 ASP_SL_ATR_MULTIPLIER = _env_float("ASP_SL_ATR_MULTIPLIER", 2.0)
 ASP_TP_ATR_MULTIPLIER = _env_float("ASP_TP_ATR_MULTIPLIER", 1.0)
-ASP_TIMEOUT_BARS = _env_int("ASP_TIMEOUT_BARS", 6)
+ASP_TIMEOUT_BARS = _env_int("ASP_TIMEOUT_BARS", 9)  # 9 x 5min = 45min
 ASP_MIN_ATR_DIST = _env_float("ASP_MIN_ATR_DIST", 0.50)
 
 # Swing quality XGBoost model — confirmation gate
