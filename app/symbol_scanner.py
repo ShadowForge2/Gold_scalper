@@ -38,7 +38,8 @@ class SymbolScanner:
         return results
 
     async def _evaluate(self, symbol: str, effective_threshold: Optional[float] = None) -> Optional[Dict]:
-        m1_data = self.client.get_rates(symbol, cfg.SIGNAL_TIMEFRAME, 100)
+        m1_bars = getattr(cfg, "ASP_M1_HISTORY_BARS", 300)
+        m1_data = self.client.get_rates(symbol, cfg.SIGNAL_TIMEFRAME, m1_bars)
         if m1_data is None or len(m1_data) < 10:
             self.last_signals[symbol] = None
             return None

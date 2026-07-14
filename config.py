@@ -148,6 +148,8 @@ ASP_SL_ATR_MULTIPLIER = _env_float("ASP_SL_ATR_MULTIPLIER", 2.0)
 ASP_TP_ATR_MULTIPLIER = _env_float("ASP_TP_ATR_MULTIPLIER", 1.0)
 ASP_TIMEOUT_BARS = _env_int("ASP_TIMEOUT_BARS", 9)  # 9 x 5min = 45min
 ASP_MIN_ATR_DIST = _env_float("ASP_MIN_ATR_DIST", 0.50)
+ASP_MIN_CONFIDENCE = _env_float("ASP_MIN_CONFIDENCE", 0.55)
+ASP_M1_HISTORY_BARS = _env_int("ASP_M1_HISTORY_BARS", 300)
 
 # Swing quality XGBoost model — confirmation gate
 SWING_QUALITY_ENABLED = _env_bool("SWING_QUALITY_ENABLED", False)

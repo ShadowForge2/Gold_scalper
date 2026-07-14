@@ -427,8 +427,9 @@ class Bot:
         if self._winding_down:
             return
 
+        m1_bars = getattr(cfg, "ASP_M1_HISTORY_BARS", 300)
         m1_data = self.client.get_rates(
-            self.symbol, cfg.SIGNAL_TIMEFRAME, 100
+            self.symbol, cfg.SIGNAL_TIMEFRAME, m1_bars
         )
         if m1_data is None or len(m1_data) < 10:
             self._log_signal_diagnostic(

@@ -119,6 +119,17 @@ class SignalEngine:
                 return self._reject("asp_no_signal", price=current_price,
                                     confidence=round(confidence, 4))
 
+            min_conf = getattr(cfg, "ASP_MIN_CONFIDENCE", 0.55)
+            if confidence < min_conf:
+                if self._logger:
+                    self._logger.info(
+                        f"[ASP_ML] rejected {direction} conf={confidence:.3f} < min={min_conf:.3f}"
+                    )
+                return self._reject("asp_low_confidence", price=current_price,
+                                    direction=direction,
+                                    confidence=round(confidence, 4),
+                                    min_confidence=min_conf)
+
             atr_val = self._compute_atr_m5(m1_data, cfg.ATR_PERIOD)
             if atr_val <= 0:
                 atr_val = current_price * 0.001
