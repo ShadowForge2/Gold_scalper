@@ -15,15 +15,24 @@ except ImportError:
     compute_asp_features = None
     _HAS_ASP = False
 
+try:
+    from app.swing_quality_predictor import SwingQualityPredictor
+    _HAS_SQ = True
+except ImportError:
+    SwingQualityPredictor = None
+    _HAS_SQ = False
+
 
 class SignalEngine:
     def __init__(self,
                  asp_predictor: Optional["ASPPredictor"] = None,
+                 swing_quality_predictor: Optional["SwingQualityPredictor"] = None,
                  logger=None):
         self.current_signal: Optional[Dict] = None
         self.last_signal_time: Optional[datetime] = None
         self.last_rejection: Optional[Dict] = None
         self._asp_predictor = asp_predictor
+        self._swing_quality = swing_quality_predictor
         self._logger = logger
         self._last_asp_log_time = 0.0
 
@@ -75,6 +84,20 @@ class SignalEngine:
             asp_feats = compute_asp_features(m5, h1)
             if asp_feats is None or len(asp_feats) == 0:
                 return self._reject("no_asp_features", price=current_price)
+
+            # Swing quality gate — reject if model says not at reversal
+            if (getattr(cfg, "SWING_QUALITY_ENABLED", True) and
+                    self._swing_quality is not None and self._swing_quality.ready):
+                sq_prob, _ = self._swing_quality.predict_quality(asp_feats)
+                if sq_prob is not None:
+                    threshold = getattr(cfg, "SWING_QUALITY_THRESHOLD", 0.5)
+                    if sq_prob < threshold:
+                        if self._logger:
+                            self._logger.info(
+                                f"[ASP_ML] swing_quality_reject prob={sq_prob:.3f} < {threshold}"
+                            )
+                        return self._reject("swing_quality_low", price=current_price,
+                                             swing_quality=round(sq_prob, 4))
 
             last_row = asp_feats.iloc[-1]
             direction, confidence = self._asp_predictor.predict(last_row)

@@ -10,7 +10,7 @@ import pandas as pd
 import joblib
 from typing import Optional, Tuple
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("GoldScalper")
 
 
 class ASPPredictor:
@@ -28,7 +28,7 @@ class ASPPredictor:
                 saved = joblib.load(model_path)
                 self.model = saved["model"]
                 self.label_map = saved.get("label_map", {})
-                self.inv_map = {v: k for k, v in self.label_map.items()}
+                self.inv_map = self.label_map  # {0: -1, 1: 1} maps model output to label
                 logger.info("ASP model loaded: %s (classes=%s)", model_path, self.label_map)
             except Exception as e:
                 logger.error("Failed to load ASP model: %s", e)

@@ -22,6 +22,13 @@ except ImportError:
     ASPPredictor = None
     _HAS_ASP = False
 
+try:
+    from app.swing_quality_predictor import SwingQualityPredictor
+    _HAS_SQ = True
+except ImportError:
+    SwingQualityPredictor = None
+    _HAS_SQ = False
+
 
 class Bot:
     STATES = {
@@ -37,6 +44,7 @@ class Bot:
         self.logger = logger or BotLogger()
         self.client: object = None
         self._asp_predictor = None
+        self._swing_quality_predictor = None
         # ASP swing model
         if _HAS_ASP and cfg.ASP_ENABLED:
             try:
@@ -51,8 +59,22 @@ class Bot:
                     self._asp_predictor = None
             except Exception as e:
                 self.logger.warning(f"Failed to load ASP model: {e}")
+        # Swing quality model
+        if _HAS_SQ:
+            try:
+                self._swing_quality_predictor = SwingQualityPredictor(
+                    model_path=getattr(cfg, "SWING_QUALITY_MODEL_PATH",
+                                       "models/swing_quality_xgb.json"),
+                )
+                if self._swing_quality_predictor.ready:
+                    self.logger.info("[ML] Swing quality model loaded")
+                else:
+                    self._swing_quality_predictor = None
+            except Exception as e:
+                self.logger.warning(f"Failed to load swing quality model: {e}")
         self.signal_engine = SignalEngine(
             asp_predictor=self._asp_predictor,
+            swing_quality_predictor=self._swing_quality_predictor,
             logger=self.logger,
         )
         if self._asp_predictor and self._asp_predictor.ready:

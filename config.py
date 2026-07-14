@@ -149,6 +149,11 @@ ASP_TP_ATR_MULTIPLIER = _env_float("ASP_TP_ATR_MULTIPLIER", 1.0)
 ASP_TIMEOUT_BARS = _env_int("ASP_TIMEOUT_BARS", 6)
 ASP_MIN_ATR_DIST = _env_float("ASP_MIN_ATR_DIST", 0.50)
 
+# Swing quality XGBoost model — confirmation gate
+SWING_QUALITY_ENABLED = _env_bool("SWING_QUALITY_ENABLED", False)
+SWING_QUALITY_MODEL_PATH = _env_str("SWING_QUALITY_MODEL_PATH", "models/swing_quality_xgb.json")
+SWING_QUALITY_THRESHOLD = _env_float("SWING_QUALITY_THRESHOLD", 0.5)
+
 # MaxelPay
 MAXELPAY_API_KEY = _env_str("MAXELPAY_API_KEY", "")
 
