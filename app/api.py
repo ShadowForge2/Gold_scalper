@@ -494,6 +494,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                     "exit_price": None,
                     "pnl": pos.get("profit", 0),
                     "ticket": pos.get("ticket", 0),
+                    "symbol": pos.get("symbol", ""),
                 })
             closed = bot_data.get("closed_trades", []) or []
             for t in closed:
@@ -508,6 +509,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                     "exit_price": t.get("exit_price", 0),
                     "pnl": t.get("profit", 0),
                     "ticket": t.get("ticket", ""),
+                    "symbol": t.get("symbol", ""),
                 })
         return {"trades": trades}
 
