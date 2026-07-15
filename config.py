@@ -151,6 +151,10 @@ ASP_MIN_ATR_DIST = _env_float("ASP_MIN_ATR_DIST", 0.50)
 ASP_MIN_CONFIDENCE = _env_float("ASP_MIN_CONFIDENCE", 0.55)
 ASP_M1_HISTORY_BARS = _env_int("ASP_M1_HISTORY_BARS", 300)
 
+# Chop filter — reject ASP signals when market is stagnant
+CHOP_FILTER_ENABLED = _env_bool("CHOP_FILTER_ENABLED", True)
+CHOP_THRESHOLD = _env_float("CHOP_THRESHOLD", 0.70)  # validated: 1.59x movement ratio at this cutoff
+
 # Swing quality XGBoost model — confirmation gate
 SWING_QUALITY_ENABLED = _env_bool("SWING_QUALITY_ENABLED", False)
 SWING_QUALITY_MODEL_PATH = _env_str("SWING_QUALITY_MODEL_PATH", "models/swing_quality_xgb.json")

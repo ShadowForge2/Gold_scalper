@@ -22,6 +22,13 @@ except ImportError:
     SwingQualityPredictor = None
     _HAS_SQ = False
 
+try:
+    from app.direction_predictor import compute_chop_score
+    _HAS_CHOP = True
+except ImportError:
+    compute_chop_score = None
+    _HAS_CHOP = False
+
 
 class SignalEngine:
     def __init__(self,
@@ -84,6 +91,19 @@ class SignalEngine:
             asp_feats = compute_asp_features(m5, h1)
             if asp_feats is None or len(asp_feats) == 0:
                 return self._reject("no_asp_features", price=current_price)
+
+            # Chop filter — reject when market is stagnant (validated: 1.59x movement ratio at 0.70)
+            if (getattr(cfg, "CHOP_FILTER_ENABLED", True) and _HAS_CHOP and compute_chop_score is not None):
+                chop = compute_chop_score(m5)
+                if len(chop) > 0 and chop.iloc[-1] > getattr(cfg, "CHOP_THRESHOLD", 0.70):
+                    if self._logger:
+                        self._logger.info(
+                            f"[ASP_ML] chop_filter_reject chop={chop.iloc[-1]:.4f} > "
+                            f"{getattr(cfg, 'CHOP_THRESHOLD', 0.70):.2f}"
+                        )
+                    return self._reject("choppy_market", price=current_price,
+                                        chop_score=round(float(chop.iloc[-1]), 4),
+                                        threshold=getattr(cfg, "CHOP_THRESHOLD", 0.70))
 
             # Swing quality gate — reject if model says not at reversal
             if (getattr(cfg, "SWING_QUALITY_ENABLED", True) and
