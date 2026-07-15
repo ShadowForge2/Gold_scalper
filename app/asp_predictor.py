@@ -1,7 +1,7 @@
 """ASP (Adaptive Swing Probability) predictor.
 
 Loads trained XGBoost model and predicts swing turning points.
-Classes: 0=BUY, 1=NEUTRAL, 2=SELL (via label_map from training).
+Classes mapped via label_map from training (e.g. {0: -1, 1: 1} for binary).
 """
 import os
 import logging

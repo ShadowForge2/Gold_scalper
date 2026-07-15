@@ -74,7 +74,7 @@ services:
       - key: ASP_ENABLED
         value: "true"
       - key: ASP_TIMEOUT_BARS
-        value: "6"
+        value: "5"
       - key: ASP_SL_ATR_MULTIPLIER
         value: "2.0"
       - key: ASP_TP_ATR_MULTIPLIER

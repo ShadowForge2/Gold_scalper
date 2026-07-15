@@ -30,6 +30,9 @@ EPIC_MAP = {
     "SILVER": "SILVER",
     "EURUSD": "EURUSD",
     "GBPUSD": "GBPUSD",
+    "US100": "US100",
+    "NASDAQ": "US100",
+    "NAS100": "US100",
 }
 
 

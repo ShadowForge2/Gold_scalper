@@ -36,10 +36,14 @@ class PositionManager:
         if len(self.closed_history) > 500:
             self.closed_history = self.closed_history[-400:]
 
-    def refresh(self) -> Dict:
+    def refresh(self, symbols: list = None) -> Dict:
         if self.client is None:
             return self.summary()
-        raw_positions = self.client.get_positions(symbol=cfg.SYMBOL) or []
+        syms = symbols or [cfg.SYMBOL]
+        all_positions = []
+        for sym in syms:
+            raw_positions = self.client.get_positions(symbol=sym) or []
+            all_positions.extend(raw_positions)
         now = time.time()
         cutoff = now - 30.0
         self._closed_tickets = {
@@ -47,7 +51,7 @@ class PositionManager:
             if ts > cutoff
         }
         self.open_positions = [
-            p for p in raw_positions
+            p for p in all_positions
             if str(p.get("ticket", "")) not in self._closed_tickets
         ]
         closed_pnl = sum(p.get("profit", 0) for p in self.closed_history)

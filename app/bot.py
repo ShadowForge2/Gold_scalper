@@ -43,49 +43,62 @@ class Bot:
     def __init__(self, logger: Optional[BotLogger] = None):
         self.logger = logger or BotLogger()
         self.client: object = None
-        self._asp_predictor = None
-        self._swing_quality_predictor = None
-        # ASP swing model
-        if _HAS_ASP and cfg.ASP_ENABLED:
-            try:
-                self._asp_predictor = ASPPredictor(
-                    model_path=cfg.ASP_MODEL_PATH,
-                    feature_path=cfg.ASP_FEATURE_PATH,
-                )
-                if self._asp_predictor.ready:
-                    self.logger.info(f"ASP model loaded from {cfg.ASP_MODEL_PATH}")
-                else:
-                    self.logger.warning("ASP model failed to initialize")
-                    self._asp_predictor = None
-            except Exception as e:
-                self.logger.warning(f"Failed to load ASP model: {e}")
-        # Swing quality model
-        if _HAS_SQ:
-            try:
-                self._swing_quality_predictor = SwingQualityPredictor(
-                    model_path=getattr(cfg, "SWING_QUALITY_MODEL_PATH",
-                                       "models/swing_quality_xgb.json"),
-                )
-                if self._swing_quality_predictor.ready:
-                    self.logger.info("[ML] Swing quality model loaded")
-                else:
-                    self._swing_quality_predictor = None
-            except Exception as e:
-                self.logger.warning(f"Failed to load swing quality model: {e}")
-        self.signal_engine = SignalEngine(
-            asp_predictor=self._asp_predictor,
-            swing_quality_predictor=self._swing_quality_predictor,
-            logger=self.logger,
-        )
-        if self._asp_predictor and self._asp_predictor.ready:
-            self.logger.info("[ML] Active: ASP model loaded")
-        else:
-            self.logger.info("[ML] Not available")
+        self.symbols: List[str] = cfg.SYMBOLS
+        self._symbol_engines: Dict[str, SignalEngine] = {}
+        self._symbol_states: Dict[str, str] = {}
+        self._symbol_signals: Dict[str, Optional[Dict]] = {}
+
+        # Load per-symbol models and signal engines
+        for sym in self.symbols:
+            asp_pred = None
+            sq_pred = None
+
+            # ASP model
+            if _HAS_ASP and cfg.ASP_ENABLED:
+                asp_path = cfg.ASP_MODEL_PATHS.get(sym, cfg.ASP_MODEL_PATHS.get("XAUUSD"))
+                feat_path = cfg.ASP_FEATURE_PATHS.get(sym, cfg.ASP_FEATURE_PATHS.get("XAUUSD"))
+                try:
+                    asp_pred = ASPPredictor(model_path=asp_path, feature_path=feat_path)
+                    if asp_pred.ready:
+                        self.logger.info(f"[{sym}] ASP model loaded from {asp_path}")
+                    else:
+                        self.logger.warning(f"[{sym}] ASP model failed to initialize")
+                        asp_pred = None
+                except Exception as e:
+                    self.logger.warning(f"[{sym}] Failed to load ASP model: {e}")
+
+            # Swing quality model
+            if _HAS_SQ:
+                sq_path = cfg.SWING_QUALITY_MODEL_PATHS.get(sym, cfg.SWING_QUALITY_MODEL_PATHS.get("XAUUSD"))
+                try:
+                    sq_pred = SwingQualityPredictor(model_path=sq_path)
+                    if sq_pred.ready:
+                        self.logger.info(f"[{sym}] Swing quality model loaded")
+                    else:
+                        sq_pred = None
+                except Exception as e:
+                    self.logger.warning(f"[{sym}] Failed to load swing quality model: {e}")
+
+            engine = SignalEngine(
+                asp_predictor=asp_pred,
+                swing_quality_predictor=sq_pred,
+                logger=self.logger,
+            )
+            self._symbol_engines[sym] = engine
+            self._symbol_states[sym] = self.STATES["IDLE"]
+            self._symbol_signals[sym] = None
+
+        # Legacy single-symbol references (use first symbol for backward compat)
+        first_sym = self.symbols[0] if self.symbols else cfg.SYMBOL
+        self.signal_engine = self._symbol_engines.get(first_sym, SignalEngine(logger=self.logger))
+        self._asp_predictor = getattr(self.signal_engine, '_asp_predictor', None)
+        self._swing_quality_predictor = getattr(self.signal_engine, '_swing_quality', None)
+
         self.risk_manager = RiskManager()
         self.scaler = EquityScaler()
 
         self.state: str = self.STATES["IDLE"]
-        self.symbol: str = cfg.SYMBOL
+        self.symbol: str = first_sym
         self.magic: int = cfg.MAGIC_NUMBER
         self._running = False
 
@@ -283,7 +296,7 @@ class Bot:
         self.logger.info("Bot loop ended")
 
     async def _tick(self):
-        pnl_data = self.position_manager.refresh()
+        pnl_data = self.position_manager.refresh(symbols=self.symbols)
         self.risk_manager.daily_pnl = pnl_data["daily_pnl"]
 
         if pnl_data["open_count"] > 0 and self.state not in (
@@ -355,7 +368,7 @@ class Bot:
                 self.state = self.STATES["WAITING_FOR_FUNDS"]
                 return
 
-        market_open = cfg.is_market_open()
+        market_open = any(cfg.is_market_open_for_symbol(sym) for sym in self.symbols)
         if market_open and self.state != self.STATES["MARKET_CLOSED"]:
             dyn = self._check_market_dynamic()
             if dyn is not None:
@@ -427,91 +440,82 @@ class Bot:
         if self._winding_down:
             return
 
+        for sym in self.symbols:
+            await self._search_symbol(sym, pnl_data)
+
+    async def _search_symbol(self, sym: str, pnl_data: Dict):
+        """Search for entry signal on a single symbol."""
+        engine = self._symbol_engines.get(sym)
+        if engine is None:
+            return
+
         m1_bars = getattr(cfg, "ASP_M1_HISTORY_BARS", 300)
-        m1_data = self.client.get_rates(
-            self.symbol, cfg.SIGNAL_TIMEFRAME, m1_bars
-        )
+        m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, m1_bars)
         if m1_data is None or len(m1_data) < 10:
-            self._log_signal_diagnostic(
-                "insufficient_m1_data",
-                {"bars": 0 if m1_data is None else len(m1_data)},
-            )
             return
 
         self._feed_m5_volatility(m1_data)
 
-        symbol_info = self.client.get_symbol_info(self.symbol)
+        symbol_info = self.client.get_symbol_info(sym)
         if symbol_info is None:
-            self._log_signal_diagnostic("symbol_info_unavailable", {})
             return
 
         if self.news_state is not None and self.news_state.should_block_entry():
-            info = self.news_state.get_state_info()
-            self._log_signal_diagnostic(
-                f"news_blocked_{info['state']}",
-                {"news_state": info["state"]},
-            )
             return
 
         current_price = symbol_info.get("ask", 0)
 
         signal = None
-        if self._asp_predictor and self._asp_predictor.ready and cfg.ASP_ENABLED:
+        asp_pred = getattr(engine, '_asp_predictor', None)
+        if asp_pred and asp_pred.ready and cfg.ASP_ENABLED:
             h1_for_asp = None
             try:
-                h1_for_asp = self.client.get_rates(
-                    self.symbol, cfg.BIAS_TIMEFRAME, 96
-                )
+                h1_for_asp = self.client.get_rates(sym, cfg.BIAS_TIMEFRAME, 96)
             except Exception:
                 pass
-            signal = self.signal_engine.evaluate_asp_entry(
+            signal = engine.evaluate_asp_entry(
                 m1_data, current_price,
                 h1_data=h1_for_asp,
             )
 
         if signal:
             sig_dir = signal.get('direction', 'UNKNOWN')
-            sf_key = f"{sig_dir}|{signal['score']:.2f}"
+            sf_key = f"{sym}|{sig_dir}|{signal['score']:.2f}"
             sf_now = time.monotonic()
             if sf_key != self._last_signal_found_key or sf_now - self._last_signal_found_time >= 30:
                 self._last_signal_found_key = sf_key
                 self._last_signal_found_time = sf_now
                 self.logger.signal(
-                    f"Signal found: [ASP] {sig_dir} | "
+                    f"[{sym}] Signal found: [ASP] {sig_dir} | "
                     f"ASP swing prediction at ${current_price:.2f} "
                     f"(score={signal['score']:.3f} SL={signal.get('sl', 'n/a')} TP={signal.get('tp1', 'n/a')})"
                 )
-        else:
-            rejection = self.signal_engine.last_rejection or {}
-            self._log_signal_diagnostic(
-                rejection.get("reason", "asp_no_signal"),
-                {"price": current_price, **rejection},
-            )
 
         if signal:
             can_enter, reason = self.risk_manager.can_enter_trade(
                 symbol_info, datetime.utcnow()
             )
             if not can_enter:
-                bk_key = f"blocked_{signal['direction']}|{reason}"
+                bk_key = f"{sym}|blocked_{signal['direction']}|{reason}"
                 bk_now = time.monotonic()
                 if bk_key != self._last_signal_blocked_key or bk_now - self._last_signal_blocked_time >= 30:
                     self._last_signal_blocked_key = bk_key
                     self._last_signal_blocked_time = bk_now
                     self.logger.signal(
-                f"Signal {signal.get('direction', 'UNKNOWN')} "
-                f"blocked: {reason} | "
-                f"price={current_price:.2f} "
-                f"spread={symbol_info.get('spread', 0)}"
-            )
+                        f"[{sym}] Signal {signal.get('direction', 'UNKNOWN')} "
+                        f"blocked: {reason} | "
+                        f"price={current_price:.2f} "
+                        f"spread={symbol_info.get('spread', 0)}"
+                    )
                 return
 
             self._current_signal = signal
+            self._symbol_signals[sym] = signal
             self.logger.signal(
-                f"Signal triggered: [ASP] {signal.get('direction', 'UNKNOWN')} "
+                f"[{sym}] Signal triggered: [ASP] {signal.get('direction', 'UNKNOWN')} "
                 f"score={signal['score']:.2f}"
             )
-            await self._execute_entry(signal, symbol_info)
+            await self._execute_entry(signal, symbol_info, symbol=sym)
 
     def _current_session(self) -> str:
         h = datetime.utcnow().hour
@@ -570,78 +574,92 @@ class Bot:
             self.state = self.STATES["IDLE"]
             return
 
-        m1_data = self.client.get_rates(
-            self.symbol, cfg.SIGNAL_TIMEFRAME, 20
-        )
-        if m1_data is None:
-            return
-
-        self._feed_m5_volatility(m1_data)
-
         positions = self.position_manager.summary().get("positions", [])
         if not positions:
             return
 
-        direction = positions[0].get("type", "BUY")
-        entry_price = self.position_manager.get_average_entry(direction)
-        if entry_price is None:
-            return
+        for pos in positions:
+            pos_sym = pos.get("symbol", "")
+            if not pos_sym:
+                continue
 
-        entry_score = self._current_signal.get("score") if self._current_signal else None
-        is_recovery = self._current_signal is None
-        if is_recovery:
-            if not hasattr(self, '_recovery_ticks'):
-                self._recovery_ticks = 0
-                self.logger.info("Recovery: warming up M1 window before exit checks")
-            self._recovery_ticks += 1
-            if self._recovery_ticks < 5:
-                return
-        else:
-            self._recovery_ticks = 0
+            m1_data = self.client.get_rates(pos_sym, cfg.SIGNAL_TIMEFRAME, 20)
+            if m1_data is None:
+                continue
 
-        # ASP fixed exits: SL/TP/timeout
-        is_asp = self._current_signal and self._current_signal.get("asp_model")
-        if is_asp:
-            asp_sl = self._current_signal.get("sl")
-            asp_tp = self._current_signal.get("tp1")
-            event_start = getattr(self.position_manager, '_event_start_ts', None)
-            bars_held = max(0, int((time.time() - event_start) / (cfg.EXIT_CHECK_INTERVAL or 300))) if event_start else 0
+            self._feed_m5_volatility(m1_data)
 
-            current_px = positions[0].get("current_price", entry_price)
-            should_exit = False
-            exit_reason = ""
+            direction = pos.get("type", "BUY")
+            entry_price = pos.get("price_open", 0)
+            current_px = pos.get("current_price", entry_price)
 
-            if direction == "BUY":
-                if asp_sl and current_px <= asp_sl:
+            pos_signal = self._symbol_signals.get(pos_sym)
+            is_asp = pos_signal and pos_signal.get("asp_model")
+            if is_asp:
+                asp_sl = pos_signal.get("sl")
+                asp_tp = pos_signal.get("tp1")
+                atr_val = pos_signal.get("atr_value", 0)
+                event_start = getattr(self.position_manager, '_event_start_ts', None)
+                bars_held = max(0, int((time.time() - event_start) / (cfg.EXIT_CHECK_INTERVAL or 300))) if event_start else 0
+
+                # Trailing stop logic
+                if getattr(cfg, "ASP_TRAILING_ENABLED", False) and atr_val > 0:
+                    best_key = f"_best_price_{pos_sym}"
+                    if not hasattr(self, best_key):
+                        setattr(self, best_key, entry_price)
+                    best = getattr(self, best_key)
+
+                    if direction == "BUY":
+                        best = max(best, current_px)
+                        trigger = entry_price + atr_val * cfg.ASP_TRAILING_TRIGGER_ATR
+                        if best >= trigger:
+                            trail_sl = best - atr_val * cfg.ASP_TRAILING_RETRACE_ATR
+                            if trail_sl > asp_sl:
+                                asp_sl = trail_sl
+                                pos_signal["sl"] = asp_sl
+                    else:
+                        best = min(best, current_px)
+                        trigger = entry_price - atr_val * cfg.ASP_TRAILING_TRIGGER_ATR
+                        if best <= trigger:
+                            trail_sl = best + atr_val * cfg.ASP_TRAILING_RETRACE_ATR
+                            if trail_sl < asp_sl:
+                                asp_sl = trail_sl
+                                pos_signal["sl"] = asp_sl
+                    setattr(self, best_key, best)
+
+                should_exit = False
+                exit_reason = ""
+
+                if direction == "BUY":
+                    if asp_sl and current_px <= asp_sl:
+                        should_exit = True
+                        exit_reason = "asp_trail_sl" if getattr(cfg, "ASP_TRAILING_ENABLED", False) else "asp_sl_hit"
+                    elif asp_tp and current_px >= asp_tp:
+                        should_exit = True
+                        exit_reason = "asp_tp_hit"
+                else:
+                    if asp_sl and current_px >= asp_sl:
+                        should_exit = True
+                        exit_reason = "asp_trail_sl" if getattr(cfg, "ASP_TRAILING_ENABLED", False) else "asp_sl_hit"
+                    elif asp_tp and current_px <= asp_tp:
+                        should_exit = True
+                        exit_reason = "asp_tp_hit"
+
+                if not should_exit and bars_held >= cfg.ASP_TIMEOUT_BARS:
                     should_exit = True
-                    exit_reason = "asp_sl_hit"
-                elif asp_tp and current_px >= asp_tp:
-                    should_exit = True
-                    exit_reason = "asp_tp_hit"
-            else:
-                if asp_sl and current_px >= asp_sl:
-                    should_exit = True
-                    exit_reason = "asp_sl_hit"
-                elif asp_tp and current_px <= asp_tp:
-                    should_exit = True
-                    exit_reason = "asp_tp_hit"
+                    exit_reason = f"asp_timeout_{bars_held}bars"
 
-            if not should_exit and bars_held >= cfg.ASP_TIMEOUT_BARS:
-                should_exit = True
-                exit_reason = f"asp_timeout_{bars_held}bars"
-
-            if should_exit:
-                self.logger.signal(f"ASP exit: {exit_reason} | dir={direction} entry={entry_price:.2f} px={current_px:.2f}")
-                closed = self.trade_executor.close_all_bot_positions()
-                for pos_data in closed:
-                    self.position_manager.note_closed(pos_data)
-                self.state = self.STATES["IDLE"]
-                return
+                if should_exit:
+                    self.logger.signal(f"[{pos_sym}] ASP exit: {exit_reason} | dir={direction} entry={entry_price:.2f} px={current_px:.2f} sl={asp_sl:.2f}")
+                    closed = self.trade_executor.close_all_bot_positions()
+                    for pos_data in closed:
+                        self.position_manager.note_closed(pos_data)
+                    self.state = self.STATES["IDLE"]
+                    return
 
         event_start = getattr(self.position_manager, '_event_start_ts', None)
         bars_since_entry = max(0, int((time.time() - event_start) / (cfg.EXIT_CHECK_INTERVAL or 300))) if event_start else 0
 
-        # Timeout fallback: close if held too long without ASP exit triggering
         if bars_since_entry >= cfg.ASP_TIMEOUT_BARS:
             self.logger.signal(
                 f"Timeout exit: held {bars_since_entry} bars without SL/TP hit"
@@ -663,64 +681,65 @@ class Bot:
             )
             self.state = self.STATES["IDLE"]
 
-    async def _execute_entry(self, signal: Dict, symbol_info: Dict):
+    async def _execute_entry(self, signal: Dict, symbol_info: Dict, symbol: str = None):
+        sym = symbol or self.symbol
         self.state = self.STATES["ENTERING"]
         direction = signal["direction"]
         score = signal["score"]
 
-        # Re-fetch fresh info for confirmation checks
-        fresh_info = self.client.get_symbol_info(self.symbol)
+        fresh_info = self.client.get_symbol_info(sym)
         if fresh_info is None:
-            self.logger.warning("Entry blocked: cannot fetch symbol info")
+            self.logger.warning(f"[{sym}] Entry blocked: cannot fetch symbol info")
             self.state = self.STATES["IDLE"]
             return
 
         if fresh_info.get("market_status") != "TRADEABLE":
-            self.logger.warning(f"Entry blocked: market {fresh_info.get('market_status')}, pausing")
+            self.logger.warning(f"[{sym}] Entry blocked: market {fresh_info.get('market_status')}, pausing")
             self.state = self.STATES["MARKET_CLOSED"]
             self._last_market_status_check = 0.0
             return
 
         account = self.client.get_account_info()
         if account is None:
-            self.logger.warning("Entry blocked: cannot fetch account info")
+            self.logger.warning(f"[{sym}] Entry blocked: cannot fetch account info")
             self.state = self.STATES["IDLE"]
             return
         balance = account.get("balance", 0)
         if balance < cfg.MIN_BALANCE:
             self.logger.warning(
-                f"Entry blocked: balance ${balance:.2f} below minimum ${cfg.MIN_BALANCE:.2f}"
+                f"[{sym}] Entry blocked: balance ${balance:.2f} below minimum ${cfg.MIN_BALANCE:.2f}"
             )
             self.state = self.STATES["WAITING_FOR_FUNDS"]
             return
 
         self.scaler.update_peak(balance)
 
-        lot_mult = signal.get("lot_mult", cfg.LOT_MULTIPLIER)
-        ml_conf = signal.get("ml_confidence", 0.0)
-        lot = min(self.scaler.get_lot(balance) * lot_mult, cfg.MAX_LOT)
+        sym_base_lot = cfg.SYMBOL_LOT_SIZES.get(sym, cfg.LOT_SIZE)
+        REFERENCE = 20.0
+        lot = sym_base_lot * (balance / REFERENCE)
+        if self.scaler.in_drawdown(balance):
+            lot *= 0.5
         vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
         lot = round(lot / vol_step) * vol_step
         lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), min(lot, fresh_info.get("volume_max", cfg.MAX_LOT)))
         max_trades = 1
 
-        # Price drift check — reject if price moved outside allowed drift
         current_price = fresh_info.get("bid", fresh_info.get("price", 0)) if direction == "SELL" else fresh_info.get("ask", fresh_info.get("price", 0))
         signal_price = symbol_info.get("bid", 0) if direction == "SELL" else symbol_info.get("ask", 0)
         point = fresh_info.get("point", 0.01)
         drift_amount = abs(current_price - signal_price)
         drift_pct = drift_amount / signal_price * 100
-        max_drift = cfg.MAX_SPREAD_PIPS * point
+        sym_max_spread = cfg.SYMBOL_MAX_SPREAD.get(sym, cfg.MAX_SPREAD_PIPS)
+        max_drift = sym_max_spread * point
         if drift_amount > max_drift:
             self.logger.warning(
-                f"Entry blocked: price drifted ${drift_amount:.2f} "
+                f"[{sym}] Entry blocked: price drifted ${drift_amount:.2f} "
                 f"from signal price ${signal_price:.2f} to ${current_price:.2f} "
                 f"(max drift ${max_drift:.2f})"
             )
             self.state = self.STATES["IDLE"]
             return
 
-        # Margin check — ensure at least 1 trade fits, then fire sequentially
         margin_rate = fresh_info.get("margin_rate", 0.05)
         free_margin = account.get("free_margin", 0)
         single_margin = lot * current_price * margin_rate * 1
@@ -731,7 +750,7 @@ class Bot:
             max_lot_by_margin = max(fresh_info.get("volume_min", cfg.MIN_LOT), max_lot_by_margin)
             if max_lot_by_margin < lot:
                 self.logger.info(
-                    f"Reducing lot from {lot:.2f} to {max_lot_by_margin:.2f} "
+                    f"[{sym}] Reducing lot from {lot:.2f} to {max_lot_by_margin:.2f} "
                     f"(margin: ${free_margin:.2f} available, "
                     f"${single_margin:.2f} needed)"
                 )
@@ -739,14 +758,14 @@ class Bot:
                 single_margin = lot * current_price * margin_rate * 1
             if free_margin < single_margin:
                 self.logger.warning(
-                    f"Entry blocked: insufficient margin "
+                    f"[{sym}] Entry blocked: insufficient margin "
                     f"(est ${single_margin:.2f} needed, ${free_margin:.2f} available)"
                 )
                 self.state = self.STATES["IDLE"]
                 return
 
         self.logger.info(
-            f"Entry: {direction} | score={score:.2f} | "
+            f"[{sym}] Entry: {direction} | score={score:.2f} | "
             f"ASP={signal.get('asp_model', False)} | "
             f"balance=${balance:.2f} | lot={lot:.2f} | "
             f"max_trades={max_trades} | drift={drift_pct:.3f}% | "
@@ -757,19 +776,18 @@ class Bot:
 
         any_opened = False
         for i in range(max_trades):
-            # Recheck margin before each subsequent trade
             if i > 0:
                 acct = self.client.get_account_info()
                 fm = acct.get("free_margin", 0) if acct else 0
                 if fm < single_margin:
                     self.logger.info(
-                        f"Margin exhausted after {i} trade(s) "
+                        f"[{sym}] Margin exhausted after {i} trade(s) "
                         f"(${fm:.2f} < ${single_margin:.2f} needed for next)"
                     )
                     break
 
             ticket = await self.trade_executor.open_market(
-                self.symbol, direction, lot
+                sym, direction, lot
             )
             if ticket is not None:
                 any_opened = True
@@ -783,12 +801,11 @@ class Bot:
                     except Exception:
                         pass
                 if "currently closed" in err_detail.lower():
-                    self.logger.info("Market closed detected, pausing until reopen")
+                    self.logger.info(f"[{sym}] Market closed detected, pausing until reopen")
                     self.state = self.STATES["MARKET_CLOSED"]
                     return
                 break
 
-        # Re-read balance and refresh positions after trades
         fresh_acct = self.client.get_account_info()
         if fresh_acct:
             self.scaler.update_peak(fresh_acct["balance"])
@@ -800,7 +817,7 @@ class Bot:
                 self.position_manager._event_start_ts = time.time()
             open_cnt = self.position_manager.open_count or max_trades
             self.logger.info(
-                f"Entered {direction} with {open_cnt} position(s) "
+                f"[{sym}] Entered {direction} with {open_cnt} position(s) "
                 f"(ML conf={ml_conf:.2f})"
             )
         else:

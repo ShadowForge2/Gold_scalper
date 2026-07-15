@@ -45,8 +45,8 @@ MAGIC_NUMBER = _env_int("MAGIC_NUMBER", 123456)
 COMMENT = _env_str("COMMENT", "Gold Scalper")
 
 # Lot sizing
-LOT_SIZE = _env_float("LOT_SIZE", 0.01)
-MIN_LOT = _env_float("MIN_LOT", 0.01)
+LOT_SIZE = _env_float("LOT_SIZE", 0.02)
+MIN_LOT = _env_float("MIN_LOT", 0.02)
 MAX_LOT = 9999.0
 LOT_STEP = _env_float("LOT_STEP", 0.01)
 LOT_MULTIPLIER = _env_int("LOT_MULTIPLIER", 5)
@@ -105,8 +105,34 @@ AGGRESSIVE_STRONG_LOT_MULT = _env_float("AGGRESSIVE_STRONG_LOT_MULT", 1.5)
 # ML override
 ML_OVERRIDE_MAX_PER_SESSION = _env_int("ML_OVERRIDE_MAX_PER_SESSION", 3)
 
-# Multi-symbol scanning (comma-separated list, e.g. "XAUUSD,XAGUSD")
-SYMBOLS = [s.strip() for s in _env_str("SYMBOLS", "XAUUSD").split(",")]
+# Multi-symbol: bot trades both XAUUSD and US100 automatically
+SYMBOLS = [s.strip() for s in _env_str("SYMBOLS", "XAUUSD,US100").split(",")]
+
+# Per-symbol model paths
+ASP_MODEL_PATHS = {
+    "XAUUSD": _env_str("ASP_MODEL_PATH", "models/asp_swing_xgb_m5.joblib"),
+    "US100": _env_str("ASP_MODEL_PATH_US100", "models/asp_swing_xgb_m5_US100.joblib"),
+}
+ASP_FEATURE_PATHS = {
+    "XAUUSD": _env_str("ASP_FEATURE_PATH", "models/asp_swing_m5_features.npy"),
+    "US100": _env_str("ASP_FEATURE_PATH_US100", "models/asp_swing_m5_features_US100.npy"),
+}
+SWING_QUALITY_MODEL_PATHS = {
+    "XAUUSD": _env_str("SWING_QUALITY_MODEL_PATH", "models/swing_quality_xgb.json"),
+    "US100": _env_str("SWING_QUALITY_MODEL_PATH_US100", "models/swing_quality_xgb_US100.json"),
+}
+
+# Per-symbol lot sizes
+SYMBOL_LOT_SIZES = {
+    "XAUUSD": _env_float("LOT_SIZE_XAUUSD", 0.02),
+    "US100": _env_float("LOT_SIZE_US100", 0.5),
+}
+
+# Per-symbol spread limits (pips)
+SYMBOL_MAX_SPREAD = {
+    "XAUUSD": _env_float("MAX_SPREAD_PIPS", 35.0),
+    "US100": _env_float("MAX_SPREAD_PIPS_US100", 50.0),
+}
 
 # Adaptive confirmation
 ADAPTIVE_CONFIRMATION_ENABLED = _env_bool("ADAPTIVE_CONFIRMATION_ENABLED", True)
@@ -139,6 +165,11 @@ MARKET_CLOSE_FRIDAY_UTC = _env_int("MARKET_CLOSE_FRIDAY_UTC", 21)
 MARKET_DAILY_CLOSE_START = _env_float("MARKET_DAILY_CLOSE_START", 20.9833)  # 20:59 UTC
 MARKET_DAILY_CLOSE_END = _env_float("MARKET_DAILY_CLOSE_END", 22.0)  # 22:00 UTC
 
+# US100 market hours (Mon-Fri 14:30-21:00 UTC)
+US100_OPEN_HOUR_UTC = 14
+US100_OPEN_MINUTE_UTC = 30
+US100_CLOSE_HOUR_UTC = 21
+
 
 # ASP (Adaptive Swing Probability) model
 ASP_ENABLED = _env_bool("ASP_ENABLED", True)
@@ -146,10 +177,15 @@ ASP_MODEL_PATH = _env_str("ASP_MODEL_PATH", "models/asp_swing_xgb_m5.joblib")
 ASP_FEATURE_PATH = _env_str("ASP_FEATURE_PATH", "models/asp_swing_m5_features.npy")
 ASP_SL_ATR_MULTIPLIER = _env_float("ASP_SL_ATR_MULTIPLIER", 2.0)
 ASP_TP_ATR_MULTIPLIER = _env_float("ASP_TP_ATR_MULTIPLIER", 1.0)
-ASP_TIMEOUT_BARS = _env_int("ASP_TIMEOUT_BARS", 9)  # 9 x 5min = 45min
+ASP_TIMEOUT_BARS = _env_int("ASP_TIMEOUT_BARS", 5)  # 5 x 5min = 25min
 ASP_MIN_ATR_DIST = _env_float("ASP_MIN_ATR_DIST", 0.50)
 ASP_MIN_CONFIDENCE = _env_float("ASP_MIN_CONFIDENCE", 0.55)
 ASP_M1_HISTORY_BARS = _env_int("ASP_M1_HISTORY_BARS", 300)
+
+# Trailing stop for ASP trades
+ASP_TRAILING_ENABLED = _env_bool("ASP_TRAILING_ENABLED", True)
+ASP_TRAILING_TRIGGER_ATR = _env_float("ASP_TRAILING_TRIGGER_ATR", 1.5)  # activate after 1.5x ATR profit
+ASP_TRAILING_RETRACE_ATR = _env_float("ASP_TRAILING_RETRACE_ATR", 1.0)  # trail 1.0x ATR behind best
 
 # Chop filter — reject ASP signals when market is stagnant
 CHOP_FILTER_ENABLED = _env_bool("CHOP_FILTER_ENABLED", True)
@@ -184,6 +220,33 @@ def is_market_open() -> bool:
     now = _dt.utcnow()
     wd = now.weekday()
     h = now.hour + now.minute / 60.0
+    if wd == 6:
+        return h >= MARKET_OPEN_SUNDAY_UTC
+    if wd == 4:
+        return h < MARKET_CLOSE_FRIDAY_UTC
+    if 0 <= wd <= 3:
+        if MARKET_DAILY_CLOSE_START <= h < MARKET_DAILY_CLOSE_END:
+            return False
+        return True
+    return False
+
+
+def is_market_open_for_symbol(sym: str) -> bool:
+    """Check if market is open for a specific symbol."""
+    from datetime import datetime as _dt
+    now = _dt.utcnow()
+    wd = now.weekday()
+    h = now.hour + now.minute / 60.0
+
+    if sym in ("US100", "NASDAQ", "NAS100"):
+        # US100: Mon-Fri 14:30-21:00 UTC
+        if 0 <= wd <= 4:
+            open_t = US100_OPEN_HOUR_UTC + US100_OPEN_MINUTE_UTC / 60.0
+            close_t = US100_CLOSE_HOUR_UTC
+            return open_t <= h < close_t
+        return False
+
+    # XAUUSD: Sun 23:00 - Fri 21:00 UTC, closed 20:59-22:00 Mon-Thu
     if wd == 6:
         return h >= MARKET_OPEN_SUNDAY_UTC
     if wd == 4:
