@@ -91,6 +91,7 @@ class Bot:
             self._symbol_signals[sym] = None
             self._symbol_event_start_ts[sym] = None
             self._symbol_exit_confirms[sym] = 0
+            self._symbol_reversal_confirms[sym] = 0
 
         # Legacy single-symbol references (use first symbol for backward compat)
         first_sym = self.symbols[0] if self.symbols else cfg.SYMBOL
@@ -369,6 +370,8 @@ class Bot:
                     f"${cfg.MIN_BALANCE:.2f}. Waiting for funds..."
                 )
                 self.state = self.STATES["WAITING_FOR_FUNDS"]
+                for sym in self.symbols:
+                    self._symbol_states[sym] = self.STATES["WAITING_FOR_FUNDS"]
                 return
 
         await self._update_news_state()
@@ -479,12 +482,6 @@ class Bot:
         except Exception as e:
             self.logger.debug(f"[NEWS] M5 feed failed: {e}")
 
-    async def _handle_search(self, pnl_data: Dict):
-        if self._winding_down:
-            return
-
-        for sym in self.symbols:
-            await self._search_symbol(sym, pnl_data)
 
     async def _search_symbol(self, sym: str, pnl_data: Dict):
         """Search for entry signal on a single symbol."""
@@ -697,10 +694,12 @@ class Bot:
 
         if bars_held >= timeout_bars:
             engine = self._symbol_engines.get(sym)
-            m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, 20)
+            m1_bars = getattr(cfg, 'ASP_M1_HISTORY_BARS', 300)
+            m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, m1_bars)
             fresh_signal = None
-            if engine and m1_data is not None and len(m1_data) >= 10:
-                fresh_signal = engine.evaluate_asp_entry(m1_data, current_px)
+            if engine and m1_data is not None and len(m1_data) >= 96:
+                h1_for_asp = self.client.get_rates(sym, "H1", 48)
+                fresh_signal = engine.evaluate_asp_entry(m1_data, current_px, h1_data=h1_for_asp)
 
             fresh_dir = fresh_signal.get("direction") if fresh_signal else None
             if fresh_dir == direction:
@@ -983,7 +982,7 @@ class Bot:
         clamped = {}
         if "lot_multiplier" in settings:
             clamped["lot_multiplier"] = max(0.1, min(float(settings["lot_multiplier"]), 100.0))
-            self._lot_multiplier_override = clamped["lot_multiplier"]
+            cfg.LOT_MULTIPLIER = clamped["lot_multiplier"]
         if "max_spread_pips" in settings:
             clamped["max_spread_pips"] = max(1.0, min(float(settings["max_spread_pips"]), 500.0))
             self.risk_manager.max_spread = clamped["max_spread_pips"]
