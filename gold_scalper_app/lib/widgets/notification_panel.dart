@@ -74,7 +74,7 @@ class NotificationPanel extends StatelessWidget {
                             ),
                             SizedBox(height: 4),
                             Text(
-                              'Trade open/close alerts will appear here',
+                              'Trade & news alerts will appear here',
                               style: TextStyle(color: Colors.white24, fontSize: 12),
                             ),
                           ],
@@ -107,6 +107,7 @@ class _NotificationTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final isTradeOpen = notification.type == 'trade_open';
     final isTradeClose = notification.type == 'trade_close';
+    final isNewsAlert = notification.type == 'news_alert';
     final isPositive = notification.data?['pnl'] != null
         ? (notification.data!['pnl'] as num) >= 0
         : null;
@@ -125,6 +126,9 @@ class _NotificationTile extends StatelessWidget {
     } else if (isTradeClose) {
       icon = Icons.swap_horiz_rounded;
       iconColor = kGold;
+    } else if (isNewsAlert) {
+      icon = Icons.campaign_rounded;
+      iconColor = const Color(0xFFFF9800);
     } else {
       icon = Icons.info_outline_rounded;
       iconColor = kInfo;

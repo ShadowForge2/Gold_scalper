@@ -260,7 +260,7 @@ class BotProvider extends ChangeNotifier {
       state: 'IDLE',
       connected: false,
       broker: 'Capital.com',
-      symbol: 'XAUUSD',
+      symbol: '--',
       balance: 0,
       dailyPnl: 0,
       bid: 0,
@@ -356,7 +356,7 @@ class BotProvider extends ChangeNotifier {
       for (final n in parsed) {
         if (!_seenNotificationIds.contains(n.id)) {
           _seenNotificationIds.add(n.id);
-          if (n.type == 'trade_open' || n.type == 'trade_close') {
+          if (n.type == 'trade_open' || n.type == 'trade_close' || n.type == 'news_alert') {
             NotificationService.instance.showNotification(
               id: NotificationService.nextId,
               title: n.title,
