@@ -49,6 +49,7 @@ class Bot:
         self._symbol_signals: Dict[str, Optional[Dict]] = {}
         self._symbol_event_start_ts: Dict[str, Optional[float]] = {}
         self._symbol_exit_confirms: Dict[str, int] = {}
+        self._symbol_reversal_confirms: Dict[str, int] = {}
 
         # Load per-symbol models and signal engines
         for sym in self.symbols:
