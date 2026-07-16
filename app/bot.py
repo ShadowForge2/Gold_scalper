@@ -715,8 +715,18 @@ class Bot:
                     self._symbol_exit_confirms[sym] = 0
                     self.logger.signal(f"[{sym}] Timeout reset: model confirms move still valid, extending")
             else:
-                self._symbol_exit_confirms[sym] = 0
+                self._symbol_reversal_confirms[sym] = self._symbol_reversal_confirms.get(sym, 0) + 1
+                rev_confirms = self._symbol_reversal_confirms[sym]
                 reason = f"asp_timeout_{bars_held}bars_reversal" if fresh_dir else f"asp_timeout_{bars_held}bars_no_signal"
+                self.logger.signal(
+                    f"[{sym}] Timeout reversal re-scan #{rev_confirms}: {reason} "
+                    f"(dir={direction} held {bars_held}bars, need ≥2 reversals to exit)"
+                )
+                if rev_confirms < 2:
+                    self._symbol_exit_confirms[sym] = 0
+                    return
+                self._symbol_exit_confirms[sym] = 0
+                self._symbol_reversal_confirms[sym] = 0
                 self.logger.signal(f"[{sym}] Timeout exit: {reason} | dir={direction} entry={entry_price:.2f} px={current_px:.2f}")
                 closed = self.trade_executor.close_all_bot_positions(symbol=sym)
                 for pos_data in closed:
