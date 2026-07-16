@@ -615,9 +615,12 @@ class Bot:
             closed = self.trade_executor.close_all_bot_positions(symbol=sym)
             for pos_data in closed:
                 self.position_manager.note_closed(pos_data)
-            self._symbol_states[sym] = self.STATES["IDLE"]
-            self._symbol_event_start_ts[sym] = None
-            self._symbol_exit_confirms[sym] = 0
+            if closed:
+                self._symbol_states[sym] = self.STATES["IDLE"]
+                self._symbol_event_start_ts[sym] = None
+                self._symbol_exit_confirms[sym] = 0
+            else:
+                self.logger.warning(f"[{sym}] Event stop close failed, retrying next tick")
             return
 
         pos = sym_positions[0]
@@ -684,9 +687,12 @@ class Bot:
                 closed = self.trade_executor.close_all_bot_positions(symbol=sym)
                 for pos_data in closed:
                     self.position_manager.note_closed(pos_data)
-                self._symbol_states[sym] = self.STATES["IDLE"]
-                self._symbol_event_start_ts[sym] = None
-                self._symbol_exit_confirms[sym] = 0
+                if closed:
+                    self._symbol_states[sym] = self.STATES["IDLE"]
+                    self._symbol_event_start_ts[sym] = None
+                    self._symbol_exit_confirms[sym] = 0
+                else:
+                    self.logger.warning(f"[{sym}] ASP exit close failed, retrying next tick")
                 return
 
         if bars_held >= timeout_bars:
@@ -715,8 +721,11 @@ class Bot:
                 closed = self.trade_executor.close_all_bot_positions(symbol=sym)
                 for pos_data in closed:
                     self.position_manager.note_closed(pos_data)
-                self._symbol_states[sym] = self.STATES["IDLE"]
-                self._symbol_event_start_ts[sym] = None
+                if closed:
+                    self._symbol_states[sym] = self.STATES["IDLE"]
+                    self._symbol_event_start_ts[sym] = None
+                else:
+                    self.logger.warning(f"[{sym}] Timeout exit close failed, retrying next tick")
                 return
 
     async def _handle_waiting_for_funds(self, sym: str = None):
@@ -737,6 +746,12 @@ class Bot:
         self._symbol_states[sym] = self.STATES["ENTERING"]
         direction = signal["direction"]
         score = signal["score"]
+
+        stale_positions = [p for p in self.position_manager.open_positions if p.get("_symbol_code") == sym]
+        if stale_positions:
+            self.logger.warning(f"[{sym}] Entry blocked: {len(stale_positions)} existing position(s) still open")
+            self._symbol_states[sym] = self.STATES["IN_TRADE"]
+            return
 
         fresh_info = self.client.get_symbol_info(sym)
         if fresh_info is None:
