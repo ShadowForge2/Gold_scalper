@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "497631026623",
+    "project_id": "ai-forex-tader",
+    "storage_bucket": "ai-forex-tader.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:497631026623:android:dea4775c4c4475ef30550a",
+        "android_client_info": {
+          "package_name": "com.example.gold_scalper_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBei3qPtTlP6LRwSdJxTP_PHrorvx5j5s8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

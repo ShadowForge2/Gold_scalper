@@ -18,6 +18,70 @@ PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "")
 MAXELPAY_API_KEY = os.getenv("MAXELPAY_API_KEY", "")
 MAXELPAY_BASE = "https://api.maxelpay.com/api/v1"
 
+_firebase_app = None
+
+def _get_firebase_app():
+    global _firebase_app
+    if _firebase_app is not None:
+        return _firebase_app
+    try:
+        import firebase_admin
+        from firebase_admin import credentials
+        cred_json_str = os.getenv("FIREBASE_CREDENTIALS_JSON", "")
+        cred_path = os.getenv("FIREBASE_CREDENTIALS", "")
+        if cred_json_str:
+            import tempfile
+            cred_data = json.loads(cred_json_str)
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                json.dump(cred_data, f)
+                f.flush()
+                cred = credentials.Certificate(f.name)
+                _firebase_app = firebase_admin.initialize_app(cred)
+            os.unlink(f.name)
+            logger.info("Firebase Admin initialized from env var")
+        elif cred_path and os.path.exists(cred_path):
+            cred = credentials.Certificate(cred_path)
+            _firebase_app = firebase_admin.initialize_app(cred)
+            logger.info("Firebase Admin initialized from %s", cred_path)
+        elif firebase_admin._DEFAULT_APP_NAME not in firebase_admin._apps:
+            _firebase_app = firebase_admin.initialize_app()
+            logger.info("Firebase Admin initialized with default credentials")
+        else:
+            _firebase_app = firebase_admin.get_app()
+    except Exception as e:
+        logger.warning("Firebase Admin init failed: %s", e)
+        _firebase_app = None
+    return _firebase_app
+
+
+async def _send_fcm_push(identifier: str, title: str, body: str, data: Optional[Dict] = None):
+    try:
+        app = _get_firebase_app()
+        if app is None:
+            return
+        from firebase_admin import messaging as fcm
+        rows = await db_mod.database.fetch_all(
+            """SELECT f.fcm_token FROM fcm_tokens f
+               JOIN accounts a ON a.device_id = f.device_id
+               WHERE a.identifier = :ident""",
+            {"ident": identifier},
+        )
+        if not rows:
+            return
+        tokens = [r["fcm_token"] for r in rows if r.get("fcm_token")]
+        if not tokens:
+            return
+        message = fcm.MulticastMessage(
+            notification=fcm.Notification(title=title, body=body),
+            data={k: str(v) for k, v in (data or {}).items()},
+            tokens=tokens,
+        )
+        response = fcm.send_each(message)
+        logger.info("FCM push sent: %d success, %d failed out of %d",
+                     response.success_count, response.failure_count, len(tokens))
+    except Exception as e:
+        logger.debug("FCM push failed: %s", e)
+
 
 # ── Device tracking (async DB) ──────────────────────────────────
 
@@ -657,6 +721,8 @@ async def create_notification(identifier: str, ntype: str, title: str, message: 
             "ca": datetime.utcnow().isoformat(),
         }
     )
+    import asyncio
+    asyncio.create_task(_send_fcm_push(identifier, title, message, data))
 
 
 async def get_notifications(identifier: str, limit: int = 50) -> List[Dict]:

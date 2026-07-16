@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'providers/device_provider.dart';
 import 'providers/bot_provider.dart';
 import 'screens/home_screen.dart';
@@ -13,8 +15,15 @@ import 'theme.dart';
 const _supabaseUrl = 'https://tphxjgpnevienqkjbkdm.supabase.co';
 const _supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRwaHhqZ3BuZXZpZW5xa2pia2RtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2NTcyMzksImV4cCI6MjA5NzIzMzIzOX0.37PjdzNHPijowLRsFSRBOTjZpKkWrg2JV7ZJ3-i_Np4';
 
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   await Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey);
   NotificationService.instance.init();
   SystemChrome.setPreferredOrientations([

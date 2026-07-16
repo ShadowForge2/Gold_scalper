@@ -989,4 +989,21 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                 await mark_all_notifications_read(acct["identifier"])
         return {"success": True}
 
+    @app.post("/api/device/fcm-token")
+    async def device_fcm_token(data: dict, device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
+        did = device_id or "unknown"
+        token = data.get("fcm_token", "")
+        if not token:
+            return {"success": False}
+        from datetime import datetime
+        await db_mod.database.execute(
+            """INSERT INTO fcm_tokens (device_id, fcm_token, updated_at)
+               VALUES (:did, :token, :ua)
+               ON CONFLICT (device_id) DO UPDATE SET fcm_token = :token, updated_at = :ua""",
+            {"did": did, "token": token, "ua": datetime.utcnow().isoformat()},
+        )
+        return {"success": True}
+
     return app

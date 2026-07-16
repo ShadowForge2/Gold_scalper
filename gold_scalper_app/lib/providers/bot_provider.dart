@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import '../models/bot_state.dart';
 import '../models/trade.dart';
 import '../models/performance.dart';
@@ -217,6 +218,7 @@ class BotProvider extends ChangeNotifier {
 
     await _fetchAll();
     _subscribeRealtimeNotifications();
+    _initFirebaseMessaging();
 
     _loading = false;
     notifyListeners();
@@ -227,6 +229,44 @@ class BotProvider extends ChangeNotifier {
         debugPrint('_tickLive unhandled: $e');
       });
     });
+  }
+
+  void _initFirebaseMessaging() async {
+    try {
+      final messaging = FirebaseMessaging.instance;
+      final settings = await messaging.requestPermission(alert: true, badge: true, sound: true);
+      debugPrint('FCM permission: ${settings.authorizationStatus}');
+
+      final token = await messaging.getToken();
+      if (token != null) {
+        debugPrint('FCM token: ${token.substring(0, 20)}...');
+        _registerFcmToken(token);
+      }
+      messaging.onTokenRefresh.listen(_registerFcmToken);
+
+      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+        final data = message.data;
+        final title = message.notification?.title ?? data['title'] ?? 'Notification';
+        final body = message.notification?.body ?? data['message'] ?? '';
+        final ntype = data['type'] ?? 'info';
+        NotificationService.instance.showNotification(
+          id: NotificationService.nextId,
+          title: title,
+          body: body,
+          payload: data['notification_id'] ?? '',
+        );
+      });
+    } catch (e) {
+      debugPrint('FCM init failed: $e');
+    }
+  }
+
+  Future<void> _registerFcmToken(String token) async {
+    try {
+      await _post('/api/device/fcm-token', {'fcm_token': token});
+    } catch (e) {
+      debugPrint('FCM token register failed: $e');
+    }
   }
 
   Future<void> refresh() async {

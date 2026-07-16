@@ -107,5 +107,7 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
       - key: CORS_ORIGINS
         value: https://gold-scalper-qyhg.onrender.com
