@@ -147,6 +147,24 @@ async def init_db():
                     except Exception:
                         pass
                 database = db
+                # Enable Supabase Realtime on notifications table
+                try:
+                    await db.execute("ALTER PUBLICATION supabase_realtime ADD TABLE notifications")
+                except Exception:
+                    pass  # already added
+                # Permissive RLS so the anon key can read notifications
+                try:
+                    await db.execute("ALTER TABLE notifications ENABLE ROW LEVEL SECURITY")
+                    await db.execute("""
+                        DO $$ BEGIN
+                            CREATE POLICY IF NOT EXISTS "anon_read_notifications"
+                            ON notifications FOR SELECT
+                            USING (true);
+                        EXCEPTION WHEN duplicate_object THEN NULL;
+                        END $$;
+                    """)
+                except Exception:
+                    pass
                 return
             except Exception:
                 pass

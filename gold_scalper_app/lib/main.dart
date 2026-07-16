@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'providers/device_provider.dart';
 import 'providers/bot_provider.dart';
 import 'screens/home_screen.dart';
@@ -9,8 +10,12 @@ import 'screens/welcome/welcome_screen.dart';
 import 'services/notification_service.dart';
 import 'theme.dart';
 
-void main() {
+const _supabaseUrl = 'https://tphxjgpnevienqkjbkdm.supabase.co';
+const _supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRwaHhqZ3BuZXZpZW5xa2pia2RtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2NTcyMzksImV4cCI6MjA5NzIzMzIzOX0.37PjdzNHPijowLRsFSRBOTjZpKkWrg2JV7ZJ3-i_Np4';
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey);
   NotificationService.instance.init();
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
@@ -27,13 +32,13 @@ void main() {
     debugPrint('FATAL: ${details.exception}\n${details.stack}');
   };
   runZonedGuarded(
-    () => runApp(const GoldScalperApp()),
+    () => runApp(const QuantorafxApp()),
     (error, stack) => debugPrint('UNCAUGHT: $error\n$stack'),
   );
 }
 
-class GoldScalperApp extends StatelessWidget {
-  const GoldScalperApp({super.key});
+class QuantorafxApp extends StatelessWidget {
+  const QuantorafxApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +51,7 @@ class GoldScalperApp extends StatelessWidget {
         ),
       ],
       child: MaterialApp(
-        title: 'Gold Scalper',
+        title: 'Quantorafx',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           brightness: Brightness.dark,

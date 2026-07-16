@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/bot_state.dart';
 import '../models/trade.dart';
 import '../models/performance.dart';
@@ -41,6 +42,7 @@ class BotProvider extends ChangeNotifier {
   List<NotificationItem> _notifications = [];
   int _unreadCount = 0;
   final Set<String> _seenNotificationIds = {};
+  RealtimeChannel? _realtimeChannel;
 
   static const _configKey = 'saved_bot_config';
 
@@ -214,6 +216,7 @@ class BotProvider extends ChangeNotifier {
     notifyListeners();
 
     await _fetchAll();
+    _subscribeRealtimeNotifications();
 
     _loading = false;
     notifyListeners();
@@ -228,6 +231,40 @@ class BotProvider extends ChangeNotifier {
 
   Future<void> refresh() async {
     await _fetchAll();
+  }
+
+  void _subscribeRealtimeNotifications() {
+    try {
+      _realtimeChannel?.unsubscribe();
+      _realtimeChannel = Supabase.instance.client
+          .channel('notifications-realtime')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.insert,
+            schema: 'public',
+            table: 'notifications',
+            callback: (payload) {
+              final row = payload.newRecord;
+              if (row.isEmpty) return;
+              final notif = NotificationItem.fromJson(row);
+              if (!_seenNotificationIds.contains(notif.id)) {
+                _seenNotificationIds.add(notif.id);
+                _notifications = [notif, ..._notifications];
+                _unreadCount++;
+                NotificationService.instance.showNotification(
+                  id: NotificationService.nextId,
+                  title: notif.title,
+                  body: notif.message,
+                  payload: notif.id,
+                );
+                notifyListeners();
+              }
+            },
+          )
+          .subscribe();
+      debugPrint('Supabase Realtime: subscribed to notifications');
+    } catch (e) {
+      debugPrint('Supabase Realtime subscribe failed: $e');
+    }
   }
 
   Future<void> _fetchAll() async {
@@ -712,6 +749,7 @@ class BotProvider extends ChangeNotifier {
   @override
   void dispose() {
     _timer?.cancel();
+    _realtimeChannel?.unsubscribe();
     _client.close();
     super.dispose();
   }
