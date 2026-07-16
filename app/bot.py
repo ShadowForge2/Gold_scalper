@@ -731,11 +731,7 @@ class Bot:
 
         self.scaler.update_peak(balance)
 
-        sym_base_lot = cfg.SYMBOL_LOT_SIZES.get(sym, cfg.LOT_SIZE)
-        REFERENCE = 20.0
-        lot = sym_base_lot * (balance / REFERENCE)
-        if self.scaler.in_drawdown(balance):
-            lot *= 0.5
+        lot = self.scaler.get_lot(balance, symbol=sym)
         vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
         lot = round(lot / vol_step) * vol_step
         lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), min(lot, fresh_info.get("volume_max", cfg.MAX_LOT)))

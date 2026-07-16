@@ -11,6 +11,7 @@ class EquityScaler:
         self.peak_balance: Optional[float] = None
         self.base_lot = cfg.LOT_SIZE
         self.base_trades = 1
+        self._symbol_base_lots: Dict[str, float] = dict(cfg.SYMBOL_LOT_SIZES)
 
     def initialize(self, balance: float):
         self.starting_balance = balance
@@ -32,22 +33,20 @@ class EquityScaler:
         if self.peak_balance is None or balance > self.peak_balance:
             self.peak_balance = balance
 
-    def get_lot(self, balance: float) -> float:
-        """Calculate lot size based on ATR risk and available margin.
+    def get_lot(self, balance: float, symbol: Optional[str] = None) -> float:
+        """Calculate lot size based on equity scaling.
 
+        Uses per-symbol base lot (SYMBOL_LOT_SIZES) scaled by balance.
         For Capital.com: use full margin available (no conservative cap).
-        Lot sized so that 2x ATR stop loss = survivable drawdown (25-50% of balance).
+        The actual margin check happens in bot.py _execute_entry().
         """
         if not self.starting_balance or self.starting_balance <= 0:
-            return self.base_lot
+            return self._symbol_base_lots.get(symbol, self.base_lot) if symbol else self.base_lot
         self.update_peak(balance)
 
-        # Base lot from reference scaling
-        reference = 20.0  # fixed reference; all accounts scale identically
-        lot = self.base_lot * (balance / reference)
-
-        # NO balance/5000 cap — Capital.com allows full margin utilization
-        # The actual margin check happens in bot.py _execute_entry()
+        sym_base = self._symbol_base_lots.get(symbol, self.base_lot) if symbol else self.base_lot
+        reference = 20.0
+        lot = sym_base * (balance / reference)
 
         if self.in_drawdown(balance):
             lot *= 0.5
