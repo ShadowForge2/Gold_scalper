@@ -125,7 +125,7 @@ SWING_QUALITY_MODEL_PATHS = {
 # Per-symbol lot sizes
 SYMBOL_LOT_SIZES = {
     "XAUUSD": _env_float("LOT_SIZE_XAUUSD", 0.02),
-    "US100": _env_float("LOT_SIZE_US100", 0.5),
+    "US100": _env_float("LOT_SIZE_US100", 0.02),
 }
 
 # Per-symbol spread limits (pips)
