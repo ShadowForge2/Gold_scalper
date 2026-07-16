@@ -187,7 +187,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                     const SizedBox(height: 2),
-                    Text('AI-Powered Gold Trading',
+                    Text('AI-Powered Forex Trading',
                       style: TextStyle(
                         fontSize: 11,
                         fontStyle: FontStyle.italic,
@@ -376,11 +376,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          _priceItem('BID', s.bid.toStringAsFixed(2), kTextPrimary),
+          _priceItem('BID', s.bid.toStringAsFixed(s.priceDecimals), kTextPrimary),
           _divider(),
-          _priceItem('ASK', s.ask.toStringAsFixed(2), kTextPrimary),
+          _priceItem('ASK', s.ask.toStringAsFixed(s.priceDecimals), kTextPrimary),
           _divider(),
-          _priceItem('SPREAD', s.spread.toStringAsFixed(1), kGold),
+          _priceItem('SPREAD', s.spread.toStringAsFixed(s.priceDecimals), kGold),
         ],
       ),
     );

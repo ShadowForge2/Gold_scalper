@@ -1,4 +1,4 @@
-"""Retrain ASP direction model (XGBoost, 5-year fast version)."""
+"""Retrain ASP direction model for US100 (XGBoost)."""
 import os, sys, time, warnings
 import numpy as np
 import pandas as pd
@@ -11,12 +11,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from app.dukascopy_client import DukascopyClient
 from app.asp_features import compute_asp_features, ASP_FEATURE_COLS
 
-client = DukascopyClient()
-MODEL_PATH = "models/asp_swing_xgb_m5.joblib"
-FEATURE_PATH = "models/asp_swing_m5_features.npy"
+SYMBOL = "US100"
+CACHE_DIR = "data/dukascopy_us100"
+client = DukascopyClient(symbol=SYMBOL, cache_dir=CACHE_DIR)
+MODEL_PATH = "models/asp_swing_xgb_m5_US100.joblib"
+FEATURE_PATH = "models/asp_swing_m5_features_US100.npy"
 
-TRAIN_YEARS = list(range(2017, 2022))
-TEST_YEARS = [2022, 2023, 2024, 2025]
+TRAIN_YEARS = list(range(2020, 2023))
+TEST_YEARS = [2023, 2024, 2025]
 FWD_BARS = 3
 ATR_MULT = 0.3
 
@@ -55,7 +57,7 @@ def make_labels(m5):
 def main():
     t0 = time.time()
     print("=" * 60)
-    print("  ASP Direction Model Training (XGBoost)")
+    print(f"  ASP Direction Model Training — {SYMBOL} (XGBoost)")
     print("=" * 60)
 
     print(f"\n[1] Loading training data ({TRAIN_YEARS[0]}-{TRAIN_YEARS[-1]})...")
@@ -90,7 +92,6 @@ def main():
 
     print(f"\n[3] Training...")
     t_train = time.time()
-    # XGBoost needs 0-based classes: -1->0, 1->1
     y_tr_enc = np.where(Y_tr == -1, 0, 1)
     y_val_enc = np.where(Y_val == -1, 0, 1)
     model = xgb.XGBClassifier(
@@ -114,23 +115,26 @@ def main():
     np.save(FEATURE_PATH, np.array(ASP_FEATURE_COLS))
     print(f"  Saved: {MODEL_PATH}")
 
-    print(f"\n[4] OOS (2022-2025)...")
+    print(f"\n[4] OOS ({TEST_YEARS[0]}-{TEST_YEARS[-1]})...")
     for y in TEST_YEARS:
         print(f"  {y}...", end=" ", flush=True)
-        m5, h1 = load_year(y)
-        feat = compute_asp_features(m5, h1)
-        lab = make_labels(m5)
-        valid = ~(np.isnan(feat.values).any(axis=1) | np.isinf(feat.values).any(axis=1))
-        valid &= lab != 0
-        vi = np.where(valid)[0]
-        X_t = feat.iloc[vi][ASP_FEATURE_COLS].values.astype(np.float32)
-        Y_t = lab[vi]
-        pred_enc = model.predict(X_t)
-        pred = np.where(pred_enc == 0, -1, 1)
-        acc_t = accuracy_score(Y_t, pred)
-        n_buy = (pred == 1).sum()
-        n_sell = (pred == -1).sum()
-        print(f"acc={acc_t:.3f} buy={n_buy} sell={n_sell}")
+        try:
+            m5, h1 = load_year(y)
+            feat = compute_asp_features(m5, h1)
+            lab = make_labels(m5)
+            valid = ~(np.isnan(feat.values).any(axis=1) | np.isinf(feat.values).any(axis=1))
+            valid &= lab != 0
+            vi = np.where(valid)[0]
+            X_t = feat.iloc[vi][ASP_FEATURE_COLS].values.astype(np.float32)
+            Y_t = lab[vi]
+            pred_enc = model.predict(X_t)
+            pred = np.where(pred_enc == 0, -1, 1)
+            acc_t = accuracy_score(Y_t, pred)
+            n_buy = (pred == 1).sum()
+            n_sell = (pred == -1).sum()
+            print(f"acc={acc_t:.3f} buy={n_buy} sell={n_sell}")
+        except Exception as e:
+            print(f"error: {e}")
 
     print(f"\nTotal: {time.time()-t0:.0f}s")
 

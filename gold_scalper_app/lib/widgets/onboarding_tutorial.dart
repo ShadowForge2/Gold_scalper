@@ -18,7 +18,7 @@ class _OnboardingTutorialState extends State<OnboardingTutorial> {
     _TutorialPage(
       icon: Icons.auto_awesome_rounded,
       title: 'QuantoraFX AI Trading Core',
-      body: 'Automate your XAUUSD trading with precision.\n\n'
+      body: 'Automate your Forex trading with precision.\n\n'
           'This quick guide will show you how to get started in 3 steps.',
       color: kGold,
     ),

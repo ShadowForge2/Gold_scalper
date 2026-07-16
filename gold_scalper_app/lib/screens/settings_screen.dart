@@ -209,8 +209,8 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
           delay: const Duration(milliseconds: 300),
           child: _buildSection('Info', [
             _infoTile('Broker', 'Capital.com'),
-            _infoTile('Symbol', 'XAUUSD'),
-            _infoTile('App', 'Gold Scalper v2.0'),
+            _infoTile('Symbol', context.watch<BotProvider>().state?.symbol ?? '--'),
+            _infoTile('App', 'Quantorafx v2.0.0'),
           ]),
         ),
         const SizedBox(height: 16),
@@ -433,7 +433,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
         children: [
           StatusIndicator(active: true, label: 'Ready', size: 14),
           SizedBox(height: 12),
-          Text('Gold Scalper v2.0',
+          Text('Quantorafx v2.0.0',
               style: TextStyle(color: kTextSecondary, fontSize: 13)),
           Text('Multi-User | Capital.com',
               style: TextStyle(color: kTextSecondary, fontSize: 11)),

@@ -998,6 +998,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         if not token:
             return {"success": False}
         from datetime import datetime
+        from app import database as db_mod
         await db_mod.database.execute(
             """INSERT INTO fcm_tokens (device_id, fcm_token, updated_at)
                VALUES (:did, :token, :ua)

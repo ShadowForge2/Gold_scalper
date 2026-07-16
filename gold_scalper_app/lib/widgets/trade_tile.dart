@@ -37,6 +37,20 @@ class TradeTile extends StatelessWidget {
                     style: TextStyle(color: dirColor, fontWeight: FontWeight.bold, fontSize: 12),
                   ),
                 ),
+                if (trade.symbol.isNotEmpty) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      trade.symbol,
+                      style: const TextStyle(color: kTextSecondary, fontSize: 10, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
                 const SizedBox(width: 8),
                 Text(trade.id, style: const TextStyle(color: kTextSecondary, fontSize: 11)),
                 const Spacer(),
@@ -49,9 +63,9 @@ class TradeTile extends StatelessWidget {
             const SizedBox(height: 8),
             Row(
               children: [
-                _info('Entry', '\$${trade.entryPrice.toStringAsFixed(2)}'),
+                _info('Entry', '\$${trade.entryPrice.toStringAsFixed(trade.priceDecimals)}'),
                 const SizedBox(width: 16),
-                _info('Exit', trade.exitPrice != null ? '\$${trade.exitPrice!.toStringAsFixed(2)}' : 'Open'),
+                _info('Exit', trade.exitPrice != null ? '\$${trade.exitPrice!.toStringAsFixed(trade.priceDecimals)}' : 'Open'),
                 const SizedBox(width: 16),
                 _info('Score', trade.score.toStringAsFixed(3)),
                 const Spacer(),

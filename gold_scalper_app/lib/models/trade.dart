@@ -12,6 +12,7 @@ class Trade {
   final double score;
   final String exitReason;
   final double balance;
+  final String symbol;
 
   Trade({
     required this.id,
@@ -27,10 +28,17 @@ class Trade {
     required this.score,
     this.exitReason = '',
     required this.balance,
+    this.symbol = '',
   });
 
   bool get isWin => pnl > 0;
   bool get isOpen => exitTime == null;
+  int get priceDecimals {
+    final s = symbol.toUpperCase();
+    if (s.contains('US100') || s.contains('NASD') || s.contains('NAS')) return 1;
+    if (s.contains('XAU') || s.contains('GOLD')) return 2;
+    return entryPrice > 10000 ? 1 : 2;
+  }
   int get barsHeld => exitTime != null
       ? exitTime!.difference(entryTime).inMinutes ~/ 5
       : 0;
@@ -55,6 +63,7 @@ class Trade {
       score: (json['score'] ?? json['entry_score'] ?? 0).toDouble(),
       exitReason: json['exit_reason'] ?? '',
       balance: (json['balance'] ?? 0).toDouble(),
+      symbol: json['symbol'] ?? '',
     );
   }
 }

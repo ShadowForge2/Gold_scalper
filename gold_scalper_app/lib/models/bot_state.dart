@@ -31,6 +31,12 @@ class BotState {
 
   double get spread => ask - bid;
   bool get isTradeable => bias == "BULLISH" || bias == "BEARISH";
+  int get priceDecimals {
+    final s = symbol.toUpperCase();
+    if (s.contains('US100') || s.contains('NASD') || s.contains('NAS')) return 1;
+    if (s.contains('XAU') || s.contains('GOLD')) return 2;
+    return bid > 10000 ? 1 : 2;
+  }
 
   factory BotState.fromJson(Map<String, dynamic> json) {
     return BotState(
@@ -38,7 +44,7 @@ class BotState {
       state: json['state'] ?? 'IDLE',
       connected: json['connected'] ?? false,
       broker: json['broker'] ?? '',
-      symbol: json['symbol'] ?? 'XAUUSD',
+      symbol: json['symbol'] ?? '--',
       balance: (json['balance'] ?? 0).toDouble(),
       dailyPnl: (json['daily_pnl'] ?? 0).toDouble(),
       bid: (json['bid'] ?? 0).toDouble(),
@@ -64,7 +70,7 @@ class BotState {
       state: bot['state'] ?? (isRunning ? 'AWAITING_SIGNAL' : 'IDLE'),
       connected: !hasError,
       broker: 'Capital.com',
-      symbol: bot['symbol'] ?? 'XAUUSD',
+      symbol: bot['symbol'] ?? '--',
       balance: (account['balance'] ?? 0).toDouble(),
       dailyPnl: (positions['daily_pnl'] ?? 0).toDouble(),
       bid: (account['bid'] ?? 0).toDouble(),
