@@ -47,6 +47,7 @@ class Bot:
         self._symbol_engines: Dict[str, SignalEngine] = {}
         self._symbol_states: Dict[str, str] = {}
         self._symbol_signals: Dict[str, Optional[Dict]] = {}
+        self._symbol_event_start_ts: Dict[str, Optional[float]] = {}
 
         # Load per-symbol models and signal engines
         for sym in self.symbols:
@@ -87,6 +88,7 @@ class Bot:
             self._symbol_engines[sym] = engine
             self._symbol_states[sym] = self.STATES["IDLE"]
             self._symbol_signals[sym] = None
+            self._symbol_event_start_ts[sym] = None
 
         # Legacy single-symbol references (use first symbol for backward compat)
         first_sym = self.symbols[0] if self.symbols else cfg.SYMBOL
@@ -207,8 +209,12 @@ class Bot:
                         f"Bot waiting for funds..."
                     )
                     self.state = self.STATES["WAITING_FOR_FUNDS"]
+                    for sym in self.symbols:
+                        self._symbol_states[sym] = self.STATES["WAITING_FOR_FUNDS"]
                 else:
                     self.state = self.STATES["IDLE"]
+                    for sym in self.symbols:
+                        self._symbol_states[sym] = self.STATES["IDLE"]
             else:
                 self.state = self.STATES["IDLE"]
             return True
@@ -241,17 +247,25 @@ class Bot:
                 if info["balance"] < cfg.MIN_BALANCE:
                     self.logger.warning(f"Balance ${info['balance']:.2f} below minimum ${cfg.MIN_BALANCE:.2f}")
                     self.state = self.STATES["WAITING_FOR_FUNDS"]
+                    for sym in self.symbols:
+                        self._symbol_states[sym] = self.STATES["WAITING_FOR_FUNDS"]
                 else:
                     self.state = self.STATES["IDLE"]
+                    for sym in self.symbols:
+                        self._symbol_states[sym] = self.STATES["IDLE"]
                 self._write_state()
                 return True
             self.state = self.STATES["IDLE"]
+            for sym in self.symbols:
+                self._symbol_states[sym] = self.STATES["IDLE"]
             self._write_state()
             return True
         else:
             err = self.client.last_error()
             self.logger.error(f"Authentication failed: {err}")
             self.state = self.STATES["STOPPED"]
+            for sym in self.symbols:
+                self._symbol_states[sym] = self.STATES["STOPPED"]
             return False
 
     async def shutdown(self, grace_period: float = 25.0):
@@ -298,19 +312,6 @@ class Bot:
     async def _tick(self):
         pnl_data = self.position_manager.refresh(symbols=self.symbols)
         self.risk_manager.daily_pnl = pnl_data["daily_pnl"]
-
-        if pnl_data["open_count"] > 0 and self.state not in (
-            self.STATES["IN_TRADE"],
-            self.STATES["STOPPED"],
-        ):
-            self.logger.info(
-                f"Recovered {pnl_data['open_count']} open position(s) "
-                f"(PnL=${pnl_data['event_pnl']:.2f}). Resuming management."
-            )
-            self.state = self.STATES["IN_TRADE"]
-            if not getattr(self.position_manager, '_event_start_ts', None):
-                # Best-effort: can't backdate without position age, so use discovery time
-                self.position_manager._event_start_ts = time.time()
 
         if self.state == self.STATES["STOPPED"]:
             return
@@ -368,46 +369,64 @@ class Bot:
                 self.state = self.STATES["WAITING_FOR_FUNDS"]
                 return
 
-        market_open = any(cfg.is_market_open_for_symbol(sym) for sym in self.symbols)
-        if market_open and self.state != self.STATES["MARKET_CLOSED"]:
-            dyn = self._check_market_dynamic()
-            if dyn is not None:
-                market_open = dyn
-
-        if not market_open:
-            if self.state == self.STATES["IN_TRADE"]:
-                self.logger.info("Market closed, managing open positions only")
-            elif self.state != self.STATES["MARKET_CLOSED"]:
-                self.logger.info("Market closed, pausing until reopen")
-                self.state = self.STATES["MARKET_CLOSED"]
-                self._last_market_status_check = 0.0
-                return
-            else:
-                return
-        elif self.state == self.STATES["MARKET_CLOSED"]:
-            dyn = self._check_market_dynamic()
-            if dyn is None:
-                if market_open:
-                    self.logger.info("Market reopened, resuming normal operation")
-                    self.state = self.STATES["IDLE"]
-                else:
-                    return
-            elif dyn:
-                self.logger.info("Market reopened, resuming normal operation")
-                self.state = self.STATES["IDLE"]
-            else:
-                return
-
         self._update_news_state()
 
-        if self.state == self.STATES["IN_TRADE"]:
-            await self._handle_in_trade(pnl_data)
-        elif self.state == self.STATES["WAITING_FOR_FUNDS"]:
-            await self._handle_waiting_for_funds()
-        else:
-            await self._handle_search(pnl_data)
+        for sym in self.symbols:
+            await self._tick_symbol(sym, pnl_data)
 
         self._write_state()
+
+    async def _tick_symbol(self, sym: str, pnl_data: Dict):
+        state = self._symbol_states[sym]
+
+        if state == self.STATES["STOPPED"]:
+            return
+
+        sym_open = any(
+            p.get("_symbol_code") == sym
+            for p in pnl_data.get("positions", [])
+        )
+
+        if sym_open and state not in (self.STATES["IN_TRADE"], self.STATES["STOPPED"]):
+            self.logger.info(f"[{sym}] Recovered open position(s), resuming management")
+            self._symbol_states[sym] = self.STATES["IN_TRADE"]
+            if not self._symbol_event_start_ts.get(sym):
+                self._symbol_event_start_ts[sym] = time.time()
+
+        market_open = cfg.is_market_open_for_symbol(sym)
+        if market_open and state != self.STATES["MARKET_CLOSED"]:
+            info = self.client.get_symbol_info(sym)
+            if info is not None:
+                market_open = info.get("market_status") == "TRADEABLE"
+
+        if not market_open:
+            if state == self.STATES["IN_TRADE"]:
+                self.logger.info(f"[{sym}] Market closed, managing open positions only")
+            elif state != self.STATES["MARKET_CLOSED"]:
+                self.logger.info(f"[{sym}] Market closed, pausing until reopen")
+                self._symbol_states[sym] = self.STATES["MARKET_CLOSED"]
+                self._last_market_status_check = 0.0
+            return
+        elif state == self.STATES["MARKET_CLOSED"]:
+            info = self.client.get_symbol_info(sym)
+            if info is not None and info.get("market_status") == "TRADEABLE":
+                self.logger.info(f"[{sym}] Market reopened, resuming normal operation")
+                self._symbol_states[sym] = self.STATES["IDLE"]
+            return
+
+        if self._winding_down:
+            return
+
+        if self.news_state is not None and self.news_state.should_block_entry():
+            return
+
+        state = self._symbol_states[sym]
+        if state == self.STATES["IN_TRADE"]:
+            await self._handle_in_trade(sym, pnl_data)
+        elif state == self.STATES["WAITING_FOR_FUNDS"]:
+            await self._handle_waiting_for_funds(sym)
+        else:
+            await self._search_symbol(sym, pnl_data)
 
     def _update_news_state(self):
         if self.news_state is None:
@@ -552,38 +571,34 @@ class Bot:
             f"threshold={fmt_num(context.get('threshold', 0.75), 3)}"
         )
 
-    async def _handle_in_trade(self, pnl_data: Dict):
-        if pnl_data["open_count"] == 0:
-            if getattr(self.position_manager, "_event_start_ts", None) is not None and time.time() - self.position_manager._event_start_ts < 10:
-                self.logger.debug("Waiting for positions to appear (API delay grace period)")
+    async def _handle_in_trade(self, sym: str, pnl_data: Dict):
+        sym_positions = [p for p in pnl_data.get("positions", []) if p.get("_symbol_code") == sym]
+
+        if not sym_positions:
+            event_ts = self._symbol_event_start_ts.get(sym)
+            if event_ts is not None and time.time() - event_ts < 10:
+                self.logger.debug(f"[{sym}] Waiting for positions to appear (API delay grace period)")
                 return
-            self.state = self.STATES["IDLE"]
+            self._symbol_states[sym] = self.STATES["IDLE"]
+            self._symbol_event_start_ts[sym] = None
             return
 
         acct = self.client.get_account_info()
         balance = acct.get("balance", 0) if acct else 0
 
-        event_ok, event_msg = self.risk_manager.check_event_loss(
-            pnl_data["event_pnl"]
-        )
+        event_pnl = sum(p.get("profit", 0) for p in sym_positions)
+        event_ok, event_msg = self.risk_manager.check_event_loss(event_pnl)
         if not event_ok:
-            self.logger.warning(f"Event stop: {event_msg}")
-            closed = self.trade_executor.close_all_bot_positions()
+            self.logger.warning(f"[{sym}] Event stop: {event_msg}")
+            closed = self.trade_executor.close_all_bot_positions(symbol=sym)
             for pos_data in closed:
                 self.position_manager.note_closed(pos_data)
-            self.state = self.STATES["IDLE"]
+            self._symbol_states[sym] = self.STATES["IDLE"]
+            self._symbol_event_start_ts[sym] = None
             return
 
-        positions = self.position_manager.summary().get("positions", [])
-        if not positions:
-            return
-
-        for pos in positions:
-            pos_sym = pos.get("symbol", "")
-            if not pos_sym:
-                continue
-
-            m1_data = self.client.get_rates(pos_sym, cfg.SIGNAL_TIMEFRAME, 20)
+        for pos in sym_positions:
+            m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, 20)
             if m1_data is None:
                 continue
 
@@ -593,18 +608,17 @@ class Bot:
             entry_price = pos.get("price_open", 0)
             current_px = pos.get("current_price", entry_price)
 
-            pos_signal = self._symbol_signals.get(pos_sym)
+            pos_signal = self._symbol_signals.get(sym)
             is_asp = pos_signal and pos_signal.get("asp_model")
             if is_asp:
                 asp_sl = pos_signal.get("sl")
                 asp_tp = pos_signal.get("tp1")
                 atr_val = pos_signal.get("atr_value", 0)
-                event_start = getattr(self.position_manager, '_event_start_ts', None)
+                event_start = self._symbol_event_start_ts.get(sym)
                 bars_held = max(0, int((time.time() - event_start) / (cfg.EXIT_CHECK_INTERVAL or 300))) if event_start else 0
 
-                # Trailing stop logic
                 if getattr(cfg, "ASP_TRAILING_ENABLED", False) and atr_val > 0:
-                    best_key = f"_best_price_{pos_sym}"
+                    best_key = f"_best_price_{sym}"
                     if not hasattr(self, best_key):
                         setattr(self, best_key, entry_price)
                     best = getattr(self, best_key)
@@ -650,27 +664,28 @@ class Bot:
                     exit_reason = f"asp_timeout_{bars_held}bars"
 
                 if should_exit:
-                    self.logger.signal(f"[{pos_sym}] ASP exit: {exit_reason} | dir={direction} entry={entry_price:.2f} px={current_px:.2f} sl={asp_sl:.2f}")
-                    closed = self.trade_executor.close_all_bot_positions()
+                    self.logger.signal(f"[{sym}] ASP exit: {exit_reason} | dir={direction} entry={entry_price:.2f} px={current_px:.2f} sl={asp_sl:.2f}")
+                    closed = self.trade_executor.close_all_bot_positions(symbol=sym)
                     for pos_data in closed:
                         self.position_manager.note_closed(pos_data)
-                    self.state = self.STATES["IDLE"]
+                    self._symbol_states[sym] = self.STATES["IDLE"]
+                    self._symbol_event_start_ts[sym] = None
                     return
 
-        event_start = getattr(self.position_manager, '_event_start_ts', None)
+        event_start = self._symbol_event_start_ts.get(sym)
         bars_since_entry = max(0, int((time.time() - event_start) / (cfg.EXIT_CHECK_INTERVAL or 300))) if event_start else 0
-
         if bars_since_entry >= cfg.ASP_TIMEOUT_BARS:
             self.logger.signal(
-                f"Timeout exit: held {bars_since_entry} bars without SL/TP hit"
+                f"[{sym}] Timeout exit: held {bars_since_entry} bars without SL/TP hit"
             )
-            closed = self.trade_executor.close_all_bot_positions()
+            closed = self.trade_executor.close_all_bot_positions(symbol=sym)
             for pos_data in closed:
                 self.position_manager.note_closed(pos_data)
-            self.state = self.STATES["IDLE"]
+            self._symbol_states[sym] = self.STATES["IDLE"]
+            self._symbol_event_start_ts[sym] = None
             return
 
-    async def _handle_waiting_for_funds(self):
+    async def _handle_waiting_for_funds(self, sym: str = None):
         info = self.client.get_account_info()
         if info and info["balance"] >= cfg.MIN_BALANCE:
             self.scaler.update_peak(info["balance"])
@@ -680,36 +695,38 @@ class Bot:
                 f"Funds detected: ${info['balance']:.2f}. Starting bot."
             )
             self.state = self.STATES["IDLE"]
+            if sym:
+                self._symbol_states[sym] = self.STATES["IDLE"]
 
     async def _execute_entry(self, signal: Dict, symbol_info: Dict, symbol: str = None):
         sym = symbol or self.symbol
-        self.state = self.STATES["ENTERING"]
+        self._symbol_states[sym] = self.STATES["ENTERING"]
         direction = signal["direction"]
         score = signal["score"]
 
         fresh_info = self.client.get_symbol_info(sym)
         if fresh_info is None:
             self.logger.warning(f"[{sym}] Entry blocked: cannot fetch symbol info")
-            self.state = self.STATES["IDLE"]
+            self._symbol_states[sym] = self.STATES["IDLE"]
             return
 
         if fresh_info.get("market_status") != "TRADEABLE":
             self.logger.warning(f"[{sym}] Entry blocked: market {fresh_info.get('market_status')}, pausing")
-            self.state = self.STATES["MARKET_CLOSED"]
+            self._symbol_states[sym] = self.STATES["MARKET_CLOSED"]
             self._last_market_status_check = 0.0
             return
 
         account = self.client.get_account_info()
         if account is None:
             self.logger.warning(f"[{sym}] Entry blocked: cannot fetch account info")
-            self.state = self.STATES["IDLE"]
+            self._symbol_states[sym] = self.STATES["IDLE"]
             return
         balance = account.get("balance", 0)
         if balance < cfg.MIN_BALANCE:
             self.logger.warning(
                 f"[{sym}] Entry blocked: balance ${balance:.2f} below minimum ${cfg.MIN_BALANCE:.2f}"
             )
-            self.state = self.STATES["WAITING_FOR_FUNDS"]
+            self._symbol_states[sym] = self.STATES["WAITING_FOR_FUNDS"]
             return
 
         self.scaler.update_peak(balance)
@@ -737,7 +754,7 @@ class Bot:
                 f"from signal price ${signal_price:.2f} to ${current_price:.2f} "
                 f"(max drift ${max_drift:.2f})"
             )
-            self.state = self.STATES["IDLE"]
+            self._symbol_states[sym] = self.STATES["IDLE"]
             return
 
         margin_rate = fresh_info.get("margin_rate", 0.05)
@@ -761,8 +778,10 @@ class Bot:
                     f"[{sym}] Entry blocked: insufficient margin "
                     f"(est ${single_margin:.2f} needed, ${free_margin:.2f} available)"
                 )
-                self.state = self.STATES["IDLE"]
+                self._symbol_states[sym] = self.STATES["IDLE"]
                 return
+
+        ml_conf = signal.get("ml_confidence", signal.get("score", 0))
 
         self.logger.info(
             f"[{sym}] Entry: {direction} | score={score:.2f} | "
@@ -771,7 +790,8 @@ class Bot:
             f"max_trades={max_trades} | drift={drift_pct:.3f}% | "
             f"margin=${free_margin:.2f} | "
             f"tier={self.scaler._tier(balance)} "
-            f"({self.scaler.growth_pct(balance):.1f}% growth)"
+            f"({self.scaler.growth_pct(balance):.1f}% growth) | "
+            f"ML conf={ml_conf:.2f}"
         )
 
         any_opened = False
@@ -802,7 +822,7 @@ class Bot:
                         pass
                 if "currently closed" in err_detail.lower():
                     self.logger.info(f"[{sym}] Market closed detected, pausing until reopen")
-                    self.state = self.STATES["MARKET_CLOSED"]
+                    self._symbol_states[sym] = self.STATES["MARKET_CLOSED"]
                     return
                 break
 
@@ -811,17 +831,15 @@ class Bot:
             self.scaler.update_peak(fresh_acct["balance"])
         self.position_manager.refresh()
 
-        if self.position_manager.in_event or any_opened:
-            self.state = self.STATES["IN_TRADE"]
-            if any_opened:
-                self.position_manager._event_start_ts = time.time()
-            open_cnt = self.position_manager.open_count or max_trades
+        if any_opened:
+            self._symbol_states[sym] = self.STATES["IN_TRADE"]
+            self._symbol_event_start_ts[sym] = time.time()
             self.logger.info(
-                f"[{sym}] Entered {direction} with {open_cnt} position(s) "
+                f"[{sym}] Entered {direction} with {max_trades} position(s) "
                 f"(ML conf={ml_conf:.2f})"
             )
         else:
-            self.state = self.STATES["IDLE"]
+            self._symbol_states[sym] = self.STATES["IDLE"]
 
     def _write_state(self):
         if not self._state_file:
@@ -859,6 +877,7 @@ class Bot:
         return {
             "state": self.state,
             "symbol": self.symbol,
+            "symbol_states": dict(self._symbol_states),
             "magic": self.magic,
             "signal": signal,
             "news": news,
@@ -873,26 +892,36 @@ class Bot:
         if self.state == self.STATES["STOPPED"]:
             self.risk_manager.record_daily_pnl_reset()
         self.state = self.STATES["IDLE"]
+        for sym in self.symbols:
+            self._symbol_states[sym] = self.STATES["IDLE"]
         self.logger.info("Bot manually started")
 
     def stop(self):
         self.state = self.STATES["STOPPED"]
+        for sym in self.symbols:
+            self._symbol_states[sym] = self.STATES["STOPPED"]
         self.logger.warning("Bot manually stopped")
 
     async def emergency_close(self):
         self.logger.warning("Emergency close triggered")
-        closed = self.trade_executor.close_all_bot_positions()
-        for pos_data in closed:
-            self.position_manager.note_closed(pos_data)
+        total = 0
+        for sym in self.symbols:
+            closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+            for pos_data in closed:
+                self.position_manager.note_closed(pos_data)
+            total += len(closed)
+            if closed:
+                self._symbol_states[sym] = self.STATES["IDLE"]
+                self._symbol_event_start_ts[sym] = None
         self.position_manager.refresh()
         await self._notify(
             "trade_close",
             "Emergency Close",
-            f"Closed {len(closed)} position(s) manually",
-            {"count": len(closed), "reason": "emergency"},
+            f"Closed {total} position(s) manually",
+            {"count": total, "reason": "emergency"},
         )
         self.state = self.STATES["IDLE"]
-        return len(closed)
+        return total
 
     def update_settings(self, settings: Dict):
         clamped = {}
@@ -919,6 +948,8 @@ class Bot:
             if info:
                 self.scaler.initialize(info["balance"])
                 self.state = self.STATES["IDLE"]
+                for sym in self.symbols:
+                    self._symbol_states[sym] = self.STATES["IDLE"]
                 self.logger.info(f"Reconnected: {info['name']} | Balance: ${info['balance']:.2f} | Leverage: 1:{info['leverage']}")
                 return {"success": True, "account": info}
         err = self.client.last_error()

@@ -200,3 +200,37 @@ Scenario C preserves 98.5% of baseline profit vs B's 90.9%. Override trades shou
 - MaxelPay: init → user pays → server-to-server callback (no race condition)
 - Demo: no subscription checks, runs free
 - Live: trial → 15% of profit per 30-day period → must pay to continue
+
+### Session 2026-07-16: Multi-Symbol Race Condition Fix (Per-Symbol State Machine)
+
+**Discovered**: US100 trade opened but bot couldn't close it (user closed manually). Gold opened immediately after manual close, confirming Gold signal was blocked while US100 was in trade.
+
+**Root causes (8 bugs)**:
+
+| # | Severity | Bug | Impact |
+|---|---|---|---|
+| 1 | CRITICAL | Single `self.state` shared across XAUUSD & US100 | When US100 enters, state=IN_TRADE blocks Gold search. When US100 exits, Gold loses its state. |
+| 2 | CRITICAL | `close_all_bot_positions()` used `cfg.SYMBOL` (XAUUSD only) | US100 positions **never closed** by bot — ASP timeout, event loss, all exit paths failed |
+| 3 | CRITICAL | Shared `_event_start_ts` across symbols | US100 entry timestamp used for Gold timeout — Gold exits prematurely |
+| 4 | HIGH | `_symbol_signals` keyed by internal code but position `symbol` field = instrumentName | ASP exit logic never triggered (key mismatch) |
+| 5 | HIGH | Event PnL mixed both symbols | US100 loss could trigger event loss limit, closing profitable Gold |
+| 6 | HIGH | `_current_signal` overwritten per symbol | Dashboard shows wrong signal data |
+| 7 | MEDIUM | Market status check shared | One symbol's market check cached for other |
+| 8 | LOW | `_handle_waiting_for_funds` didn't know which symbol | All symbols forced to WAITING_FUNDS |
+
+**Fix** (3 files):
+
+1. **`trade_executor.py:54`** — `close_all_bot_positions(symbol=None)` now accepts optional symbol param, filters by it
+2. **`position_manager.py:43-46`** — `refresh()` now tags each position with `_symbol_code` (internal code like "XAUUSD") so exit logic can match positions to symbols
+3. **`bot.py`** — Full rewrite of state machine to per-symbol:
+   - Added `_symbol_event_start_ts: Dict[str, Optional[float]]` — per-symbol entry timestamps
+   - Added `_tick_symbol(sym, pnl_data)` — per-symbol state dispatch
+   - Rewrote `_handle_in_trade(sym, pnl_data)` — filters positions by `_symbol_code`, checks ASP exit per-symbol, closes per-symbol
+   - Rewrote `_execute_entry()` — uses `self._symbol_states[sym]` instead of `self.state`
+   - All `close_all_bot_positions()` callers now pass `symbol=sym`
+   - `start()`, `stop()`, `emergency_close()`, `login()`, `initialize*()` all update per-symbol states
+   - Fixed pre-existing `ml_conf` NameError in `_execute_entry` log message
+
+**Result**: XAUUSD and US100 now have independent state machines. Gold can trade while US100 is in trade. US100 positions can be closed by ASP exit logic. No more cross-symbol interference.
+
+**Relevant files**: `app/bot.py`, `app/trade_executor.py`, `app/position_manager.py`

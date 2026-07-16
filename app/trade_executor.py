@@ -51,15 +51,15 @@ class TradeExecutor:
             self.logger.error(f"Exception closing position {ticket}: {e}")
             return False
 
-    def close_all_bot_positions(self) -> List[Dict]:
-        positions = self.client.get_positions(symbol=cfg.SYMBOL) or []
+    def close_all_bot_positions(self, symbol: Optional[str] = None) -> List[Dict]:
+        positions = self.client.get_positions(symbol=symbol or cfg.SYMBOL) or []
         closed = []
         for pos in positions:
             ticket = pos.get("ticket")
             if ticket and self.close_position(ticket):
                 closed.append(pos)
         if closed:
-            self.logger.info(f"Closed {len(closed)} bot position(s)")
+            self.logger.info(f"Closed {len(closed)} bot position(s) for {symbol or cfg.SYMBOL}")
         return closed
 
     def close_all_positions(self, symbol: Optional[str] = None) -> int:

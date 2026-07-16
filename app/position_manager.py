@@ -43,6 +43,8 @@ class PositionManager:
         all_positions = []
         for sym in syms:
             raw_positions = self.client.get_positions(symbol=sym) or []
+            for p in raw_positions:
+                p["_symbol_code"] = sym
             all_positions.extend(raw_positions)
         now = time.time()
         cutoff = now - 30.0
