@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, List
 
 import config as cfg
@@ -371,7 +371,7 @@ class Bot:
                 self.state = self.STATES["WAITING_FOR_FUNDS"]
                 return
 
-        self._update_news_state()
+        await self._update_news_state()
 
         for sym in self.symbols:
             await self._tick_symbol(sym, pnl_data)
@@ -419,9 +419,6 @@ class Bot:
         if self._winding_down:
             return
 
-        if self.news_state is not None and self.news_state.should_block_entry():
-            return
-
         state = self._symbol_states[sym]
         if state == self.STATES["IN_TRADE"]:
             await self._handle_in_trade(sym, pnl_data)
@@ -430,7 +427,7 @@ class Bot:
         else:
             await self._search_symbol(sym, pnl_data)
 
-    def _update_news_state(self):
+    async def _update_news_state(self):
         if self.news_state is None:
             return
         try:
@@ -439,6 +436,31 @@ class Bot:
             if state != prev:
                 self.logger.info(f"[NEWS] State: {state}")
                 self._prev_news_state = state
+                info = self.news_state.get_state_info()
+                event = info.get("last_event")
+                event_title = event.get("title", "Unknown") if event else None
+                if state == "PRE_NEWS" and event_title:
+                    mins_until = int((event['datetime'] - datetime.now(timezone.utc)).total_seconds() / 60)
+                    await self._notify(
+                        "news_alert",
+                        "News Alert",
+                        f"{event_title} in ~{mins_until} min — bot continues trading normally",
+                        {"state": state, "event": event_title},
+                    )
+                elif state == "SPIKE":
+                    await self._notify(
+                        "news_alert",
+                        "Volatility Spike",
+                        f"High volatility detected ({'event' if event_title else 'unknown cause'}) — bot continues trading normally",
+                        {"state": state, "event": event_title},
+                    )
+                elif state == "POST_NEWS" and event_title:
+                    await self._notify(
+                        "news_alert",
+                        "Post-News Window",
+                        f"{event_title} passed — elevated volatility possible for ~60 min",
+                        {"state": state, "event": event_title},
+                    )
         except Exception as e:
             self.logger.debug(f"[NEWS] State update failed: {e}")
 
@@ -479,9 +501,6 @@ class Bot:
 
         symbol_info = self.client.get_symbol_info(sym)
         if symbol_info is None:
-            return
-
-        if self.news_state is not None and self.news_state.should_block_entry():
             return
 
         current_price = symbol_info.get("ask", 0)
