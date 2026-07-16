@@ -74,9 +74,9 @@ services:
       - key: ASP_ENABLED
         value: "true"
       - key: ASP_TIMEOUT_BARS_XAUUSD
-        value: "24"
+        value: "10"
       - key: ASP_TIMEOUT_BARS_US100
-        value: "24"
+        value: "10"
       - key: ASP_SL_ATR_MULTIPLIER
         value: "2.0"
       - key: ASP_TP_ATR_MULTIPLIER
