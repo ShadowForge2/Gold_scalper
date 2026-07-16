@@ -134,6 +134,12 @@ SYMBOL_MAX_SPREAD = {
     "US100": _env_float("MAX_SPREAD_PIPS_US100", 50.0),
 }
 
+# Per-symbol ASP timeout (in M5 bars; 24 = 2 hours)
+SYMBOL_ASP_TIMEOUT_BARS = {
+    "XAUUSD": _env_int("ASP_TIMEOUT_BARS_XAUUSD", 24),
+    "US100": _env_int("ASP_TIMEOUT_BARS_US100", 24),
+}
+
 # Adaptive confirmation
 ADAPTIVE_CONFIRMATION_ENABLED = _env_bool("ADAPTIVE_CONFIRMATION_ENABLED", True)
 ADAPTIVE_CONF_WINDOW = _env_int("ADAPTIVE_CONF_WINDOW", 200)

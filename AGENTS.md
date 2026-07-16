@@ -234,3 +234,62 @@ Scenario C preserves 98.5% of baseline profit vs B's 90.9%. Override trades shou
 **Result**: XAUUSD and US100 now have independent state machines. Gold can trade while US100 is in trade. US100 positions can be closed by ASP exit logic. No more cross-symbol interference.
 
 **Relevant files**: `app/bot.py`, `app/trade_executor.py`, `app/position_manager.py`
+
+### Session 2026-07-16b: Smart Timeout Exit Logic (Signal-Driven Exits)
+
+**Problem**: Old timeout was a blind 25-min (`ASP_TIMEOUT_BARS=5`) forced exit. ASP predicts H1-level reversals that take 1-4 hours to develop. US100 trade held manually 6+ hours successfully — but bot would have killed it at 25 min.
+
+**Root cause**: Timeout fired once → forced exit. No re-evaluation of whether the signal was still valid.
+
+**Fix** (4 files):
+
+1. **`bot.py:576-702`** — `_handle_in_trade()` rewritten with smart timeout:
+   - Timeout check moved **outside** `if is_asp:` block — always runs even if original signal data is lost
+   - On timeout: re-scans ASP via `engine.evaluate_asp_entry()` for same symbol
+   - Tracks `_symbol_exit_confirms[sym]`: consecutive same-direction re-scan confirmations
+   - Same-direction re-scan → `confirm_count += 1`, if ≥ 2 confirms → hold, reset timeout
+   - Different direction or no signal → `confirm_count = 0` → EXIT
+   - Removed old `for pos in sym_positions` loop (all positions share same signal, just use first)
+
+2. **`config.py:138-141`** — Per-symbol timeout config:
+   ```
+   SYMBOL_ASP_TIMEOUT_BARS = {
+       "XAUUSD": env("ASP_TIMEOUT_BARS_XAUUSD", 24),  # 24 bars × 5min = 2 hours
+       "US100": env("ASP_TIMEOUT_BARS_US100", 24),
+   }
+   ```
+   Old `ASP_TIMEOUT_BARS=5` (25 min) kept for backward compat but unused.
+
+3. **`render.yaml`, `render_env.json`** — Updated to `ASP_TIMEOUT_BARS_XAUUSD=24`, `ASP_TIMEOUT_BARS_US100=24`
+
+4. **`app/api.py:425`** — Config snapshot uses `cfg.SYMBOL_ASP_TIMEOUT_BARS`
+
+**How it works**:
+```
+Trade enters (BUY XAUUSD, ASP signal)
+  t=0:   bars_held=0, timeout_bars=24
+  t=60m: bars_held=12, still < 24 → continue
+  t=120m: bars_held=24 → timeout fires
+    → re-scan ASP → BUY signal → confirm_count=1 (hold, need ≥ 2)
+  t=125m: bars_held=25 → timeout fires
+    → re-scan ASP → BUY signal → confirm_count=2 → reset timeout, hold
+  ...
+  t=180m: bars_held=12 (reset) → timeout fires
+    → re-scan ASP → SELL signal → confirm_count=0 → EXIT (signal reversed)
+```
+
+**Result**: Trades stay open as long as ASP confirms the move. US100 overnight trade would have been held for hours instead of killed at 25 min. Noise signals (single re-scan mismatch) don't force premature exit — need ≥ 2 confirms.
+
+**Relevant files**: `app/bot.py`, `config.py`, `render.yaml`, `render_env.json`, `app/api.py`
+
+### Session 2026-07-16c: US100 Order Fails — Symbol Filter Missing in open_position
+
+**Symptoms**: US100 SELL order submits but returns "Order submitted but position not confirmed" every time. XAUUSD works fine.
+
+**Root cause**: `capital_client.py:open_position()` calls `get_positions()` without passing `symbol` param. `get_positions()` defaults to `cfg.SYMBOL` (XAUUSD), so:
+1. Opposing-position check only sees XAUUSD positions — misses existing US100 positions
+2. Confirmation poll (12s) only looks for XAUUSD epic — never sees the new US100 position → timeout
+
+**Fix** (`capital_client.py:571,590`): Both `get_positions()` calls in `open_position()` now pass `symbol=symbol` so they filter for the correct instrument.
+
+**Relevant files**: `app/capital_client.py`

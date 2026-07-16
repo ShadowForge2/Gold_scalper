@@ -48,6 +48,7 @@ class Bot:
         self._symbol_states: Dict[str, str] = {}
         self._symbol_signals: Dict[str, Optional[Dict]] = {}
         self._symbol_event_start_ts: Dict[str, Optional[float]] = {}
+        self._symbol_exit_confirms: Dict[str, int] = {}
 
         # Load per-symbol models and signal engines
         for sym in self.symbols:
@@ -89,6 +90,7 @@ class Bot:
             self._symbol_states[sym] = self.STATES["IDLE"]
             self._symbol_signals[sym] = None
             self._symbol_event_start_ts[sym] = None
+            self._symbol_exit_confirms[sym] = 0
 
         # Legacy single-symbol references (use first symbol for backward compat)
         first_sym = self.symbols[0] if self.symbols else cfg.SYMBOL
@@ -179,7 +181,7 @@ class Bot:
 
     async def initialize(self) -> bool:
         self.logger.info(f"Initializing {self.symbol} scalping bot (ASP-only mode)...")
-        self.logger.info(f"Config: ASP_TIMEOUT_BARS={cfg.ASP_TIMEOUT_BARS} LOT_MULTIPLIER={cfg.LOT_MULTIPLIER}")
+        self.logger.info(f"Config: ASP_TIMEOUT_BARS={cfg.SYMBOL_ASP_TIMEOUT_BARS} LOT_MULTIPLIER={cfg.LOT_MULTIPLIER}")
 
         self.logger.info("Broker: Capital.com (REST API)")
         self.client = CapitalClient()
@@ -581,6 +583,7 @@ class Bot:
                 return
             self._symbol_states[sym] = self.STATES["IDLE"]
             self._symbol_event_start_ts[sym] = None
+            self._symbol_exit_confirms[sym] = 0
             return
 
         acct = self.client.get_account_info()
@@ -595,95 +598,107 @@ class Bot:
                 self.position_manager.note_closed(pos_data)
             self._symbol_states[sym] = self.STATES["IDLE"]
             self._symbol_event_start_ts[sym] = None
+            self._symbol_exit_confirms[sym] = 0
             return
 
-        for pos in sym_positions:
-            m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, 20)
-            if m1_data is None:
-                continue
+        pos = sym_positions[0]
+        direction = pos.get("type", "BUY")
+        entry_price = pos.get("price_open", 0)
+        current_px = pos.get("current_price", entry_price)
+        event_start = self._symbol_event_start_ts.get(sym)
+        exit_interval = cfg.EXIT_CHECK_INTERVAL or 300
+        bars_held = max(0, int((time.time() - event_start) / exit_interval)) if event_start else 0
+        timeout_bars = cfg.SYMBOL_ASP_TIMEOUT_BARS.get(sym, 24)
 
-            self._feed_m5_volatility(m1_data)
+        pos_signal = self._symbol_signals.get(sym)
+        is_asp = pos_signal and pos_signal.get("asp_model")
 
-            direction = pos.get("type", "BUY")
-            entry_price = pos.get("price_open", 0)
-            current_px = pos.get("current_price", entry_price)
+        if is_asp:
+            asp_sl = pos_signal.get("sl")
+            asp_tp = pos_signal.get("tp1")
+            atr_val = pos_signal.get("atr_value", 0)
 
-            pos_signal = self._symbol_signals.get(sym)
-            is_asp = pos_signal and pos_signal.get("asp_model")
-            if is_asp:
-                asp_sl = pos_signal.get("sl")
-                asp_tp = pos_signal.get("tp1")
-                atr_val = pos_signal.get("atr_value", 0)
-                event_start = self._symbol_event_start_ts.get(sym)
-                bars_held = max(0, int((time.time() - event_start) / (cfg.EXIT_CHECK_INTERVAL or 300))) if event_start else 0
-
-                if getattr(cfg, "ASP_TRAILING_ENABLED", False) and atr_val > 0:
-                    best_key = f"_best_price_{sym}"
-                    if not hasattr(self, best_key):
-                        setattr(self, best_key, entry_price)
-                    best = getattr(self, best_key)
-
-                    if direction == "BUY":
-                        best = max(best, current_px)
-                        trigger = entry_price + atr_val * cfg.ASP_TRAILING_TRIGGER_ATR
-                        if best >= trigger:
-                            trail_sl = best - atr_val * cfg.ASP_TRAILING_RETRACE_ATR
-                            if trail_sl > asp_sl:
-                                asp_sl = trail_sl
-                                pos_signal["sl"] = asp_sl
-                    else:
-                        best = min(best, current_px)
-                        trigger = entry_price - atr_val * cfg.ASP_TRAILING_TRIGGER_ATR
-                        if best <= trigger:
-                            trail_sl = best + atr_val * cfg.ASP_TRAILING_RETRACE_ATR
-                            if trail_sl < asp_sl:
-                                asp_sl = trail_sl
-                                pos_signal["sl"] = asp_sl
-                    setattr(self, best_key, best)
-
-                should_exit = False
-                exit_reason = ""
+            if getattr(cfg, "ASP_TRAILING_ENABLED", False) and atr_val > 0:
+                best_key = f"_best_price_{sym}"
+                if not hasattr(self, best_key):
+                    setattr(self, best_key, entry_price)
+                best = getattr(self, best_key)
 
                 if direction == "BUY":
-                    if asp_sl and current_px <= asp_sl:
-                        should_exit = True
-                        exit_reason = "asp_trail_sl" if getattr(cfg, "ASP_TRAILING_ENABLED", False) else "asp_sl_hit"
-                    elif asp_tp and current_px >= asp_tp:
-                        should_exit = True
-                        exit_reason = "asp_tp_hit"
+                    best = max(best, current_px)
+                    trigger = entry_price + atr_val * cfg.ASP_TRAILING_TRIGGER_ATR
+                    if best >= trigger:
+                        trail_sl = best - atr_val * cfg.ASP_TRAILING_RETRACE_ATR
+                        if trail_sl > asp_sl:
+                            asp_sl = trail_sl
+                            pos_signal["sl"] = asp_sl
                 else:
-                    if asp_sl and current_px >= asp_sl:
-                        should_exit = True
-                        exit_reason = "asp_trail_sl" if getattr(cfg, "ASP_TRAILING_ENABLED", False) else "asp_sl_hit"
-                    elif asp_tp and current_px <= asp_tp:
-                        should_exit = True
-                        exit_reason = "asp_tp_hit"
+                    best = min(best, current_px)
+                    trigger = entry_price - atr_val * cfg.ASP_TRAILING_TRIGGER_ATR
+                    if best <= trigger:
+                        trail_sl = best + atr_val * cfg.ASP_TRAILING_RETRACE_ATR
+                        if trail_sl < asp_sl:
+                            asp_sl = trail_sl
+                            pos_signal["sl"] = asp_sl
+                setattr(self, best_key, best)
 
-                if not should_exit and bars_held >= cfg.ASP_TIMEOUT_BARS:
+            should_exit = False
+            exit_reason = ""
+
+            if direction == "BUY":
+                if asp_sl and current_px <= asp_sl:
                     should_exit = True
-                    exit_reason = f"asp_timeout_{bars_held}bars"
+                    exit_reason = "asp_trail_sl" if getattr(cfg, "ASP_TRAILING_ENABLED", False) else "asp_sl_hit"
+                elif asp_tp and current_px >= asp_tp:
+                    should_exit = True
+                    exit_reason = "asp_tp_hit"
+            else:
+                if asp_sl and current_px >= asp_sl:
+                    should_exit = True
+                    exit_reason = "asp_trail_sl" if getattr(cfg, "ASP_TRAILING_ENABLED", False) else "asp_sl_hit"
+                elif asp_tp and current_px <= asp_tp:
+                    should_exit = True
+                    exit_reason = "asp_tp_hit"
 
-                if should_exit:
-                    self.logger.signal(f"[{sym}] ASP exit: {exit_reason} | dir={direction} entry={entry_price:.2f} px={current_px:.2f} sl={asp_sl:.2f}")
-                    closed = self.trade_executor.close_all_bot_positions(symbol=sym)
-                    for pos_data in closed:
-                        self.position_manager.note_closed(pos_data)
-                    self._symbol_states[sym] = self.STATES["IDLE"]
-                    self._symbol_event_start_ts[sym] = None
-                    return
+            if should_exit:
+                self.logger.signal(f"[{sym}] ASP exit: {exit_reason} | dir={direction} entry={entry_price:.2f} px={current_px:.2f} sl={asp_sl:.2f}")
+                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                for pos_data in closed:
+                    self.position_manager.note_closed(pos_data)
+                self._symbol_states[sym] = self.STATES["IDLE"]
+                self._symbol_event_start_ts[sym] = None
+                self._symbol_exit_confirms[sym] = 0
+                return
 
-        event_start = self._symbol_event_start_ts.get(sym)
-        bars_since_entry = max(0, int((time.time() - event_start) / (cfg.EXIT_CHECK_INTERVAL or 300))) if event_start else 0
-        if bars_since_entry >= cfg.ASP_TIMEOUT_BARS:
-            self.logger.signal(
-                f"[{sym}] Timeout exit: held {bars_since_entry} bars without SL/TP hit"
-            )
-            closed = self.trade_executor.close_all_bot_positions(symbol=sym)
-            for pos_data in closed:
-                self.position_manager.note_closed(pos_data)
-            self._symbol_states[sym] = self.STATES["IDLE"]
-            self._symbol_event_start_ts[sym] = None
-            return
+        if bars_held >= timeout_bars:
+            engine = self._symbol_engines.get(sym)
+            m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, 20)
+            fresh_signal = None
+            if engine and m1_data is not None and len(m1_data) >= 10:
+                fresh_signal = engine.evaluate_asp_entry(m1_data, current_px)
+
+            fresh_dir = fresh_signal.get("direction") if fresh_signal else None
+            if fresh_dir == direction:
+                self._symbol_exit_confirms[sym] = self._symbol_exit_confirms.get(sym, 0) + 1
+                confirms = self._symbol_exit_confirms[sym]
+                self.logger.signal(
+                    f"[{sym}] Timeout hold: same-direction re-scan #{confirms} "
+                    f"(dir={direction} held {bars_held}bars, need ≥2 confirms)"
+                )
+                if confirms >= 2:
+                    self._symbol_event_start_ts[sym] = time.time()
+                    self._symbol_exit_confirms[sym] = 0
+                    self.logger.signal(f"[{sym}] Timeout reset: model confirms move still valid, extending")
+            else:
+                self._symbol_exit_confirms[sym] = 0
+                reason = f"asp_timeout_{bars_held}bars_reversal" if fresh_dir else f"asp_timeout_{bars_held}bars_no_signal"
+                self.logger.signal(f"[{sym}] Timeout exit: {reason} | dir={direction} entry={entry_price:.2f} px={current_px:.2f}")
+                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                for pos_data in closed:
+                    self.position_manager.note_closed(pos_data)
+                self._symbol_states[sym] = self.STATES["IDLE"]
+                self._symbol_event_start_ts[sym] = None
+                return
 
     async def _handle_waiting_for_funds(self, sym: str = None):
         info = self.client.get_account_info()
@@ -909,6 +924,7 @@ class Bot:
             if closed:
                 self._symbol_states[sym] = self.STATES["IDLE"]
                 self._symbol_event_start_ts[sym] = None
+                self._symbol_exit_confirms[sym] = 0
         self.position_manager.refresh()
         await self._notify(
             "trade_close",

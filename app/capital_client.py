@@ -568,7 +568,7 @@ class CapitalClient:
                             slippage: int = 30) -> Optional[str]:
         epic = self._resolve_epic(symbol)
         reference = str(magic) + ":" + comment if comment else str(magic)
-        positions = self.get_positions()
+        positions = self.get_positions(symbol=symbol)
         for p in positions:
             p_sym = p.get("symbol", "")
             p_epic = EPIC_MAP.get(p_sym, p_sym)
@@ -587,7 +587,7 @@ class CapitalClient:
             return None
         for _ in range(24):
             await asyncio.sleep(0.5)
-            fresh = self.get_positions()
+            fresh = self.get_positions(symbol=symbol)
             for p in fresh:
                 ticket = p.get("ticket")
                 if ticket and str(ticket) not in existing_tickets:
