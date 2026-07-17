@@ -405,6 +405,47 @@ class Bot:
             state = self.STATES["IN_TRADE"]
             if not self._symbol_event_start_ts.get(sym):
                 self._symbol_event_start_ts[sym] = time.time()
+            if not self._symbol_signals.get(sym):
+                sym_positions = [p for p in pnl_data.get("positions", []) if p.get("_symbol_code") == sym]
+                if sym_positions:
+                    pos = sym_positions[0]
+                    direction = pos.get("type", "BUY")
+                    entry_price = pos.get("price_open", 0)
+                    broker_sl = pos.get("sl", 0)
+                    broker_tp = pos.get("tp", 0)
+                    atr_val = 0.0
+                    try:
+                        m1_bars = getattr(cfg, 'ASP_M1_HISTORY_BARS', 300)
+                        m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, m1_bars)
+                        if m1_data is not None and len(m1_data) >= 20:
+                            engine = self._symbol_engines.get(sym)
+                            if engine:
+                                atr_val = engine._compute_atr_m5(m1_data, cfg.ATR_PERIOD)
+                    except Exception:
+                        pass
+                    if atr_val <= 0:
+                        atr_val = entry_price * 0.001
+                    sl_dist = atr_val * cfg.ASP_SL_ATR_MULTIPLIER
+                    tp_dist = atr_val * cfg.ASP_TP_ATR_MULTIPLIER
+                    if direction == "BUY":
+                        sl = broker_sl if broker_sl > 0 else entry_price - sl_dist
+                        tp = broker_tp if broker_tp > 0 else entry_price + tp_dist
+                    else:
+                        sl = broker_sl if broker_sl > 0 else entry_price + sl_dist
+                        tp = broker_tp if broker_tp > 0 else entry_price - tp_dist
+                    self._symbol_signals[sym] = {
+                        "asp_model": True,
+                        "direction": direction,
+                        "sl": sl,
+                        "tp1": tp,
+                        "atr_value": atr_val,
+                        "score": 0.5,
+                        "recovered": True,
+                    }
+                    self.logger.info(
+                        f"[{sym}] Reconstructed signal: {direction} entry={entry_price:.2f} "
+                        f"sl={sl:.2f} tp={tp:.2f} atr={atr_val:.2f}"
+                    )
 
         info = self.client.get_symbol_info(sym)
         market_open = info is not None and info.get("market_status") == "TRADEABLE"
