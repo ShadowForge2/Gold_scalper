@@ -918,11 +918,9 @@ class Bot:
 
         current_price = fresh_info.get("bid", fresh_info.get("price", 0)) if direction == "SELL" else fresh_info.get("ask", fresh_info.get("price", 0))
         signal_price = symbol_info.get("bid", 0) if direction == "SELL" else symbol_info.get("ask", 0)
-        point = fresh_info.get("point", 0.01)
         drift_amount = abs(current_price - signal_price)
         drift_pct = drift_amount / signal_price * 100
-        sym_max_spread = cfg.SYMBOL_MAX_SPREAD.get(sym, cfg.MAX_SPREAD_PIPS)
-        max_drift = sym_max_spread * point
+        max_drift = cfg.SYMBOL_MAX_DRIFT.get(sym, 5.00)
         if drift_amount > max_drift:
             self.logger.warning(
                 f"[{sym}] Entry blocked: price drifted ${drift_amount:.2f} "

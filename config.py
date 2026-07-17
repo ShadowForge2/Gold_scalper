@@ -134,6 +134,14 @@ SYMBOL_MAX_SPREAD = {
     "US100": _env_float("MAX_SPREAD_PIPS_US100", 50.0),
 }
 
+# Per-symbol max drift (absolute price units, not pips)
+# XAUUSD: $0.50 (gold H1 range ~$7-10)
+# US100: $5.00 (US100 H1 range ~50-100 points)
+SYMBOL_MAX_DRIFT = {
+    "XAUUSD": _env_float("MAX_DRIFT_XAUUSD", 0.50),
+    "US100": _env_float("MAX_DRIFT_US100", 5.00),
+}
+
 # Per-symbol ASP timeout (in M5 bars; 10 = 50 minutes)
 SYMBOL_ASP_TIMEOUT_BARS = {
     "XAUUSD": _env_int("ASP_TIMEOUT_BARS_XAUUSD", 10),

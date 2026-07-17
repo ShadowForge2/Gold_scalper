@@ -137,6 +137,8 @@ Formula: `trail_trigger = ATR × PEAK_HARVEST_TRAIL_TRIGGER × (1.0 + (1.0 - ent
 | `MAX_CONSECUTIVE_LOSSES` | 2 | Max consecutive losses before stop |
 | `RE_ENTRY_COOLDOWN_SEC` | 600 | Cooldown after exit (× consecutive losses) |
 | `MAX_SPREAD_PIPS` | 35.0 | Max spread to allow entry |
+| `MAX_DRIFT_XAUUSD` | 0.50 | Max price drift from signal (USD) |
+| `MAX_DRIFT_US100` | 5.00 | Max price drift from signal (points) |
 | `ALLOWED_SESSIONS` | LONDON,NEW_YORK | Sessions to trade |
 
 ---

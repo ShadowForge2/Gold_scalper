@@ -69,6 +69,10 @@ services:
         value: "0.60"
       - key: MAX_SPREAD_PIPS
         value: "50.0"
+      - key: MAX_DRIFT_XAUUSD
+        value: "0.50"
+      - key: MAX_DRIFT_US100
+        value: "5.00"
       - key: MAX_SLIPPAGE_PIPS
         value: "10"
       - key: ASP_ENABLED
