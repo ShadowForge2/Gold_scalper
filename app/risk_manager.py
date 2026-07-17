@@ -104,14 +104,19 @@ class RiskManager:
     def __init__(self):
         self.max_spread = cfg.MAX_SPREAD_PIPS
         self.allowed_sessions = [s.strip().upper() for s in cfg.ALLOWED_SESSIONS.split(",")]
+        self.daily_pnl = 0.0
+
+    def reset_daily_pnl(self):
+        self.daily_pnl = 0.0
 
     def can_enter_trade(self, symbol_info: Dict,
-                        current_time: datetime) -> Tuple[bool, str]:
+                        current_time: datetime, symbol: str = "XAUUSD") -> Tuple[bool, str]:
         now = current_time
         point = symbol_info.get("point", 0.0001)
         spread_pips = float(symbol_info.get("spread", 0)) / point if point > 0 else 0
-        if spread_pips > self.max_spread:
-            return False, f"spread_too_high ({spread_pips:.1f} > {self.max_spread})"
+        max_spread = getattr(cfg, 'SYMBOL_MAX_SPREAD', {}).get(symbol, self.max_spread)
+        if spread_pips > max_spread:
+            return False, f"spread_too_high ({spread_pips:.1f} > {max_spread})"
 
         session_ok, session_name = self._check_session(now)
         if not session_ok:
@@ -119,7 +124,10 @@ class RiskManager:
 
         return True, "ok"
 
-    def check_event_loss(self, event_pnl: float) -> Tuple[bool, str]:
+    def check_event_loss(self, event_pnl: float, balance: float = 0) -> Tuple[bool, str]:
+        max_loss_usd = float(getattr(cfg, 'MAX_EVENT_LOSS_USD', 5.0))
+        if event_pnl < -max_loss_usd:
+            return False, f"event_loss_limit ({event_pnl:.2f} < -${max_loss_usd:.2f})"
         return True, "ok"
 
     def calculate_lot_size(self, balance: float,

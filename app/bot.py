@@ -374,7 +374,11 @@ class Bot:
                 )
                 self.state = self.STATES["WAITING_FOR_FUNDS"]
                 for sym in self.symbols:
-                    self._symbol_states[sym] = self.STATES["WAITING_FOR_FUNDS"]
+                    sym_positions = [p for p in pnl_data.get("positions", []) if p.get("_symbol_code") == sym]
+                    if sym_positions:
+                        self._symbol_states[sym] = self.STATES["IN_TRADE"]
+                    else:
+                        self._symbol_states[sym] = self.STATES["WAITING_FOR_FUNDS"]
                 return
 
         await self._update_news_state()
@@ -576,7 +580,7 @@ class Bot:
 
         if signal:
             can_enter, reason = self.risk_manager.can_enter_trade(
-                symbol_info, datetime.utcnow()
+                symbol_info, datetime.utcnow(), symbol=sym
             )
             if not can_enter:
                 bk_key = f"{sym}|blocked_{signal['direction']}|{reason}"
@@ -653,7 +657,7 @@ class Bot:
         balance = acct.get("balance", 0) if acct else 0
 
         event_pnl = sum(p.get("profit", 0) for p in sym_positions)
-        event_ok, event_msg = self.risk_manager.check_event_loss(event_pnl)
+        event_ok, event_msg = self.risk_manager.check_event_loss(event_pnl, balance)
         if not event_ok:
             self.logger.warning(f"[{sym}] Event stop: {event_msg}")
             closed = self.trade_executor.close_all_bot_positions(symbol=sym)
@@ -671,7 +675,7 @@ class Bot:
         pos = sym_positions[0]
         direction = pos.get("type", "BUY")
         entry_price = pos.get("price_open", 0)
-        current_px = pos.get("current_price", entry_price)
+        current_px = pos.get("price_current", pos.get("current_price", entry_price))
         event_start = self._symbol_event_start_ts.get(sym)
         exit_interval = cfg.EXIT_CHECK_INTERVAL or 300
         bars_held = max(0, int((time.time() - event_start) / exit_interval)) if event_start else 0
@@ -755,6 +759,8 @@ class Bot:
                     self._symbol_event_start_ts[sym] = None
                     self._symbol_exit_confirms[sym] = 0
                     self._symbol_reversal_confirms[sym] = 0
+                    if hasattr(self, f"_best_price_{sym}"):
+                        delattr(self, f"_best_price_{sym}")
                 else:
                     self.logger.warning(f"[{sym}] ASP exit close failed, retrying next tick")
                 return
@@ -765,7 +771,7 @@ class Bot:
             m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, m1_bars)
             fresh_signal = None
             if engine and m1_data is not None and len(m1_data) >= 96:
-                h1_for_asp = self.client.get_rates(sym, "H1", 48)
+                h1_for_asp = self.client.get_rates(sym, cfg.BIAS_TIMEFRAME, 48)
                 fresh_signal = engine.evaluate_asp_entry(m1_data, current_px, h1_data=h1_for_asp)
 
             if fresh_signal is None and (m1_data is None or len(m1_data) < 96):
@@ -805,6 +811,8 @@ class Bot:
                 if closed:
                     self._symbol_states[sym] = self.STATES["IDLE"]
                     self._symbol_event_start_ts[sym] = None
+                    if hasattr(self, f"_best_price_{sym}"):
+                        delattr(self, f"_best_price_{sym}")
                 else:
                     self.logger.warning(f"[{sym}] Timeout exit close failed, retrying next tick")
                 return
@@ -1016,10 +1024,16 @@ class Bot:
 
     def start(self):
         if self.state == self.STATES["STOPPED"]:
-            self.risk_manager.record_daily_pnl_reset()
+            self.risk_manager.reset_daily_pnl()
         self.state = self.STATES["IDLE"]
         for sym in self.symbols:
             self._symbol_states[sym] = self.STATES["IDLE"]
+            self._symbol_event_start_ts[sym] = None
+            self._symbol_exit_confirms[sym] = 0
+            self._symbol_reversal_confirms[sym] = 0
+            self._symbol_signals[sym] = None
+            if hasattr(self, f"_best_price_{sym}"):
+                delattr(self, f"_best_price_{sym}")
         self.logger.info("Bot manually started")
 
     def stop(self):
@@ -1041,6 +1055,8 @@ class Bot:
                 self._symbol_event_start_ts[sym] = None
                 self._symbol_exit_confirms[sym] = 0
                 self._symbol_reversal_confirms[sym] = 0
+                if hasattr(self, f"_best_price_{sym}"):
+                    delattr(self, f"_best_price_{sym}")
         self.position_manager.refresh(symbols=self.symbols)
         await self._notify(
             "trade_close",

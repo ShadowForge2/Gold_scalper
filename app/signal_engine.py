@@ -83,6 +83,8 @@ class SignalEngine:
             if h1_data is not None and len(h1_data) >= 20:
                 h1_src = h1_data.set_index("time") if "time" in h1_data.columns else h1_data
                 h1 = h1_src[["open", "high", "low", "close"]].dropna()
+                if len(h1) > 1:
+                    h1 = h1.iloc[:-1]
             else:
                 h1 = m1_idx.resample("1h").agg({
                     "open": "first", "high": "max", "low": "min", "close": "last",
@@ -226,6 +228,6 @@ class SignalEngine:
 
     def _compute_atr_m5(self, m1_data: pd.DataFrame, period: int = 14) -> float:
         m5 = self._resample_to_m5(m1_data)
-        if m5 is None or len(m5) < period + 1:
+        if m5 is None or len(m5) < period + 2:
             return 0.0
-        return self._compute_atr(m5, period)
+        return self._compute_atr(m5.iloc[:-1], period)
