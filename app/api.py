@@ -478,6 +478,9 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         trades = []
         if state and state.get("bot"):
             bot_data = state["bot"]
+            acct_data = state.get("account", {})
+            balance = acct_data.get("balance", 0) if isinstance(acct_data, dict) else 0
+            signal = bot_data.get("signal", {}) or {}
             pm = bot_data.get("positions", {})
             positions = pm.get("positions", []) if isinstance(pm, dict) else []
             for pos in positions:
@@ -495,6 +498,9 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                     "pnl": pos.get("profit", 0),
                     "ticket": pos.get("ticket", 0),
                     "symbol": pos.get("symbol", ""),
+                    "score": signal.get("score", 0),
+                    "exit_reason": "",
+                    "balance": balance,
                 })
             closed = bot_data.get("closed_trades", []) or []
             for t in closed:
@@ -510,6 +516,9 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                     "pnl": t.get("profit", 0),
                     "ticket": t.get("ticket", ""),
                     "symbol": t.get("symbol", ""),
+                    "score": t.get("score", 0),
+                    "exit_reason": t.get("exit_reason", ""),
+                    "balance": t.get("balance", 0),
                 })
         return {"trades": trades}
 

@@ -685,8 +685,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return Colors.green;
       case 'AWAITING_SIGNAL':
         return Colors.amber;
+      case 'IDLE':
+        return Colors.grey;
       case 'STOPPED':
         return Colors.red;
+      case 'MARKET_CLOSED':
+        return Colors.blue;
+      case 'ENTERING':
+        return Colors.cyan;
+      case 'WAITING_FOR_FUNDS':
+        return Colors.orange;
       default:
         return Colors.grey;
     }

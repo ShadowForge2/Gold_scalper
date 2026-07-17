@@ -17,10 +17,13 @@ class PositionManager:
         self.closed_history: List[Dict] = []
         self._event_start_ts: Optional[float] = None
 
-    def note_closed(self, pos_data: Dict) -> None:
+    def note_closed(self, pos_data: Dict, exit_reason: str = "", score: float = 0.0, balance: float = 0.0) -> None:
         ticket = pos_data.get("ticket")
         if ticket is None:
             return
+        entry_time = pos_data.get("time", "")
+        if hasattr(entry_time, "isoformat"):
+            entry_time = entry_time.isoformat()
         self._closed_tickets[str(ticket)] = time.time()
         self.closed_history.append({
             "ticket": ticket,
@@ -32,6 +35,10 @@ class PositionManager:
             "swap": pos_data.get("swap", 0),
             "symbol": pos_data.get("symbol", ""),
             "closed_at": datetime.utcnow().isoformat(),
+            "entry_time": entry_time,
+            "exit_reason": exit_reason,
+            "score": score,
+            "balance": balance,
         })
         if len(self.closed_history) > 500:
             self.closed_history = self.closed_history[-400:]

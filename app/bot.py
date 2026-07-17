@@ -286,7 +286,7 @@ class Bot:
                 )
                 if hasattr(self, 'trade_executor'):
                     for pos_data in self.trade_executor.close_all_bot_positions():
-                        self.position_manager.note_closed(pos_data)
+                        self.position_manager.note_closed(pos_data, exit_reason="shutdown")
                 break
             await asyncio.sleep(0.5)
         self._running = False
@@ -339,7 +339,7 @@ class Bot:
                         f"Shutdown deadline passed, force-closing {pnl_data['open_count']} position(s)"
                     )
                     for pos_data in self.trade_executor.close_all_bot_positions():
-                        self.position_manager.note_closed(pos_data)
+                        self.position_manager.note_closed(pos_data, exit_reason="shutdown")
 
         if not self.client.is_connected():
             now_t = time.time()
@@ -383,6 +383,10 @@ class Bot:
 
         for sym in self.symbols:
             await self._tick_symbol(sym, pnl_data)
+
+        if self.state not in (self.STATES["STOPPED"], self.STATES["WAITING_FOR_FUNDS"]):
+            has_trade = any(s == self.STATES["IN_TRADE"] for s in self._symbol_states.values())
+            self.state = self.STATES["IN_TRADE"] if has_trade else self.STATES["IDLE"]
 
         self._write_state()
 
@@ -700,8 +704,9 @@ class Bot:
         if not event_ok:
             self.logger.warning(f"[{sym}] Event stop: {event_msg}")
             closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+            sig = self._symbol_signals.get(sym) or {}
             for pos_data in closed:
-                self.position_manager.note_closed(pos_data)
+                self.position_manager.note_closed(pos_data, exit_reason="event_loss", score=sig.get("score", 0), balance=balance)
             if closed:
                 pnl = sum(p.get("profit", 0) for p in closed)
                 self._symbol_states[sym] = self.STATES["IDLE"]
@@ -799,7 +804,7 @@ class Bot:
                 )
                 closed = self.trade_executor.close_all_bot_positions(symbol=sym)
                 for pos_data in closed:
-                    self.position_manager.note_closed(pos_data)
+                    self.position_manager.note_closed(pos_data, exit_reason=exit_reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
                 if closed:
                     pnl = sum(p.get("profit", 0) for p in closed)
                     self._symbol_states[sym] = self.STATES["IDLE"]
@@ -860,7 +865,7 @@ class Bot:
                 self.logger.signal(f"[{sym}] Timeout exit: {reason} | dir={direction} entry={entry_price:.2f} px={current_px:.2f}")
                 closed = self.trade_executor.close_all_bot_positions(symbol=sym)
                 for pos_data in closed:
-                    self.position_manager.note_closed(pos_data)
+                    self.position_manager.note_closed(pos_data, exit_reason=reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
                 if closed:
                     pnl = sum(p.get("profit", 0) for p in closed)
                     self._symbol_states[sym] = self.STATES["IDLE"]
@@ -1112,7 +1117,7 @@ class Bot:
         for sym in self.symbols:
             closed = self.trade_executor.close_all_bot_positions(symbol=sym)
             for pos_data in closed:
-                self.position_manager.note_closed(pos_data)
+                self.position_manager.note_closed(pos_data, exit_reason="emergency")
             total += len(closed)
             if closed:
                 self._symbol_states[sym] = self.STATES["IDLE"]
