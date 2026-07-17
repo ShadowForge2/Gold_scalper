@@ -67,8 +67,12 @@ app = create_app(bot, bot_pool=bot_pool, db_check=is_db_connected)
 
 @app.on_event("startup")
 async def startup():
+    import asyncio as _aio
+    from app.subscription import set_main_loop
+    set_main_loop(_aio.get_running_loop())
     await startup_db()
     await bot.initialize()
+    bot._account_id = cfg.CAPITAL_IDENTIFIER
     _fire_task(bot.run(), name="bot.run")
     if _db_connected:
         try:

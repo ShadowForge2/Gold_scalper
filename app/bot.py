@@ -174,14 +174,12 @@ class Bot:
 
 
     async def _notify(self, ntype: str, title: str, message: str, data: Optional[Dict] = None):
+        ident = getattr(self, '_account_id', None) or cfg.CAPITAL_IDENTIFIER or "unknown"
         try:
             from app.subscription import create_notification
-            await create_notification(
-                getattr(self, '_account_id', None) or "unknown",
-                ntype, title, message, data,
-            )
-        except Exception:
-            pass
+            await create_notification(ident, ntype, title, message, data)
+        except Exception as e:
+            self.logger.warning(f"Notification failed ({ntype}): {e}")
 
     async def initialize(self) -> bool:
         self.logger.info(f"Initializing {self.symbol} scalping bot (ASP-only mode)...")
@@ -705,10 +703,17 @@ class Bot:
             for pos_data in closed:
                 self.position_manager.note_closed(pos_data)
             if closed:
+                pnl = sum(p.get("profit", 0) for p in closed)
                 self._symbol_states[sym] = self.STATES["IDLE"]
                 self._symbol_event_start_ts[sym] = None
                 self._symbol_exit_confirms[sym] = 0
                 self._symbol_reversal_confirms[sym] = 0
+                await self._notify(
+                    "trade_close",
+                    f"Trade Closed — {sym}",
+                    f"{direction} {sym} closed (event_loss) | PnL: ${pnl:+.2f}",
+                    {"symbol": sym, "direction": direction, "exit_reason": "event_loss", "pnl": pnl},
+                )
             else:
                 self.logger.warning(f"[{sym}] Event stop close failed, retrying next tick")
             return
@@ -796,12 +801,19 @@ class Bot:
                 for pos_data in closed:
                     self.position_manager.note_closed(pos_data)
                 if closed:
+                    pnl = sum(p.get("profit", 0) for p in closed)
                     self._symbol_states[sym] = self.STATES["IDLE"]
                     self._symbol_event_start_ts[sym] = None
                     self._symbol_exit_confirms[sym] = 0
                     self._symbol_reversal_confirms[sym] = 0
                     if hasattr(self, f"_best_price_{sym}"):
                         delattr(self, f"_best_price_{sym}")
+                    await self._notify(
+                        "trade_close",
+                        f"Trade Closed — {sym}",
+                        f"{direction} {sym} closed ({exit_reason}) | PnL: ${pnl:+.2f} | held {minutes_held:.0f}m",
+                        {"symbol": sym, "direction": direction, "exit_reason": exit_reason, "pnl": pnl, "held_minutes": minutes_held},
+                    )
                 else:
                     self.logger.warning(f"[{sym}] ASP exit close failed, retrying next tick")
                 return
@@ -850,10 +862,17 @@ class Bot:
                 for pos_data in closed:
                     self.position_manager.note_closed(pos_data)
                 if closed:
+                    pnl = sum(p.get("profit", 0) for p in closed)
                     self._symbol_states[sym] = self.STATES["IDLE"]
                     self._symbol_event_start_ts[sym] = None
                     if hasattr(self, f"_best_price_{sym}"):
                         delattr(self, f"_best_price_{sym}")
+                    await self._notify(
+                        "trade_close",
+                        f"Trade Closed — {sym}",
+                        f"{direction} {sym} closed ({reason}) | PnL: ${pnl:+.2f} | held {bars_held * 5}m",
+                        {"symbol": sym, "direction": direction, "exit_reason": reason, "pnl": pnl, "held_bars": bars_held},
+                    )
                 else:
                     self.logger.warning(f"[{sym}] Timeout exit close failed, retrying next tick")
                 return
@@ -1010,6 +1029,12 @@ class Bot:
             self.logger.info(
                 f"[{sym}] Entered {direction} with {max_trades} position(s) "
                 f"(ML conf={ml_conf:.2f})"
+            )
+            await self._notify(
+                "trade_open",
+                f"Trade Opened — {sym}",
+                f"{direction} {lot:.2f} lot {sym} @ ${current_price:.2f} | score={score:.2f}",
+                {"symbol": sym, "direction": direction, "lot": lot, "price": current_price, "score": score},
             )
         else:
             self._symbol_states[sym] = self.STATES["IDLE"]

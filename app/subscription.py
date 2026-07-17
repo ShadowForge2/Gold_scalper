@@ -706,23 +706,56 @@ async def process_maxelpay_callback(order_id: str, status: str, amount: float) -
 
 # ── Notifications ────────────────────────────────────────────────
 
-async def create_notification(identifier: str, ntype: str, title: str, message: str, data: Optional[Dict] = None):
-    nid = uuid.uuid4().hex
-    await db_mod.database.execute(
-        """INSERT INTO notifications (id, identifier, type, title, message, data, created_at)
-           VALUES (:nid, :ident, :type, :title, :msg, :data, :ca)""",
-        {
-            "nid": nid,
-            "ident": identifier,
-            "type": ntype,
-            "title": title,
-            "msg": message,
-            "data": json.dumps(data) if data else None,
-            "ca": datetime.utcnow().isoformat(),
-        }
-    )
+_main_loop = None
+
+def set_main_loop(loop):
+    global _main_loop
+    _main_loop = loop
+
+
+def _schedule_on_main(coro):
+    """Schedule a coroutine on the main event loop (for cross-thread DB access)."""
     import asyncio
-    asyncio.create_task(_send_fcm_push(identifier, title, message, data))
+    loop = _main_loop
+    if loop is None or loop.is_closed():
+        return
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        running_loop = None
+    if running_loop is loop:
+        return None
+    return asyncio.run_coroutine_threadsafe(coro, loop)
+
+
+async def create_notification(identifier: str, ntype: str, title: str, message: str, data: Optional[Dict] = None):
+    import asyncio
+    nid = uuid.uuid4().hex
+    values = {
+        "nid": nid,
+        "ident": identifier,
+        "type": ntype,
+        "title": title,
+        "msg": message,
+        "data": json.dumps(data) if data else None,
+        "ca": datetime.utcnow().isoformat(),
+    }
+    sql = """INSERT INTO notifications (id, identifier, type, title, message, data, created_at)
+             VALUES (:nid, :ident, :type, :title, :msg, :data, :ca)"""
+    try:
+        future = _schedule_on_main(db_mod.database.execute(sql, values))
+        if future is not None:
+            await asyncio.wrap_future(future)
+        else:
+            await db_mod.database.execute(sql, values)
+    except Exception as e:
+        logger.warning("DB notification insert failed: %s", e)
+    try:
+        future = _schedule_on_main(_send_fcm_push(identifier, title, message, data))
+        if future is None:
+            asyncio.create_task(_send_fcm_push(identifier, title, message, data))
+    except Exception:
+        pass
 
 
 async def get_notifications(identifier: str, limit: int = 50) -> List[Dict]:
