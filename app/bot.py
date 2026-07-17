@@ -400,11 +400,8 @@ class Bot:
             if not self._symbol_event_start_ts.get(sym):
                 self._symbol_event_start_ts[sym] = time.time()
 
-        market_open = cfg.is_market_open_for_symbol(sym)
-        if market_open and state != self.STATES["MARKET_CLOSED"]:
-            info = self.client.get_symbol_info(sym)
-            if info is not None:
-                market_open = info.get("market_status") == "TRADEABLE"
+        info = self.client.get_symbol_info(sym)
+        market_open = info is not None and info.get("market_status") == "TRADEABLE"
 
         if not market_open:
             if state == self.STATES["IN_TRADE"]:
