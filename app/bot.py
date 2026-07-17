@@ -396,6 +396,7 @@ class Bot:
         if sym_open and state not in (self.STATES["IN_TRADE"], self.STATES["STOPPED"]):
             self.logger.info(f"[{sym}] Recovered open position(s), resuming management")
             self._symbol_states[sym] = self.STATES["IN_TRADE"]
+            state = self.STATES["IN_TRADE"]
             if not self._symbol_event_start_ts.get(sym):
                 self._symbol_event_start_ts[sym] = time.time()
 
@@ -407,7 +408,12 @@ class Bot:
 
         if not market_open:
             if state == self.STATES["IN_TRADE"]:
-                self.logger.info(f"[{sym}] Market closed, managing open positions only")
+                if sym_open:
+                    self.logger.info(f"[{sym}] Market closed, managing open positions only")
+                else:
+                    self.logger.info(f"[{sym}] Market closed, no open positions, pausing")
+                    self._symbol_states[sym] = self.STATES["MARKET_CLOSED"]
+                    self._last_market_status_check = 0.0
             elif state != self.STATES["MARKET_CLOSED"]:
                 self.logger.info(f"[{sym}] Market closed, pausing until reopen")
                 self._symbol_states[sym] = self.STATES["MARKET_CLOSED"]
@@ -601,6 +607,7 @@ class Bot:
             self._symbol_states[sym] = self.STATES["IDLE"]
             self._symbol_event_start_ts[sym] = None
             self._symbol_exit_confirms[sym] = 0
+            self._symbol_reversal_confirms[sym] = 0
             return
 
         acct = self.client.get_account_info()
@@ -617,6 +624,7 @@ class Bot:
                 self._symbol_states[sym] = self.STATES["IDLE"]
                 self._symbol_event_start_ts[sym] = None
                 self._symbol_exit_confirms[sym] = 0
+                self._symbol_reversal_confirms[sym] = 0
             else:
                 self.logger.warning(f"[{sym}] Event stop close failed, retrying next tick")
             return
