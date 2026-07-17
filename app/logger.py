@@ -44,3 +44,6 @@ class BotLogger:
 
     def bias(self, msg: str):
         self._log(f"[BIAS] {msg}", "INFO")
+
+    def debug(self, msg: str):
+        self._log(msg, "DEBUG")
