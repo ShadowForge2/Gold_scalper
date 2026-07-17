@@ -190,8 +190,10 @@ ASP_M1_HISTORY_BARS = _env_int("ASP_M1_HISTORY_BARS", 300)
 
 # Trailing stop for ASP trades
 ASP_TRAILING_ENABLED = _env_bool("ASP_TRAILING_ENABLED", True)
-ASP_TRAILING_TRIGGER_ATR = _env_float("ASP_TRAILING_TRIGGER_ATR", 1.5)  # activate after 1.5x ATR profit
-ASP_TRAILING_RETRACE_ATR = _env_float("ASP_TRAILING_RETRACE_ATR", 1.0)  # trail 1.0x ATR behind best
+ASP_TRAILING_TRIGGER_ATR = _env_float("ASP_TRAILING_TRIGGER_ATR", 1.5)  # activate after 1.5x ATR profit (~1R)
+ASP_TRAILING_RETRACE_ATR = _env_float("ASP_TRAILING_RETRACE_ATR", 2.5)  # trail 2.5x ATR behind best (2-3x ATR)
+ASP_TRAIL_MIN_BARS = _env_int("ASP_TRAIL_MIN_BARS", 4)  # minimum M1 bars held before trailing activates
+ASP_TRAIL_ADX_MIN = _env_float("ASP_TRAIL_ADX_MIN", 20.0)  # minimum ADX for trailing (0 = disabled)
 
 # Chop filter — reject ASP signals when market is stagnant
 CHOP_FILTER_ENABLED = _env_bool("CHOP_FILTER_ENABLED", True)

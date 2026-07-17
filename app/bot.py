@@ -5,6 +5,8 @@ import time
 from datetime import datetime, timezone
 from typing import Optional, Dict, List
 
+import numpy as np
+
 import config as cfg
 from app.logger import BotLogger
 from app.capital_client import CapitalClient
@@ -471,6 +473,41 @@ class Bot:
         except Exception as e:
             self.logger.debug(f"[NEWS] State update failed: {e}")
 
+    @staticmethod
+    def _compute_adx(highs, lows, closes, period=14):
+        n = len(closes)
+        if n < period + 1:
+            return 0.0
+        h, l, c = np.asarray(highs, dtype=float), np.asarray(lows, dtype=float), np.asarray(closes, dtype=float)
+        tr = np.maximum(h[1:] - l[1:],
+              np.maximum(np.abs(h[1:] - c[:-1]), np.abs(l[1:] - c[:-1])))
+        up = h[1:] - h[:-1]
+        dn = l[:-1] - l[1:]
+        plus_dm = np.where((up > dn) & (up > 0), up, 0.0)
+        minus_dm = np.where((dn > up) & (dn > 0), dn, 0.0)
+        alpha = 1.0 / period
+        atr_s = tr[0]
+        pdm_s = plus_dm[0]
+        mdm_s = minus_dm[0]
+        dx_vals = []
+        for i in range(1, len(tr)):
+            atr_s = atr_s * (1 - alpha) + tr[i] * alpha
+            pdm_s = pdm_s * (1 - alpha) + plus_dm[i] * alpha
+            mdm_s = mdm_s * (1 - alpha) + minus_dm[i] * alpha
+            if atr_s <= 0:
+                dx_vals.append(0.0)
+                continue
+            pdi = (pdm_s / atr_s) * 100
+            mdi = (mdm_s / atr_s) * 100
+            s = pdi + mdi
+            dx_vals.append(abs(pdi - mdi) / s * 100 if s > 0 else 0.0)
+        if len(dx_vals) < period:
+            return dx_vals[-1] if dx_vals else 0.0
+        adx = sum(dx_vals[:period]) / period
+        for dx in dx_vals[period:]:
+            adx = adx * (1 - alpha) + dx * alpha
+        return round(adx, 2)
+
     def _feed_m5_volatility(self, m1_data):
         if self.news_state is None or m1_data is None or len(m1_data) < 5:
             return
@@ -517,6 +554,11 @@ class Bot:
             signal = engine.evaluate_asp_entry(
                 m1_data, current_price,
                 h1_data=h1_for_asp,
+            )
+
+        if signal and m1_data is not None and len(m1_data) >= 15:
+            signal["adx_at_entry"] = self._compute_adx(
+                m1_data["high"].values, m1_data["low"].values, m1_data["close"].values
             )
 
         if signal:
@@ -643,50 +685,68 @@ class Bot:
             asp_tp = pos_signal.get("tp1")
             atr_val = pos_signal.get("atr_value", 0)
 
+            minutes_held = (time.time() - event_start) / 60.0 if event_start else 0.0
+            adx_at_entry = pos_signal.get("adx_at_entry", 50.0)
+            adx_ok = adx_at_entry >= getattr(cfg, "ASP_TRAIL_ADX_MIN", 0.0)
+            bars_ok = minutes_held >= getattr(cfg, "ASP_TRAIL_MIN_BARS", 0)
+            trail_gating_ok = adx_ok and bars_ok
+
+            should_exit = False
+            exit_reason = ""
+            trail_activated = False
+
             if getattr(cfg, "ASP_TRAILING_ENABLED", False) and atr_val > 0:
                 best_key = f"_best_price_{sym}"
                 if not hasattr(self, best_key):
                     setattr(self, best_key, entry_price)
                 best = getattr(self, best_key)
 
-                if direction == "BUY":
-                    best = max(best, current_px)
-                    trigger = entry_price + atr_val * cfg.ASP_TRAILING_TRIGGER_ATR
-                    if best >= trigger:
-                        trail_sl = best - atr_val * cfg.ASP_TRAILING_RETRACE_ATR
-                        if trail_sl > asp_sl:
-                            asp_sl = trail_sl
-                            pos_signal["sl"] = asp_sl
-                else:
-                    best = min(best, current_px)
-                    trigger = entry_price - atr_val * cfg.ASP_TRAILING_TRIGGER_ATR
-                    if best <= trigger:
-                        trail_sl = best + atr_val * cfg.ASP_TRAILING_RETRACE_ATR
-                        if trail_sl < asp_sl:
-                            asp_sl = trail_sl
-                            pos_signal["sl"] = asp_sl
+                if trail_gating_ok:
+                    if direction == "BUY":
+                        best = max(best, current_px)
+                        trigger = entry_price + atr_val * cfg.ASP_TRAILING_TRIGGER_ATR
+                        if best >= trigger:
+                            trail_sl = best - atr_val * cfg.ASP_TRAILING_RETRACE_ATR
+                            if trail_sl > asp_sl:
+                                asp_sl = trail_sl
+                                pos_signal["sl"] = asp_sl
+                                trail_activated = True
+                    else:
+                        best = min(best, current_px)
+                        trigger = entry_price - atr_val * cfg.ASP_TRAILING_TRIGGER_ATR
+                        if best <= trigger:
+                            trail_sl = best + atr_val * cfg.ASP_TRAILING_RETRACE_ATR
+                            if trail_sl < asp_sl:
+                                asp_sl = trail_sl
+                                pos_signal["sl"] = asp_sl
+                                trail_activated = True
+                elif int(minutes_held) % 2 == 0:
+                    self.logger.debug(
+                        f"[{sym}] Trail blocked: adx={adx_at_entry:.1f} (need>={getattr(cfg, 'ASP_TRAIL_ADX_MIN', 0)}) "
+                        f"held={minutes_held:.1f}m (need>={getattr(cfg, 'ASP_TRAIL_MIN_BARS', 0)}m)"
+                    )
                 setattr(self, best_key, best)
-
-            should_exit = False
-            exit_reason = ""
 
             if direction == "BUY":
                 if asp_sl and current_px <= asp_sl:
                     should_exit = True
-                    exit_reason = "asp_trail_sl" if getattr(cfg, "ASP_TRAILING_ENABLED", False) else "asp_sl_hit"
+                    exit_reason = "asp_trail_sl" if trail_activated else "asp_sl_hit"
                 elif asp_tp and current_px >= asp_tp:
                     should_exit = True
                     exit_reason = "asp_tp_hit"
             else:
                 if asp_sl and current_px >= asp_sl:
                     should_exit = True
-                    exit_reason = "asp_trail_sl" if getattr(cfg, "ASP_TRAILING_ENABLED", False) else "asp_sl_hit"
+                    exit_reason = "asp_trail_sl" if trail_activated else "asp_sl_hit"
                 elif asp_tp and current_px <= asp_tp:
                     should_exit = True
                     exit_reason = "asp_tp_hit"
 
             if should_exit:
-                self.logger.signal(f"[{sym}] ASP exit: {exit_reason} | dir={direction} entry={entry_price:.2f} px={current_px:.2f} sl={asp_sl:.2f}")
+                self.logger.signal(
+                    f"[{sym}] ASP exit: {exit_reason} | dir={direction} entry={entry_price:.2f} "
+                    f"px={current_px:.2f} sl={asp_sl:.2f} adx={adx_at_entry:.1f} held={minutes_held:.1f}m"
+                )
                 closed = self.trade_executor.close_all_bot_positions(symbol=sym)
                 for pos_data in closed:
                     self.position_manager.note_closed(pos_data)
