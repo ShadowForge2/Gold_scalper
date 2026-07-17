@@ -754,6 +754,7 @@ class Bot:
                     self._symbol_states[sym] = self.STATES["IDLE"]
                     self._symbol_event_start_ts[sym] = None
                     self._symbol_exit_confirms[sym] = 0
+                    self._symbol_reversal_confirms[sym] = 0
                 else:
                     self.logger.warning(f"[{sym}] ASP exit close failed, retrying next tick")
                 return
@@ -767,6 +768,10 @@ class Bot:
                 h1_for_asp = self.client.get_rates(sym, "H1", 48)
                 fresh_signal = engine.evaluate_asp_entry(m1_data, current_px, h1_data=h1_for_asp)
 
+            if fresh_signal is None and (m1_data is None or len(m1_data) < 96):
+                self.logger.debug(f"[{sym}] Timeout skipped: data fetch failed, holding")
+                return
+
             fresh_dir = fresh_signal.get("direction") if fresh_signal else None
             if fresh_dir == direction:
                 self._symbol_exit_confirms[sym] = self._symbol_exit_confirms.get(sym, 0) + 1
@@ -778,6 +783,7 @@ class Bot:
                 if confirms >= 2:
                     self._symbol_event_start_ts[sym] = time.time()
                     self._symbol_exit_confirms[sym] = 0
+                    self._symbol_reversal_confirms[sym] = 0
                     self.logger.signal(f"[{sym}] Timeout reset: model confirms move still valid, extending")
             else:
                 self._symbol_reversal_confirms[sym] = self._symbol_reversal_confirms.get(sym, 0) + 1
@@ -1034,7 +1040,8 @@ class Bot:
                 self._symbol_states[sym] = self.STATES["IDLE"]
                 self._symbol_event_start_ts[sym] = None
                 self._symbol_exit_confirms[sym] = 0
-        self.position_manager.refresh()
+                self._symbol_reversal_confirms[sym] = 0
+        self.position_manager.refresh(symbols=self.symbols)
         await self._notify(
             "trade_close",
             "Emergency Close",

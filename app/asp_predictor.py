@@ -141,16 +141,17 @@ class ASPPredictor:
             Series of predictions: 0=BUY, -1=SELL, 1=NEUTRAL(=0 in signal).
         """
         if not self.ready or self.model is None:
-            return pd.Series(0, index=asp_features_df.index, dtype=np.int8)
+            return pd.Series(1, index=asp_features_df.index, dtype=np.int8)
 
         try:
             valid_cols = [c for c in self.features if c in asp_features_df.columns]
             if len(valid_cols) != len(self.features):
                 logger.warning("ASP features mismatch: %d/%d", len(valid_cols), len(self.features))
+                return pd.Series(1, index=asp_features_df.index, dtype=np.int8)
 
             valid = asp_features_df[valid_cols].dropna()
             if len(valid) == 0:
-                return pd.Series(0, index=asp_features_df.index, dtype=np.int8)
+                return pd.Series(1, index=asp_features_df.index, dtype=np.int8)
 
             feat_arr = valid.values
             raw_preds = self.model.predict(feat_arr)
@@ -162,7 +163,7 @@ class ASPPredictor:
 
         except Exception as e:
             logger.warning("ASP batch predict error: %s", e)
-            return pd.Series(0, index=asp_features_df.index, dtype=np.int8)
+            return pd.Series(1, index=asp_features_df.index, dtype=np.int8)
 
     def __bool__(self):
         return self.ready

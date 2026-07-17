@@ -518,7 +518,8 @@ class CapitalClient:
         req_type = request.get("type")
         if req_type is None:
             logger.error("Missing 'type' in request")
-            return None, "missing_order_type"
+            return {"retcode": 10004, "order": 0, "comment": "missing_order_type",
+                    "volume": 0, "price": 0, "bid": 0, "ask": 0, "success": False}
         direction = "BUY" if req_type == 0 else "SELL"
         volume = request.get("volume", 0.01)
 
@@ -600,11 +601,16 @@ class CapitalClient:
         if isinstance(ticket, str):
             deal_id = ticket
         else:
-            positions = self.get_positions()
-            pos = next((p for p in positions if str(p["ticket"]) == ticket_str), None)
-            if pos is None:
+            found = False
+            for sym in getattr(cfg, 'SYMBOLS', [cfg.SYMBOL]):
+                positions = self.get_positions(symbol=sym)
+                pos = next((p for p in positions if str(p.get("ticket", "")) == ticket_str), None)
+                if pos is not None:
+                    deal_id = pos["ticket"]
+                    found = True
+                    break
+            if not found:
                 return False
-            deal_id = pos["ticket"]
         if not self._ensure_session():
             return False
         try:

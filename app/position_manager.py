@@ -39,7 +39,7 @@ class PositionManager:
     def refresh(self, symbols: list = None) -> Dict:
         if self.client is None:
             return self.summary()
-        syms = symbols or [cfg.SYMBOL]
+        syms = symbols or list(getattr(cfg, 'SYMBOLS', [cfg.SYMBOL]))
         all_positions = []
         for sym in syms:
             raw_positions = self.client.get_positions(symbol=sym) or []
@@ -56,8 +56,17 @@ class PositionManager:
             p for p in all_positions
             if str(p.get("ticket", "")) not in self._closed_tickets
         ]
-        closed_pnl = sum(p.get("profit", 0) for p in self.closed_history)
-        self.event_pnl = sum(p.get("profit", 0) for p in self.open_positions) + closed_pnl
+        open_pnl = sum(p.get("profit", 0) for p in self.open_positions)
+        if self.open_positions and not self.in_event:
+            self._event_start_ts = time.time()
+        if not self.open_positions:
+            self._event_start_ts = None
+        event_closed = [
+            h for h in self.closed_history
+            if self._event_start_ts and h.get("closed_at", "") >= datetime.utcfromtimestamp(self._event_start_ts).isoformat()
+        ]
+        event_closed_pnl = sum(p.get("profit", 0) for p in event_closed)
+        self.event_pnl = open_pnl + event_closed_pnl
         self.daily_pnl = self.client.get_total_daily_pnl(self.magic) or 0.0
         self.in_event = len(self.open_positions) > 0
         self.open_count = len(self.open_positions)

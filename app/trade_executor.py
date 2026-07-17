@@ -52,14 +52,16 @@ class TradeExecutor:
             return False
 
     def close_all_bot_positions(self, symbol: Optional[str] = None) -> List[Dict]:
-        positions = self.client.get_positions(symbol=symbol or cfg.SYMBOL) or []
+        syms = [symbol] if symbol else list(getattr(cfg, 'SYMBOLS', [cfg.SYMBOL]))
         closed = []
-        for pos in positions:
-            ticket = pos.get("ticket")
-            if ticket and self.close_position(ticket):
-                closed.append(pos)
+        for sym in syms:
+            positions = self.client.get_positions(symbol=sym) or []
+            for pos in positions:
+                ticket = pos.get("ticket")
+                if ticket and self.close_position(ticket):
+                    closed.append(pos)
         if closed:
-            self.logger.info(f"Closed {len(closed)} bot position(s) for {symbol or cfg.SYMBOL}")
+            self.logger.info(f"Closed {len(closed)} bot position(s) for {', '.join(syms)}")
         return closed
 
     def close_all_positions(self, symbol: Optional[str] = None) -> int:
