@@ -213,7 +213,7 @@ CHOP_THRESHOLD = _env_float("CHOP_THRESHOLD", 0.70)  # validated: 1.59x movement
 # Swing quality XGBoost model — confirmation gate
 SWING_QUALITY_ENABLED = _env_bool("SWING_QUALITY_ENABLED", True)
 SWING_QUALITY_MODEL_PATH = _env_str("SWING_QUALITY_MODEL_PATH", "models/swing_quality_xgb.json")
-SWING_QUALITY_THRESHOLD = _env_float("SWING_QUALITY_THRESHOLD", 0.5)
+SWING_QUALITY_THRESHOLD = _env_float("SWING_QUALITY_THRESHOLD", 0.40)
 
 # MaxelPay
 MAXELPAY_API_KEY = _env_str("MAXELPAY_API_KEY", "")
