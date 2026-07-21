@@ -84,6 +84,9 @@ TP3_MULTIPLIER = _env_float("TP3_MULTIPLIER", 6.0)
 TP_CLOSE_THRESHOLD = _env_float("TP_CLOSE_THRESHOLD", 0.8)
 TP_CLOSE_MOMENTUM_MIN = _env_float("TP_CLOSE_MOMENTUM_MIN", 0.25)
 
+# Event loss — percentage of balance (scales with equity)
+MAX_EVENT_LOSS_PCT = _env_float("MAX_EVENT_LOSS_PCT", 5.0)  # 5% of balance
+
 # Meta strategy
 META_LOOKBACK_WINDOW = _env_int("META_LOOKBACK_WINDOW", 20)
 META_THRESHOLD_MIN = _env_float("META_THRESHOLD_MIN", 0.03)

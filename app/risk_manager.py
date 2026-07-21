@@ -125,9 +125,13 @@ class RiskManager:
         return True, "ok"
 
     def check_event_loss(self, event_pnl: float, balance: float = 0) -> Tuple[bool, str]:
-        max_loss_usd = float(getattr(cfg, 'MAX_EVENT_LOSS_USD', 5.0))
+        loss_pct = float(getattr(cfg, 'MAX_EVENT_LOSS_PCT', 5.0))
+        if balance > 0:
+            max_loss_usd = balance * (loss_pct / 100.0)
+        else:
+            max_loss_usd = float(getattr(cfg, 'MAX_EVENT_LOSS_USD', 5.0))
         if event_pnl < -max_loss_usd:
-            return False, f"event_loss_limit ({event_pnl:.2f} < -${max_loss_usd:.2f})"
+            return False, f"event_loss_limit ({event_pnl:.2f} < -${max_loss_usd:.2f} = {loss_pct:.1f}% of ${balance:.2f})"
         return True, "ok"
 
     def calculate_lot_size(self, balance: float,
