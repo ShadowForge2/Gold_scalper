@@ -87,6 +87,15 @@ TP_CLOSE_MOMENTUM_MIN = _env_float("TP_CLOSE_MOMENTUM_MIN", 0.25)
 # Event loss — percentage of balance (scales with equity)
 MAX_EVENT_LOSS_PCT = _env_float("MAX_EVENT_LOSS_PCT", 5.0)  # 5% of balance
 
+# Volatility regime — adaptive filters during high volatility
+VOLATILITY_REGIME_ENABLED = _env_bool("VOLATILITY_REGIME_ENABLED", True)
+VOLATILITY_ATR_MULT = _env_float("VOLATILITY_ATR_MULT", 1.5)  # current ATR > 1.5x avg = high vol
+VOLATILITY_LOT_REDUCTION = _env_float("VOLATILITY_LOT_REDUCTION", 0.5)  # 50% lot during high vol
+VOLATILITY_ASP_CONFIDENCE = _env_float("VOLATILITY_ASP_CONFIDENCE", 0.75)  # stricter confidence
+VOLATILITY_SQ_THRESHOLD = _env_float("VOLATILITY_SQ_THRESHOLD", 0.50)  # stricter swing quality
+CONSECUTIVE_LOSS_SKIP = _env_int("CONSECUTIVE_LOSS_SKIP", 5)  # skip regime after N consecutive losses
+CONSECUTIVE_LOSS_RESET_HOURS = _env_float("CONSECUTIVE_LOSS_RESET_HOURS", 4.0)  # reset counter after N hours
+
 # Meta strategy
 META_LOOKBACK_WINDOW = _env_int("META_LOOKBACK_WINDOW", 20)
 META_THRESHOLD_MIN = _env_float("META_THRESHOLD_MIN", 0.03)

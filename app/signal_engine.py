@@ -53,7 +53,8 @@ class SignalEngine:
 
     def evaluate_asp_entry(self, m1_data: pd.DataFrame, current_price: float,
                            events: Optional[list] = None,
-                           h1_data: Optional[pd.DataFrame] = None) -> Optional[Dict]:
+                           h1_data: Optional[pd.DataFrame] = None,
+                           min_sq_prob: Optional[float] = None) -> Optional[Dict]:
         """ASP-based entry: ML predicts swing turning points.
 
         SL = 2x ATR, TP = 1x ATR, timeout handled by bot.py.
@@ -108,18 +109,19 @@ class SignalEngine:
                                         threshold=getattr(cfg, "CHOP_THRESHOLD", 0.70))
 
             # Swing quality gate — reject if model says not at reversal
+            sq_prob_val = None
             if (getattr(cfg, "SWING_QUALITY_ENABLED", True) and
                     self._swing_quality is not None and self._swing_quality.ready):
-                sq_prob, _ = self._swing_quality.predict_quality(asp_feats)
-                if sq_prob is not None:
-                    threshold = getattr(cfg, "SWING_QUALITY_THRESHOLD", 0.5)
-                    if sq_prob < threshold:
+                sq_prob_val, _ = self._swing_quality.predict_quality(asp_feats)
+                if sq_prob_val is not None:
+                    threshold = min_sq_prob if min_sq_prob is not None else getattr(cfg, "SWING_QUALITY_THRESHOLD", 0.5)
+                    if sq_prob_val < threshold:
                         if self._logger:
                             self._logger.info(
-                                f"[ASP_ML] swing_quality_reject prob={sq_prob:.3f} < {threshold}"
+                                f"[ASP_ML] swing_quality_reject prob={sq_prob_val:.3f} < {threshold}"
                             )
                         return self._reject("swing_quality_low", price=current_price,
-                                             swing_quality=round(sq_prob, 4))
+                                             swing_quality=round(sq_prob_val, 4))
 
             last_row = asp_feats.iloc[-1]
             direction, confidence = self._asp_predictor.predict(last_row)
@@ -186,6 +188,7 @@ class SignalEngine:
                 "num_positions": 1,
                 "lot_mult": 1.0,
                 "asp_model": True,
+                "sq_prob": round(sq_prob_val, 4) if sq_prob_val is not None else None,
                 "timestamp": datetime.now().isoformat(),
             }
 

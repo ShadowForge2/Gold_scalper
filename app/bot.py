@@ -52,6 +52,11 @@ class Bot:
         self._symbol_event_start_ts: Dict[str, Optional[float]] = {}
         self._symbol_exit_confirms: Dict[str, int] = {}
         self._symbol_reversal_confirms: Dict[str, int] = {}
+        self._symbol_consecutive_losses: Dict[str, int] = {}
+        self._symbol_last_loss_ts: Dict[str, float] = {}
+        self._symbol_regime_skipped: Dict[str, Optional[str]] = {}  # "high"|"normal"|None
+        self._symbol_atr_history: Dict[str, list] = {}  # rolling ATR for vol detection
+        self._symbol_vol_regime: Dict[str, bool] = {}  # track current vol regime per symbol
 
         # Load per-symbol models and signal engines
         for sym in self.symbols:
@@ -95,6 +100,11 @@ class Bot:
             self._symbol_event_start_ts[sym] = None
             self._symbol_exit_confirms[sym] = 0
             self._symbol_reversal_confirms[sym] = 0
+            self._symbol_consecutive_losses[sym] = 0
+            self._symbol_last_loss_ts[sym] = 0.0
+            self._symbol_regime_skipped[sym] = None
+            self._symbol_atr_history[sym] = []
+            self._symbol_vol_regime[sym] = False  # False = normal vol
 
         # Legacy single-symbol references (use first symbol for backward compat)
         first_sym = self.symbols[0] if self.symbols else cfg.SYMBOL
@@ -590,6 +600,15 @@ class Bot:
 
         current_price = symbol_info.get("ask", 0)
 
+        current_atr = engine._compute_atr_m5(m1_data, cfg.ATR_PERIOD)
+        high_vol = self._is_high_volatility(sym, current_atr)
+
+        if self._should_skip_regime(sym, high_vol):
+            return
+
+        if high_vol:
+            self.logger.debug(f"[{sym}] High volatility regime — tighter filters active")
+
         signal = None
         asp_pred = getattr(engine, '_asp_predictor', None)
         if asp_pred and asp_pred.ready and cfg.ASP_ENABLED:
@@ -602,6 +621,23 @@ class Bot:
                 m1_data, current_price,
                 h1_data=h1_for_asp,
             )
+
+        if signal:
+            if high_vol:
+                vol_sq_thresh = getattr(cfg, "VOLATILITY_SQ_THRESHOLD", 0.50)
+                sq_p = signal.get("sq_prob")
+                if sq_p is not None and sq_p < vol_sq_thresh:
+                    self.logger.info(
+                        f"[{sym}] High vol: sq_prob {sq_p:.3f} < {vol_sq_thresh} — blocked"
+                    )
+                    return
+                min_conf = getattr(cfg, "VOLATILITY_ASP_CONFIDENCE", 0.75)
+                if signal.get("score", 0) < min_conf:
+                    self.logger.info(
+                        f"[{sym}] High vol: ASP conf {signal['score']:.3f} < {min_conf} — blocked"
+                    )
+                    return
+                signal["high_volatility"] = True
 
         if signal and m1_data is not None and len(m1_data) >= 15:
             signal["adx_at_entry"] = self._compute_adx(
@@ -657,6 +693,62 @@ class Bot:
             return "NEW_YORK"
         return "OUTSIDE"
 
+    def _is_high_volatility(self, sym: str, current_atr: float) -> bool:
+        if not getattr(cfg, "VOLATILITY_REGIME_ENABLED", True):
+            return False
+        hist = self._symbol_atr_history.get(sym, [])
+        if len(hist) < 20:
+            self._symbol_atr_history[sym] = hist + [current_atr]
+            return False
+        avg_atr = sum(hist[-50:]) / len(hist[-50:])
+        self._symbol_atr_history[sym] = hist[-99:] + [current_atr]
+        if avg_atr <= 0:
+            return False
+        return current_atr > avg_atr * cfg.VOLATILITY_ATR_MULT
+
+    def _should_skip_regime(self, sym: str, high_vol: bool = False) -> bool:
+        skipped = self._symbol_regime_skipped.get(sym)
+        if not skipped:
+            return False
+        current_regime = "high" if high_vol else "normal"
+        if skipped != current_regime:
+            return False
+        reset_hours = getattr(cfg, "CONSECUTIVE_LOSS_RESET_HOURS", 4.0)
+        last_loss = self._symbol_last_loss_ts.get(sym, 0)
+        if time.time() - last_loss > reset_hours * 3600:
+            self._symbol_regime_skipped[sym] = None
+            self._symbol_consecutive_losses[sym] = 0
+            self.logger.info(f"[{sym}] Regime skip ({skipped}) reset after {reset_hours}h cooldown")
+            return False
+        return True
+
+    def _record_trade_result(self, sym: str, pnl: float, high_vol: bool = False):
+        prev_vol = self._symbol_vol_regime.get(sym, False)
+        if high_vol != prev_vol:
+            self._symbol_consecutive_losses[sym] = 0
+            self._symbol_vol_regime[sym] = high_vol
+            if high_vol:
+                self.logger.info(f"[{sym}] Regime changed to HIGH VOL — loss counter reset")
+
+        if pnl < 0:
+            self._symbol_consecutive_losses[sym] = self._symbol_consecutive_losses.get(sym, 0) + 1
+            self._symbol_last_loss_ts[sym] = time.time()
+            losses = self._symbol_consecutive_losses[sym]
+            skip_thresh = getattr(cfg, "CONSECUTIVE_LOSS_SKIP", 5)
+            if losses >= skip_thresh:
+                self._symbol_regime_skipped[sym] = "high" if high_vol else "normal"
+                regime = "HIGH VOL" if high_vol else "NORMAL"
+                self.logger.warning(
+                    f"[{sym}] {losses} consecutive losses in {regime} regime — "
+                    f"skipping for {getattr(cfg, 'CONSECUTIVE_LOSS_RESET_HOURS', 4.0)}h"
+                )
+            else:
+                self.logger.info(f"[{sym}] Consecutive losses: {losses}/{skip_thresh}")
+        else:
+            if self._symbol_consecutive_losses.get(sym, 0) > 0:
+                self.logger.info(f"[{sym}] Win resets consecutive loss counter")
+            self._symbol_consecutive_losses[sym] = 0
+
     def _log_signal_diagnostic(self, reason: str, context: Dict):
         now = time.monotonic()
         key = f"{reason}|{context.get('direction')}|{context.get('price')}"
@@ -699,6 +791,7 @@ class Bot:
         acct = self.client.get_account_info()
         balance = acct.get("balance", 0) if acct else 0
 
+        direction = sym_positions[0].get("type", "BUY") if sym_positions else "BUY"
         event_pnl = sum(p.get("profit", 0) for p in sym_positions)
         event_ok, event_msg = self.risk_manager.check_event_loss(event_pnl, balance)
         if not event_ok:
@@ -709,6 +802,7 @@ class Bot:
                 self.position_manager.note_closed(pos_data, exit_reason="event_loss", score=sig.get("score", 0), balance=balance)
             if closed:
                 pnl = sum(p.get("profit", 0) for p in closed)
+                self._record_trade_result(sym, pnl, sig.get("high_volatility", False))
                 self._symbol_states[sym] = self.STATES["IDLE"]
                 self._symbol_event_start_ts[sym] = None
                 self._symbol_exit_confirms[sym] = 0
@@ -807,6 +901,7 @@ class Bot:
                     self.position_manager.note_closed(pos_data, exit_reason=exit_reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
                 if closed:
                     pnl = sum(p.get("profit", 0) for p in closed)
+                    self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
                     self._symbol_states[sym] = self.STATES["IDLE"]
                     self._symbol_event_start_ts[sym] = None
                     self._symbol_exit_confirms[sym] = 0
@@ -868,6 +963,7 @@ class Bot:
                     self.position_manager.note_closed(pos_data, exit_reason=reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
                 if closed:
                     pnl = sum(p.get("profit", 0) for p in closed)
+                    self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
                     self._symbol_states[sym] = self.STATES["IDLE"]
                     self._symbol_event_start_ts[sym] = None
                     if hasattr(self, f"_best_price_{sym}"):
@@ -938,6 +1034,17 @@ class Bot:
         vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
         lot = round(lot / vol_step) * vol_step
         lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), min(lot, fresh_info.get("volume_max", cfg.MAX_LOT)))
+
+        high_vol = signal.get("high_volatility", False)
+        if high_vol:
+            lot_reduction = getattr(cfg, "VOLATILITY_LOT_REDUCTION", 0.5)
+            original_lot = lot
+            lot = round(lot * lot_reduction / vol_step) * vol_step
+            lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), lot)
+            self.logger.info(
+                f"[{sym}] High vol: lot reduced {original_lot:.2f} → {lot:.2f} "
+                f"({lot_reduction:.0%} reduction)"
+            )
         max_trades = 1
 
         current_price = fresh_info.get("bid", fresh_info.get("price", 0)) if direction == "SELL" else fresh_info.get("ask", fresh_info.get("price", 0))
@@ -1100,6 +1207,10 @@ class Bot:
             self._symbol_event_start_ts[sym] = None
             self._symbol_exit_confirms[sym] = 0
             self._symbol_reversal_confirms[sym] = 0
+            self._symbol_consecutive_losses[sym] = 0
+            self._symbol_last_loss_ts[sym] = 0.0
+            self._symbol_regime_skipped[sym] = None
+            self._symbol_vol_regime[sym] = False
             self._symbol_signals[sym] = None
             if hasattr(self, f"_best_price_{sym}"):
                 delattr(self, f"_best_price_{sym}")
@@ -1124,6 +1235,8 @@ class Bot:
                 self._symbol_event_start_ts[sym] = None
                 self._symbol_exit_confirms[sym] = 0
                 self._symbol_reversal_confirms[sym] = 0
+                self._symbol_consecutive_losses[sym] = 0
+                self._symbol_regime_skipped[sym] = None
                 if hasattr(self, f"_best_price_{sym}"):
                     delattr(self, f"_best_price_{sym}")
         self.position_manager.refresh(symbols=self.symbols)
