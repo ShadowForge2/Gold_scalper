@@ -243,6 +243,10 @@ NEWS_USER_EVENTS_PATH = _env_str("NEWS_USER_EVENTS_PATH", "data/user_events.json
 JBLANKED_API_KEY = _env_str("JBLANKED_API_KEY", "")
 FINNHUB_API_KEY = _env_str("FINNHUB_API_KEY", "")
 
+# Failover
+FAILOVER_ENABLED = _env_bool("FAILOVER_ENABLED", False)
+FAILOVER_ROLE = _env_str("FAILOVER_ROLE", "primary")
+
 def is_market_open() -> bool:
     from datetime import datetime as _dt
     now = _dt.utcnow()

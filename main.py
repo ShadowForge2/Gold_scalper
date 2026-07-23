@@ -7,10 +7,12 @@ from app.bot_pool import BotPool
 from app import database as db_mod
 from app.database import init_db
 from app.subscription import get_active_accounts, can_start_live, start_trial
+from app.failover import FailoverManager
 import config as cfg
 
 bot = Bot()
 bot_pool = BotPool()
+failover = FailoverManager()
 _db_connected = False
 
 
@@ -62,6 +64,21 @@ def is_db_connected() -> bool:
     return _db_connected
 
 
+async def failover_heartbeat_loop():
+    while True:
+        try:
+            await failover.send_heartbeat()
+            if await failover.should_takeover():
+                bot.logger.warning("FAILOVER: Taking over as primary!")
+                if bot.state == bot.STATES["STOPPED"]:
+                    await bot.initialize()
+                    bot._account_id = cfg.CAPITAL_IDENTIFIER
+                    _fire_task(bot.run(), name="bot.run_recovered")
+        except Exception as e:
+            bot.logger.error(f"Failover heartbeat error: {e}")
+        await asyncio.sleep(30)
+
+
 app = create_app(bot, bot_pool=bot_pool, db_check=is_db_connected)
 
 
@@ -71,9 +88,14 @@ async def startup():
     from app.subscription import set_main_loop
     set_main_loop(_aio.get_running_loop())
     await startup_db()
+    if _db_connected:
+        await failover.init_db(db_mod.database)
     await bot.initialize()
     bot._account_id = cfg.CAPITAL_IDENTIFIER
+    bot._failover = failover
     _fire_task(bot.run(), name="bot.run")
+    if failover.enabled:
+        _fire_task(failover_heartbeat_loop(), name="failover.heartbeat")
     if _db_connected:
         try:
             accounts = await get_active_accounts()

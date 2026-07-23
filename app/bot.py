@@ -324,6 +324,11 @@ class Bot:
         self.logger.info("Bot loop ended")
 
     async def _tick(self):
+        failover = getattr(self, '_failover', None)
+        if failover and not failover.can_trade():
+            await asyncio.sleep(5)
+            return
+
         pnl_data = self.position_manager.refresh(symbols=self.symbols)
         self.risk_manager.daily_pnl = pnl_data["daily_pnl"]
 
