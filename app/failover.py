@@ -50,7 +50,7 @@ class FailoverManager:
                 VALUES ($1, $2, $3)
                 ON CONFLICT (identifier) DO UPDATE SET
                     role = $2, last_beat = $3
-            """, self.identifier, self.role, time.time())
+            """, [self.identifier, self.role, time.time()])
         except Exception as e:
             logger.error(f"Heartbeat send failed: {e}")
 
