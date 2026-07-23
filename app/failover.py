@@ -47,10 +47,10 @@ class FailoverManager:
         try:
             await self._db.execute("""
                 INSERT INTO failover_heartbeats (identifier, role, last_beat)
-                VALUES ($1, $2, $3)
+                VALUES (:identifier, :role, :last_beat)
                 ON CONFLICT (identifier) DO UPDATE SET
-                    role = $2, last_beat = $3
-            """, [self.identifier, self.role, time.time()])
+                    role = :role, last_beat = :last_beat
+            """, {"identifier": self.identifier, "role": self.role, "last_beat": time.time()})
         except Exception as e:
             logger.error(f"Heartbeat send failed: {e}")
 
@@ -60,8 +60,8 @@ class FailoverManager:
         try:
             row = await self._db.fetch_one("""
                 SELECT last_beat FROM failover_heartbeats
-                WHERE role = 'primary' AND identifier != $1
-            """, self.identifier)
+                WHERE role = 'primary' AND identifier != :identifier
+            """, {"identifier": self.identifier})
             if not row:
                 return False
             return (time.time() - row["last_beat"]) < HEARTBEAT_TIMEOUT
