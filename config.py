@@ -163,7 +163,7 @@ SYMBOL_ASP_TIMEOUT_BARS = {
 # Smart timeout — dual-model time-based re-scan
 SMART_TIMEOUT_DIR_MIN = _env_float("SMART_TIMEOUT_DIR_MIN", 15.0)  # direction predictor starts at 15 min
 SMART_TIMEOUT_ASP_MIN = _env_float("SMART_TIMEOUT_ASP_MIN", 45.0)  # ASP starts at 45 min
-SMART_TIMEOUT_RESCAN_SEC = _env_int("SMART_TIMEOUT_RESCAN_SEC", 30)  # re-scan every 30s after
+SMART_TIMEOUT_RESCAN_SEC = _env_int("SMART_TIMEOUT_RESCAN_SEC", 900)  # re-scan every 15 min (matches DP forecast horizon)
 
 # Adaptive confirmation
 ADAPTIVE_CONFIRMATION_ENABLED = _env_bool("ADAPTIVE_CONFIRMATION_ENABLED", True)
@@ -223,6 +223,15 @@ ASP_TRAILING_TRIGGER_ATR = _env_float("ASP_TRAILING_TRIGGER_ATR", 1.5)  # activa
 ASP_TRAILING_RETRACE_ATR = _env_float("ASP_TRAILING_RETRACE_ATR", 2.5)  # trail 2.5x ATR behind best (2-3x ATR)
 ASP_TRAIL_MIN_BARS = _env_int("ASP_TRAIL_MIN_BARS", 4)  # minimum M1 bars held before trailing activates
 ASP_TRAIL_ADX_MIN = _env_float("ASP_TRAIL_ADX_MIN", 20.0)  # minimum ADX for trailing (0 = disabled)
+
+# Break-even SL — lock in no-loss when price moves this fraction of ATR in your favor
+ASP_BREAK_EVEN_TRIGGER_ATR = _env_float("ASP_BREAK_EVEN_TRIGGER_ATR", 0.30)
+
+# Per-symbol break-even trigger override
+SYMBOL_BREAK_EVEN_TRIGGER = {
+    "XAUUSD": _env_float("BREAK_EVEN_TRIGGER_XAUUSD", 0.30),
+    "US100": _env_float("BREAK_EVEN_TRIGGER_US100", 0.30),
+}
 
 # Chop filter — reject ASP signals when market is stagnant
 CHOP_FILTER_ENABLED = _env_bool("CHOP_FILTER_ENABLED", True)

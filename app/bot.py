@@ -938,6 +938,22 @@ class Bot:
                     )
                 setattr(self, best_key, best)
 
+            # Break-even SL — move SL to entry when profit exceeds threshold
+            be_trigger = cfg.SYMBOL_BREAK_EVEN_TRIGGER.get(sym, getattr(cfg, "ASP_BREAK_EVEN_TRIGGER_ATR", 0.30))
+            if atr_val > 0 and be_trigger > 0:
+                if direction == "BUY":
+                    profit_px = current_px - entry_price
+                    if profit_px >= atr_val * be_trigger and asp_sl < entry_price:
+                        asp_sl = entry_price
+                        pos_signal["sl"] = asp_sl
+                        self.logger.debug(f"[{sym}] Break-even SL activated (profit={profit_px:.2f})")
+                else:
+                    profit_px = entry_price - current_px
+                    if profit_px >= atr_val * be_trigger and asp_sl > entry_price:
+                        asp_sl = entry_price
+                        pos_signal["sl"] = asp_sl
+                        self.logger.debug(f"[{sym}] Break-even SL activated (profit={profit_px:.2f})")
+
             if direction == "BUY":
                 if asp_sl and current_px <= asp_sl:
                     should_exit = True
