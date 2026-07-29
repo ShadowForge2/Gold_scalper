@@ -15,8 +15,8 @@ from app.asp_features import compute_asp_features, ASP_FEATURE_COLS
 client = DukascopyClient()
 MODEL_PATH = os.path.join("models", "swing_quality_xgb.json")
 
-TRAIN_YEARS = list(range(2007, 2022))
-TEST_YEARS = [2022, 2023, 2024, 2025]
+TRAIN_YEARS = list(range(2022, 2026))
+TEST_YEARS = [2026]
 
 
 def load_year(year):

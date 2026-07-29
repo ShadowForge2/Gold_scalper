@@ -264,6 +264,7 @@ def create_target(df: pd.DataFrame, horizon: int = 3, atr_threshold: float = 0.3
 
     When chop_score is None, falls back to |forward move| <= atr_threshold*ATR.
     """
+    df = _ensure_dtindex(df)
     closes = df["close"].values.astype(np.float64)
 
     if chop_score is not None:

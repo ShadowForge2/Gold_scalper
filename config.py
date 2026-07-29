@@ -170,6 +170,10 @@ ADAPTIVE_CONF_P_HIGH = _env_int("ADAPTIVE_CONF_P_HIGH", 0)
 # Filters
 MAX_SPREAD_PIPS = _env_float("MAX_SPREAD_PIPS", 35.0)
 ALLOWED_SESSIONS = _env_str("ALLOWED_SESSIONS", "LONDON,NEW_YORK")
+SYMBOL_ALLOWED_SESSIONS = {
+    "XAUUSD": _env_str("SESSIONS_XAUUSD", "ASIA,LONDON,NEW_YORK"),
+    "US100": _env_str("SESSIONS_US100", "LONDON,NEW_YORK"),
+}
 
 # Deviation / slippage
 MAX_SLIPPAGE_PIPS = _env_int("MAX_SLIPPAGE_PIPS", 10)
@@ -223,6 +227,14 @@ CHOP_THRESHOLD = _env_float("CHOP_THRESHOLD", 0.70)  # validated: 1.59x movement
 SWING_QUALITY_ENABLED = _env_bool("SWING_QUALITY_ENABLED", True)
 SWING_QUALITY_MODEL_PATH = _env_str("SWING_QUALITY_MODEL_PATH", "models/swing_quality_xgb.json")
 SWING_QUALITY_THRESHOLD = _env_float("SWING_QUALITY_THRESHOLD", 0.40)
+
+# Direction predictor — second ML confirmation gate
+DIRECTION_PREDICTOR_ENABLED = _env_bool("DIRECTION_PREDICTOR_ENABLED", True)
+DIRECTION_CONFIDENCE_THRESHOLD = _env_float("DIRECTION_CONFIDENCE_THRESHOLD", 0.60)
+DIRECTION_MODEL_PATHS = {
+    "XAUUSD": _env_str("DIRECTION_MODEL_PATH", "models/direction_xgb_m5_XAUUSD.joblib"),
+    "US100": _env_str("DIRECTION_MODEL_PATH_US100", "models/direction_xgb_m5_US100.joblib"),
+}
 
 # MaxelPay
 MAXELPAY_API_KEY = _env_str("MAXELPAY_API_KEY", "")

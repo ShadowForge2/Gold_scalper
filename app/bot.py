@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import sys
 import time
 from datetime import datetime, timezone
 from typing import Optional, Dict, List
@@ -31,6 +32,13 @@ except ImportError:
     SwingQualityPredictor = None
     _HAS_SQ = False
 
+try:
+    from app.direction_predictor import DirectionPredictor
+    _HAS_DIR = True
+except ImportError:
+    DirectionPredictor = None
+    _HAS_DIR = False
+
 
 class Bot:
     STATES = {
@@ -57,11 +65,13 @@ class Bot:
         self._symbol_regime_skipped: Dict[str, Optional[str]] = {}  # "high"|"normal"|None
         self._symbol_atr_history: Dict[str, list] = {}  # rolling ATR for vol detection
         self._symbol_vol_regime: Dict[str, bool] = {}  # track current vol regime per symbol
+        self._last_retrain_week: int = -1  # week number of last auto-retrain
 
         # Load per-symbol models and signal engines
         for sym in self.symbols:
             asp_pred = None
             sq_pred = None
+            dir_pred = None
 
             # ASP model
             if _HAS_ASP and cfg.ASP_ENABLED:
@@ -89,9 +99,23 @@ class Bot:
                 except Exception as e:
                     self.logger.warning(f"[{sym}] Failed to load swing quality model: {e}")
 
+            # Direction predictor model
+            if _HAS_DIR and getattr(cfg, "DIRECTION_PREDICTOR_ENABLED", True):
+                dir_path = cfg.DIRECTION_MODEL_PATHS.get(sym, cfg.DIRECTION_MODEL_PATHS.get("XAUUSD"))
+                try:
+                    dir_pred = DirectionPredictor(model_path=dir_path)
+                    if dir_pred.model is not None:
+                        self.logger.info(f"[{sym}] Direction predictor loaded from {dir_path}")
+                    else:
+                        self.logger.warning(f"[{sym}] Direction predictor model not found at {dir_path}")
+                        dir_pred = None
+                except Exception as e:
+                    self.logger.warning(f"[{sym}] Failed to load direction predictor: {e}")
+
             engine = SignalEngine(
                 asp_predictor=asp_pred,
                 swing_quality_predictor=sq_pred,
+                direction_predictor=dir_pred,
                 logger=self.logger,
             )
             self._symbol_engines[sym] = engine
@@ -377,6 +401,34 @@ class Bot:
                 self._last_reconnect_time = now_t
             self._write_state()
             return
+
+        now_dt = datetime.now(timezone.utc)
+        if now_dt.weekday() == 5:  # Saturday — markets closed
+            week_num = now_dt.isocalendar()[1]
+            if week_num != self._last_retrain_week:
+                self.logger.info(f"[RETRAIN] Saturday detected, starting weekly retrain (week {week_num})...")
+                self._last_retrain_week = week_num
+                base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                script = os.path.join(base, "_retrain_weekly.py")
+                if os.path.exists(script):
+                    try:
+                        proc = await asyncio.create_subprocess_exec(
+                            sys.executable, script,
+                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                            cwd=base,
+                        )
+                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=600)
+                        output = stdout.decode() if stdout else ""
+                        for line in output.splitlines():
+                            self.logger.info(f"[RETRAIN] {line}")
+                        if proc.returncode == 0:
+                            self.logger.info("[RETRAIN] All models retrained successfully")
+                        else:
+                            self.logger.error(f"[RETRAIN] Retraining failed (exit={proc.returncode})")
+                    except asyncio.TimeoutError:
+                        self.logger.error("[RETRAIN] Retraining timed out after 600s")
+                    except Exception as e:
+                        self.logger.error(f"[RETRAIN] Retraining error: {e}")
 
         if self.state not in (self.STATES["IN_TRADE"], self.STATES["WAITING_FOR_FUNDS"]):
             info = self.client.get_account_info()

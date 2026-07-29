@@ -15,8 +15,8 @@ client = DukascopyClient()
 MODEL_PATH = "models/asp_swing_xgb_m5.joblib"
 FEATURE_PATH = "models/asp_swing_m5_features.npy"
 
-TRAIN_YEARS = list(range(2017, 2022))
-TEST_YEARS = [2022, 2023, 2024, 2025]
+TRAIN_YEARS = list(range(2022, 2026))
+TEST_YEARS = [2026]
 FWD_BARS = 3
 ATR_MULT = 0.3
 

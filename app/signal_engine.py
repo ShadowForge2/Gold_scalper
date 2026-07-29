@@ -23,23 +23,29 @@ except ImportError:
     _HAS_SQ = False
 
 try:
-    from app.direction_predictor import compute_chop_score
+    from app.direction_predictor import compute_chop_score, compute_features, DirectionPredictor
     _HAS_CHOP = True
+    _HAS_DIR = True
 except ImportError:
     compute_chop_score = None
+    compute_features = None
+    DirectionPredictor = None
     _HAS_CHOP = False
+    _HAS_DIR = False
 
 
 class SignalEngine:
     def __init__(self,
                  asp_predictor: Optional["ASPPredictor"] = None,
                  swing_quality_predictor: Optional["SwingQualityPredictor"] = None,
+                 direction_predictor: Optional["DirectionPredictor"] = None,
                  logger=None):
         self.current_signal: Optional[Dict] = None
         self.last_signal_time: Optional[datetime] = None
         self.last_rejection: Optional[Dict] = None
         self._asp_predictor = asp_predictor
         self._swing_quality = swing_quality_predictor
+        self._direction_predictor = direction_predictor
         self._logger = logger
         self._last_asp_log_time = 0.0
 
@@ -154,6 +160,33 @@ class SignalEngine:
                                     confidence=round(confidence, 4),
                                     min_confidence=min_conf)
 
+            dir_agreed = None
+            if (getattr(cfg, "DIRECTION_PREDICTOR_ENABLED", True) and
+                    _HAS_DIR and self._direction_predictor is not None):
+                dir_feats = compute_features(m5, h1 if h1 is not None else None)
+                if dir_feats is not None and len(dir_feats) > 0:
+                    dir_threshold = getattr(cfg, "DIRECTION_CONFIDENCE_THRESHOLD", 0.60)
+                    dir_pred = self._direction_predictor.predict(dir_feats, confidence_threshold=dir_threshold)
+                    if dir_pred is None:
+                        if self._logger:
+                            self._logger.info(
+                                f"[ASP_ML] dir_predictor_no_trade: ASP={direction} but model says NO_TRADE"
+                            )
+                        return self._reject("dir_predictor_no_trade", price=current_price,
+                                            asp_direction=direction)
+                    if (direction == "BUY" and dir_pred != "BUY") or (direction == "SELL" and dir_pred != "SELL"):
+                        if self._logger:
+                            self._logger.info(
+                                f"[ASP_ML] dir_predictor_disagree: ASP={direction} but model={dir_pred}"
+                            )
+                        return self._reject("dir_predictor_disagree", price=current_price,
+                                            asp_direction=direction, dir_prediction=dir_pred)
+                    dir_agreed = True
+                    if self._logger:
+                        self._logger.info(
+                            f"[ASP_ML] dir_predictor_agree: both models say {direction}"
+                        )
+
             atr_val = self._compute_atr_m5(m1_data, cfg.ATR_PERIOD)
             if atr_val <= 0:
                 atr_val = current_price * 0.001
@@ -189,6 +222,7 @@ class SignalEngine:
                 "lot_mult": 1.0,
                 "asp_model": True,
                 "sq_prob": round(sq_prob_val, 4) if sq_prob_val is not None else None,
+                "dir_confirmation": True if dir_agreed else False,
                 "timestamp": datetime.now().isoformat(),
             }
 

@@ -13,3 +13,4 @@ joblib>=1.4.0
 scikit-learn>=1.5.0
 torch>=2.0.0
 firebase-admin>=6.5.0
+dukascopy-python>=0.1.0

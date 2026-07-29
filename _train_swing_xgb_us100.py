@@ -17,8 +17,8 @@ CACHE_DIR = "data/dukascopy_us100"
 client = DukascopyClient(symbol=SYMBOL, cache_dir=CACHE_DIR)
 MODEL_PATH = os.path.join("models", "swing_quality_xgb_US100.json")
 
-TRAIN_YEARS = list(range(2020, 2023))
-TEST_YEARS = [2023, 2024, 2025]
+TRAIN_YEARS = list(range(2022, 2026))
+TEST_YEARS = [2026]
 
 
 def load_year(year):

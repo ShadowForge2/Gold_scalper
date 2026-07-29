@@ -95,6 +95,10 @@ services:
         value: "200.0"
       - key: ALLOWED_SESSIONS
         value: ASIA,LONDON,NEW_YORK
+      - key: SESSIONS_XAUUSD
+        value: ASIA,LONDON,NEW_YORK
+      - key: SESSIONS_US100
+        value: LONDON,NEW_YORK
       - key: PEAK_HARVEST_TRAIL_TRIGGER
         value: "3.0"
       - key: PEAK_HARVEST_TRAIL_RETRACE

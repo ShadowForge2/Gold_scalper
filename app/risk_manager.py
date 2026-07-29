@@ -118,7 +118,7 @@ class RiskManager:
         if spread_pips > max_spread:
             return False, f"spread_too_high ({spread_pips:.1f} > {max_spread})"
 
-        session_ok, session_name = self._check_session(now)
+        session_ok, session_name = self._check_session(now, symbol)
         if not session_ok:
             return False, f"session_not_allowed ({session_name})"
 
@@ -146,20 +146,24 @@ class RiskManager:
         lot = round(lot / step) * step
         return lot
 
-    def _check_session(self, dt: datetime) -> Tuple[bool, str]:
+    def _check_session(self, dt: datetime, symbol: str = "XAUUSD") -> Tuple[bool, str]:
         hour = dt.hour
         minute = dt.minute
         time_decimal = hour + minute / 60.0
 
-        sessions = {
+        session_windows = {
             "ASIA": (0, 8),
             "LONDON": (7, 17),
             "NEW_YORK": (12, 22),
         }
 
-        for name in self.allowed_sessions:
-            if name in sessions:
-                start, end = sessions[name]
+        sym_sessions = getattr(cfg, 'SYMBOL_ALLOWED_SESSIONS', {}).get(symbol, self.allowed_sessions)
+        if isinstance(sym_sessions, str):
+            sym_sessions = [s.strip().upper() for s in sym_sessions.split(",")]
+
+        for name in sym_sessions:
+            if name in session_windows:
+                start, end = session_windows[name]
                 if start <= time_decimal < end:
                     return True, name
 

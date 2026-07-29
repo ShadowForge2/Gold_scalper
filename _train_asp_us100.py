@@ -17,8 +17,8 @@ client = DukascopyClient(symbol=SYMBOL, cache_dir=CACHE_DIR)
 MODEL_PATH = "models/asp_swing_xgb_m5_US100.joblib"
 FEATURE_PATH = "models/asp_swing_m5_features_US100.npy"
 
-TRAIN_YEARS = list(range(2020, 2023))
-TEST_YEARS = [2023, 2024, 2025]
+TRAIN_YEARS = list(range(2022, 2026))
+TEST_YEARS = [2026]
 FWD_BARS = 3
 ATR_MULT = 0.3
 
