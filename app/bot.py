@@ -65,6 +65,8 @@ class Bot:
         self._symbol_regime_skipped: Dict[str, Optional[str]] = {}  # "high"|"normal"|None
         self._symbol_atr_history: Dict[str, list] = {}  # rolling ATR for vol detection
         self._symbol_vol_regime: Dict[str, bool] = {}  # track current vol regime per symbol
+        self._symbol_last_rescan_ts: Dict[str, float] = {}
+        self._symbol_rescan_count: Dict[str, int] = {}
         self._last_retrain_week: int = -1  # week number of last auto-retrain
 
         # Load per-symbol models and signal engines
@@ -129,6 +131,8 @@ class Bot:
             self._symbol_regime_skipped[sym] = None
             self._symbol_atr_history[sym] = []
             self._symbol_vol_regime[sym] = False  # False = normal vol
+            self._symbol_last_rescan_ts[sym] = 0.0
+            self._symbol_rescan_count[sym] = 0
 
         # Legacy single-symbol references (use first symbol for backward compat)
         first_sym = self.symbols[0] if self.symbols else cfg.SYMBOL
@@ -864,6 +868,8 @@ class Bot:
                 self._symbol_event_start_ts[sym] = None
                 self._symbol_exit_confirms[sym] = 0
                 self._symbol_reversal_confirms[sym] = 0
+                self._symbol_last_rescan_ts[sym] = 0.0
+                self._symbol_rescan_count[sym] = 0
                 await self._notify(
                     "trade_close",
                     f"Trade Closed — {sym}",
@@ -881,17 +887,16 @@ class Bot:
         event_start = self._symbol_event_start_ts.get(sym)
         exit_interval = cfg.EXIT_CHECK_INTERVAL or 300
         bars_held = max(0, int((time.time() - event_start) / exit_interval)) if event_start else 0
-        timeout_bars = cfg.SYMBOL_ASP_TIMEOUT_BARS.get(sym, 24)
 
         pos_signal = self._symbol_signals.get(sym)
         is_asp = pos_signal and pos_signal.get("asp_model")
+        minutes_held = (time.time() - event_start) / 60.0 if event_start else 0.0
 
         if is_asp:
             asp_sl = pos_signal.get("sl")
             asp_tp = pos_signal.get("tp1")
             atr_val = pos_signal.get("atr_value", 0)
 
-            minutes_held = (time.time() - event_start) / 60.0 if event_start else 0.0
             adx_at_entry = pos_signal.get("adx_at_entry", 50.0)
             adx_ok = adx_at_entry >= getattr(cfg, "ASP_TRAIL_ADX_MIN", 0.0)
             bars_ok = minutes_held >= getattr(cfg, "ASP_TRAIL_MIN_BARS", 0)
@@ -975,46 +980,59 @@ class Bot:
                     self.logger.warning(f"[{sym}] ASP exit close failed, retrying next tick")
                 return
 
-        if bars_held >= timeout_bars:
+        dir_timeout_min = getattr(cfg, "SMART_TIMEOUT_DIR_MIN", 15)
+        asp_timeout_min = getattr(cfg, "SMART_TIMEOUT_ASP_MIN", 45)
+        rescan_interval = getattr(cfg, "SMART_TIMEOUT_RESCAN_SEC", 30)
+
+        if minutes_held >= dir_timeout_min:
+            now = time.time()
+            last_scan = self._symbol_last_rescan_ts.get(sym, 0.0)
+            if now - last_scan < rescan_interval:
+                return
+            self._symbol_last_rescan_ts[sym] = now
+
             engine = self._symbol_engines.get(sym)
             m1_bars = getattr(cfg, 'ASP_M1_HISTORY_BARS', 300)
             m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, m1_bars)
-            fresh_signal = None
-            if engine and m1_data is not None and len(m1_data) >= 96:
-                h1_for_asp = self.client.get_rates(sym, cfg.BIAS_TIMEFRAME, 48)
-                fresh_signal = engine.evaluate_asp_entry(m1_data, current_px, h1_data=h1_for_asp)
-
-            if fresh_signal is None and (m1_data is None or len(m1_data) < 96):
+            if m1_data is None or len(m1_data) < 96:
                 self.logger.debug(f"[{sym}] Timeout skipped: data fetch failed, holding")
                 return
 
+            fresh_signal = None
+            dir_flip = False
+            h1_for_asp = None
+            if engine:
+                h1_for_asp = self.client.get_rates(sym, cfg.BIAS_TIMEFRAME, 48)
+                fresh_signal = engine.evaluate_asp_entry(m1_data, current_px, h1_data=h1_for_asp)
+                dir_pred = getattr(engine, '_direction_predictor', None)
+                if dir_pred is not None and h1_for_asp is not None and len(h1_for_asp) > 0:
+                    try:
+                        from app.direction_predictor import compute_features as _compute_dir_feats
+                        m1_idx = m1_data.set_index("time") if "time" in m1_data.columns else m1_data
+                        m5 = m1_idx.resample("5min").agg({
+                            "open": "first", "high": "max", "low": "min", "close": "last",
+                            "tick_volume": "sum",
+                        }).dropna()
+                        if len(m5) >= 20:
+                            dir_feats = _compute_dir_feats(m5, h1_for_asp)
+                            if dir_feats is not None and len(dir_feats) > 0:
+                                dir_threshold = getattr(cfg, "DIRECTION_CONFIDENCE_THRESHOLD", 0.60)
+                                dir_prediction = dir_pred.predict(dir_feats, confidence_threshold=dir_threshold)
+                                if dir_prediction is not None and dir_prediction != direction:
+                                    dir_flip = True
+                    except Exception as e:
+                        self.logger.debug(f"[{sym}] Dir predictor timeout check failed: {e}")
+
             fresh_dir = fresh_signal.get("direction") if fresh_signal else None
-            if fresh_dir == direction:
-                self._symbol_exit_confirms[sym] = self._symbol_exit_confirms.get(sym, 0) + 1
-                confirms = self._symbol_exit_confirms[sym]
+            asp_flip = fresh_dir is not None and fresh_dir != direction
+            event_pnl = sum(p.get("profit", 0) for p in sym_positions)
+
+            if dir_flip:
+                reason = f"dir_timeout_{int(minutes_held)}min_flip"
                 self.logger.signal(
-                    f"[{sym}] Timeout hold: same-direction re-scan #{confirms} "
-                    f"(dir={direction} held {bars_held}bars, need ≥2 confirms)"
+                    f"[{sym}] Timeout exit: direction predictor flipped at {int(minutes_held)}m | "
+                    f"dir={direction} pnl=${event_pnl:+.2f} entry={entry_price:.2f} px={current_px:.2f}"
                 )
-                if confirms >= 2:
-                    self._symbol_event_start_ts[sym] = time.time()
-                    self._symbol_exit_confirms[sym] = 0
-                    self._symbol_reversal_confirms[sym] = 0
-                    self.logger.signal(f"[{sym}] Timeout reset: model confirms move still valid, extending")
-            else:
-                self._symbol_reversal_confirms[sym] = self._symbol_reversal_confirms.get(sym, 0) + 1
-                rev_confirms = self._symbol_reversal_confirms[sym]
-                reason = f"asp_timeout_{bars_held}bars_reversal" if fresh_dir else f"asp_timeout_{bars_held}bars_no_signal"
-                self.logger.signal(
-                    f"[{sym}] Timeout reversal re-scan #{rev_confirms}: {reason} "
-                    f"(dir={direction} held {bars_held}bars, need ≥2 reversals to exit)"
-                )
-                if rev_confirms < 2:
-                    self._symbol_exit_confirms[sym] = 0
-                    return
-                self._symbol_exit_confirms[sym] = 0
-                self._symbol_reversal_confirms[sym] = 0
-                self.logger.signal(f"[{sym}] Timeout exit: {reason} | dir={direction} entry={entry_price:.2f} px={current_px:.2f}")
                 closed = self.trade_executor.close_all_bot_positions(symbol=sym)
                 for pos_data in closed:
                     self.position_manager.note_closed(pos_data, exit_reason=reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
@@ -1023,17 +1041,52 @@ class Bot:
                     self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
                     self._symbol_states[sym] = self.STATES["IDLE"]
                     self._symbol_event_start_ts[sym] = None
+                    self._symbol_last_rescan_ts[sym] = 0.0
+                    self._symbol_rescan_count[sym] = 0
                     if hasattr(self, f"_best_price_{sym}"):
                         delattr(self, f"_best_price_{sym}")
                     await self._notify(
                         "trade_close",
                         f"Trade Closed — {sym}",
-                        f"{direction} {sym} closed ({reason}) | PnL: ${pnl:+.2f} | held {bars_held * 5}m",
-                        {"symbol": sym, "direction": direction, "exit_reason": reason, "pnl": pnl, "held_bars": bars_held},
+                        f"{direction} {sym} closed ({reason}) | PnL: ${pnl:+.2f} | held {int(minutes_held)}m",
+                        {"symbol": sym, "direction": direction, "exit_reason": reason, "pnl": pnl, "held_minutes": minutes_held},
                     )
                 else:
                     self.logger.warning(f"[{sym}] Timeout exit close failed, retrying next tick")
                 return
+
+            if minutes_held >= asp_timeout_min and asp_flip:
+                reason = f"asp_timeout_{int(minutes_held)}min_flip"
+                self.logger.signal(
+                    f"[{sym}] Timeout exit: ASP flipped at {int(minutes_held)}m | "
+                    f"dir={direction} pnl=${event_pnl:+.2f} entry={entry_price:.2f} px={current_px:.2f}"
+                )
+                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                for pos_data in closed:
+                    self.position_manager.note_closed(pos_data, exit_reason=reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
+                if closed:
+                    pnl = sum(p.get("profit", 0) for p in closed)
+                    self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
+                    self._symbol_states[sym] = self.STATES["IDLE"]
+                    self._symbol_event_start_ts[sym] = None
+                    self._symbol_last_rescan_ts[sym] = 0.0
+                    self._symbol_rescan_count[sym] = 0
+                    if hasattr(self, f"_best_price_{sym}"):
+                        delattr(self, f"_best_price_{sym}")
+                    await self._notify(
+                        "trade_close",
+                        f"Trade Closed — {sym}",
+                        f"{direction} {sym} closed ({reason}) | PnL: ${pnl:+.2f} | held {int(minutes_held)}m",
+                        {"symbol": sym, "direction": direction, "exit_reason": reason, "pnl": pnl, "held_minutes": minutes_held},
+                    )
+                else:
+                    self.logger.warning(f"[{sym}] Timeout exit close failed, retrying next tick")
+                return
+
+            status = "DP=FLIP(wait_asp)" if dir_flip else "ASP=FLIP(wait_dir)" if asp_flip else "both_agree"
+            self.logger.signal(
+                f"[{sym}] Timeout hold ({int(minutes_held)}m): {status} pnl=${event_pnl:+.2f}"
+            )
 
     async def _handle_waiting_for_funds(self, sym: str = None):
         info = self.client.get_account_info()
@@ -1269,6 +1322,8 @@ class Bot:
             self._symbol_regime_skipped[sym] = None
             self._symbol_vol_regime[sym] = False
             self._symbol_signals[sym] = None
+            self._symbol_last_rescan_ts[sym] = 0.0
+            self._symbol_rescan_count[sym] = 0
             if hasattr(self, f"_best_price_{sym}"):
                 delattr(self, f"_best_price_{sym}")
         self.logger.info("Bot manually started")
@@ -1294,6 +1349,8 @@ class Bot:
                 self._symbol_reversal_confirms[sym] = 0
                 self._symbol_consecutive_losses[sym] = 0
                 self._symbol_regime_skipped[sym] = None
+                self._symbol_last_rescan_ts[sym] = 0.0
+                self._symbol_rescan_count[sym] = 0
                 if hasattr(self, f"_best_price_{sym}"):
                     delattr(self, f"_best_price_{sym}")
         self.position_manager.refresh(symbols=self.symbols)

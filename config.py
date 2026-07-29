@@ -160,6 +160,11 @@ SYMBOL_ASP_TIMEOUT_BARS = {
     "US100": _env_int("ASP_TIMEOUT_BARS_US100", 10),
 }
 
+# Smart timeout — dual-model time-based re-scan
+SMART_TIMEOUT_DIR_MIN = _env_float("SMART_TIMEOUT_DIR_MIN", 15.0)  # direction predictor starts at 15 min
+SMART_TIMEOUT_ASP_MIN = _env_float("SMART_TIMEOUT_ASP_MIN", 45.0)  # ASP starts at 45 min
+SMART_TIMEOUT_RESCAN_SEC = _env_int("SMART_TIMEOUT_RESCAN_SEC", 30)  # re-scan every 30s after
+
 # Adaptive confirmation
 ADAPTIVE_CONFIRMATION_ENABLED = _env_bool("ADAPTIVE_CONFIRMATION_ENABLED", True)
 ADAPTIVE_CONF_WINDOW = _env_int("ADAPTIVE_CONF_WINDOW", 200)
