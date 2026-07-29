@@ -1,4 +1,5 @@
-import os, sys, time, warnings
+import os, sys, time, warnings, argparse
+from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 import joblib
@@ -13,22 +14,7 @@ from app.direction_predictor import (
 )
 
 SYMBOLS = ["XAUUSD", "US100"]
-
-SYMBOL_CONFIG = {
-    "XAUUSD": {
-        "cache_dir": "data/dukascopy",
-        "model_path": "models/direction_xgb_m5_XAUUSD.joblib",
-        "train_years": list(range(2022, 2026)),
-        "test_years": [2026],
-    },
-    "US100": {
-        "cache_dir": "data/dukascopy_us100",
-        "model_path": "models/direction_xgb_m5_US100.joblib",
-        "train_years": list(range(2022, 2026)),
-        "test_years": [2026],
-    },
-}
-
+TRAIN_START = 2022
 TRAIN_SPLIT = 0.85
 CHOP_PCT = 0.33
 HORIZON = 3
@@ -45,8 +31,8 @@ def load_year(client, year):
     return m5, h1
 
 
-def train_for_symbol(symbol):
-    cfg = SYMBOL_CONFIG[symbol]
+def train_for_symbol(cfg):
+    symbol = cfg.get("symbol", "?")
     t0 = time.time()
     print(f"\n{'=' * 60}")
     print(f"  Direction Predictor Training — {symbol}")
@@ -150,8 +136,33 @@ def train_for_symbol(symbol):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Train Direction Predictor models")
+    parser.add_argument("--year", type=int, default=datetime.now(timezone.utc).year, help="Training end year (default: current)")
+    args = parser.parse_args()
+
+    train_years = list(range(TRAIN_START, args.year))
+    test_years = [args.year]
+
+    # Build per-symbol config dynamically
+    SYMBOL_CONFIG = {
+        "XAUUSD": {
+            "symbol": "XAUUSD",
+            "cache_dir": "data/dukascopy",
+            "model_path": "models/direction_xgb_m5_XAUUSD.joblib",
+            "train_years": train_years,
+            "test_years": test_years,
+        },
+        "US100": {
+            "symbol": "US100",
+            "cache_dir": "data/dukascopy_us100",
+            "model_path": "models/direction_xgb_m5_US100.joblib",
+            "train_years": train_years,
+            "test_years": test_years,
+        },
+    }
+
     for symbol in SYMBOLS:
-        train_for_symbol(symbol)
+        train_for_symbol(SYMBOL_CONFIG[symbol])
     print(f"\n{'=' * 60}")
     print(f"  All models trained successfully!")
     print(f"{'=' * 60}")

@@ -1,7 +1,8 @@
 """
-Final Swing Quality XGBoost — ZigZag H4 labels, full 2007-2021 training.
+Swing Quality XGBoost — ZigZag H4 labels.
 """
-import os, sys, time, warnings
+import os, sys, time, warnings, argparse
+from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 import xgboost as xgb
@@ -15,8 +16,7 @@ from app.asp_features import compute_asp_features, ASP_FEATURE_COLS
 client = DukascopyClient()
 MODEL_PATH = os.path.join("models", "swing_quality_xgb.json")
 
-TRAIN_YEARS = list(range(2022, 2026))
-TEST_YEARS = [2026]
+TRAIN_START = 2022
 
 
 def load_year(year):
@@ -62,15 +62,22 @@ def label_zigzag_h4(m5, h4):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Train Swing Quality model")
+    parser.add_argument("--year", type=int, default=datetime.now(timezone.utc).year, help="Training end year (default: current)")
+    args = parser.parse_args()
+
+    train_years = list(range(TRAIN_START, args.year))
+    test_years = [args.year]
+
     t0 = time.time()
     print("=" * 60)
-    print("  Final Swing Quality XGBoost — ZigZag H4 0.5%")
+    print("  Swing Quality XGBoost — ZigZag H4 0.5%")
     print("=" * 60)
     sys.stdout.flush()
 
-    print(f"\n[1] Loading data ({TRAIN_YEARS[0]}-{TRAIN_YEARS[-1]})...")
+    print(f"\n[1] Loading data ({train_years[0]}-{train_years[-1]})...")
     all_m5, all_h1, all_h4 = [], [], []
-    for y in TRAIN_YEARS:
+    for y in train_years:
         print(f"  {y}...", end=" ", flush=True)
         m5, h1, h4 = load_year(y)
         print(f"{len(m5)} bars {time.time()-t0:.0f}s")
@@ -125,8 +132,8 @@ def main():
     for name, imp in top10:
         print(f"    {name:<25} {imp:.4f}")
 
-    print(f"\n[4] OOS (2022-2025)...")
-    for y in TEST_YEARS:
+    print(f"\n[4] OOS ({test_years[0]}-{test_years[-1]})...")
+    for y in test_years:
         print(f"  {y}...", end=" ", flush=True)
         m5, h1, h4 = load_year(y)
         feat = compute_asp_features(m5, h1)

@@ -3,22 +3,21 @@ Weekly retraining script — runs all model training pipelines with latest data.
 Designed to be run as a cron job every weekend when markets are closed.
 
 Usage:
-    python _retrain_weekly.py                  # retrain all models
+    python _retrain_weekly.py                  # retrain all models (current year)
     python _retrain_weekly.py --year 2026       # include specific year
 """
 import os, sys, time, argparse, logging
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("WeeklyRetrain")
 
-TRAIN_START_YEAR = 2022
 
-
-def run_script(name, script_path):
-    logger.info(f"=== Starting: {name} ===")
+def run_script(name, script_path, year):
+    logger.info(f"=== Starting: {name} (year={year}) ===")
     t0 = time.time()
-    result = os.system(f'"{sys.executable}" "{script_path}"')
+    result = os.system(f'"{sys.executable}" "{script_path}" --year {year}')
     elapsed = time.time() - t0
     if result == 0:
         logger.info(f"=== {name} completed successfully ({elapsed:.0f}s) ===")
@@ -29,9 +28,10 @@ def run_script(name, script_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Weekly model retraining")
-    parser.add_argument("--year", type=int, default=None, help="Override training end year")
+    parser.add_argument("--year", type=int, default=None, help="Override training end year (default: current year)")
     args = parser.parse_args()
 
+    year = args.year or datetime.now(timezone.utc).year
     base_dir = os.path.dirname(os.path.abspath(__file__))
     scripts = [
         ("ASP XAUUSD", os.path.join(base_dir, "_train_asp_model.py")),
@@ -47,7 +47,7 @@ def main():
             logger.warning(f"Script not found: {path}")
             failures += 1
             continue
-        if run_script(name, path) != 0:
+        if run_script(name, path, year) != 0:
             failures += 1
 
     if failures:

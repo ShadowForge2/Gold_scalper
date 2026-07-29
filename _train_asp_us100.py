@@ -1,5 +1,6 @@
 """Retrain ASP direction model for US100 (XGBoost)."""
-import os, sys, time, warnings
+import os, sys, time, warnings, argparse
+from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 import joblib
@@ -17,8 +18,7 @@ client = DukascopyClient(symbol=SYMBOL, cache_dir=CACHE_DIR)
 MODEL_PATH = "models/asp_swing_xgb_m5_US100.joblib"
 FEATURE_PATH = "models/asp_swing_m5_features_US100.npy"
 
-TRAIN_YEARS = list(range(2022, 2026))
-TEST_YEARS = [2026]
+TRAIN_START = 2022
 FWD_BARS = 3
 ATR_MULT = 0.3
 
@@ -55,14 +55,21 @@ def make_labels(m5):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=f"Train ASP direction model for {SYMBOL}")
+    parser.add_argument("--year", type=int, default=datetime.now(timezone.utc).year, help="Training end year (default: current)")
+    args = parser.parse_args()
+
+    train_years = list(range(TRAIN_START, args.year))
+    test_years = [args.year]
+
     t0 = time.time()
     print("=" * 60)
     print(f"  ASP Direction Model Training — {SYMBOL} (XGBoost)")
     print("=" * 60)
 
-    print(f"\n[1] Loading training data ({TRAIN_YEARS[0]}-{TRAIN_YEARS[-1]})...")
+    print(f"\n[1] Loading training data ({train_years[0]}-{train_years[-1]})...")
     all_m5, all_h1 = [], []
-    for y in TRAIN_YEARS:
+    for y in train_years:
         print(f"  {y}...", end=" ", flush=True)
         m5, h1 = load_year(y)
         print(f"{len(m5)} bars {time.time()-t0:.0f}s")
@@ -78,9 +85,8 @@ def main():
 
     labels = make_labels(m5_all)
     valid_mask = ~(np.isnan(features.values).any(axis=1) | np.isinf(features.values).any(axis=1))
-    valid_mask &= labels != 0
     print(f"  Labels: {(labels==1).sum()} BUY, {(labels==-1).sum()} SELL, {(labels==0).sum()} NEUTRAL")
-    print(f"  Valid: {valid_mask.sum()}/{len(labels)}")
+    print(f"  Valid (no NaN/inf): {valid_mask.sum()}/{len(labels)}")
 
     vidx = np.where(valid_mask)[0]
     split = int(len(vidx) * 0.85)
@@ -90,49 +96,60 @@ def main():
     Y_val = labels[vidx[split:]]
     print(f"  Train: {len(X_tr)}, Val: {len(X_val)}")
 
+    # Class weights (inverse frequency)
+    classes, counts = np.unique(Y_tr, return_counts=True)
+    n_total = len(Y_tr)
+    n_classes = len(classes)
+    weights = {c: n_total / (n_classes * max(counts[i], 1)) for i, c in enumerate(classes)}
+    sample_w = np.array([weights[v] for v in Y_tr])
+    print(f"  Class weights: {weights}")
+
     print(f"\n[3] Training...")
     t_train = time.time()
-    y_tr_enc = np.where(Y_tr == -1, 0, 1)
-    y_val_enc = np.where(Y_val == -1, 0, 1)
+    label_map_enc = {-1: 0, 0: 1, 1: 2}
+    inv_label_map = {0: -1, 1: 0, 2: 1}
+    y_tr_enc = np.array([label_map_enc[v] for v in Y_tr])
+    y_val_enc = np.array([label_map_enc[v] for v in Y_val])
     model = xgb.XGBClassifier(
-        n_estimators=200, max_depth=6, learning_rate=0.05,
+        n_estimators=300, max_depth=6, learning_rate=0.05,
         subsample=0.8, colsample_bytree=0.8,
-        eval_metric="logloss", early_stopping_rounds=30,
+        eval_metric="mlogloss", early_stopping_rounds=30,
+        objective="multi:softprob", num_class=3,
         tree_method="hist", random_state=42, verbosity=0,
     )
-    model.fit(X_tr, y_tr_enc, eval_set=[(X_val, y_val_enc)], verbose=False)
+    model.fit(X_tr, y_tr_enc, eval_set=[(X_val, y_val_enc)], sample_weight=sample_w, verbose=False)
     print(f"  Done: {model.best_iteration+1} trees, {time.time()-t_train:.0f}s")
 
     pred_val_enc = model.predict(X_val)
-    pred_val = np.where(pred_val_enc == 0, -1, 1)
+    pred_val = np.array([inv_label_map[v] for v in pred_val_enc])
     acc = accuracy_score(Y_val, pred_val)
     base = max((Y_val==1).sum(), (Y_val==-1).sum(), (Y_val==0).sum()) / max(len(Y_val), 1)
     print(f"  Val accuracy: {acc:.3f} (baseline: {base:.3f})")
 
-    label_map = {0: -1, 1: 1}
+    label_map = inv_label_map
     os.makedirs("models", exist_ok=True)
     joblib.dump({"model": model, "label_map": label_map}, MODEL_PATH)
     np.save(FEATURE_PATH, np.array(ASP_FEATURE_COLS))
     print(f"  Saved: {MODEL_PATH}")
 
-    print(f"\n[4] OOS ({TEST_YEARS[0]}-{TEST_YEARS[-1]})...")
-    for y in TEST_YEARS:
+    print(f"\n[4] OOS ({test_years[0]}-{test_years[-1]})...")
+    for y in test_years:
         print(f"  {y}...", end=" ", flush=True)
         try:
             m5, h1 = load_year(y)
             feat = compute_asp_features(m5, h1)
             lab = make_labels(m5)
             valid = ~(np.isnan(feat.values).any(axis=1) | np.isinf(feat.values).any(axis=1))
-            valid &= lab != 0
             vi = np.where(valid)[0]
             X_t = feat.iloc[vi][ASP_FEATURE_COLS].values.astype(np.float32)
             Y_t = lab[vi]
             pred_enc = model.predict(X_t)
-            pred = np.where(pred_enc == 0, -1, 1)
+            pred = np.array([inv_label_map[v] for v in pred_enc])
             acc_t = accuracy_score(Y_t, pred)
             n_buy = (pred == 1).sum()
             n_sell = (pred == -1).sum()
-            print(f"acc={acc_t:.3f} buy={n_buy} sell={n_sell}")
+            n_neutral = (pred == 0).sum()
+            print(f"acc={acc_t:.3f} buy={n_buy} sell={n_sell} neutral={n_neutral}")
         except Exception as e:
             print(f"error: {e}")
 
