@@ -674,7 +674,10 @@ class Bot:
         if engine is None:
             return
 
-        m1_bars = getattr(cfg, "ASP_M1_HISTORY_BARS", 300)
+        m1_bars = max(
+            getattr(cfg, "ASP_M1_HISTORY_BARS", 300),
+            getattr(cfg, "CANDLE_ML_M1_HISTORY_BARS", 500),
+        )
         m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, m1_bars)
         if m1_data is None or len(m1_data) < 10:
             return

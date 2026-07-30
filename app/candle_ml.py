@@ -323,7 +323,7 @@ class CandleML:
         try:
             row = features[self._feature_cols].iloc[[-1]]
             if row.isna().any().any():
-                return 0.5
+                row = row.fillna(0.0)
             probs = self.model.predict_proba(row.values)
             if hasattr(self.model, "classes_"):
                 classes = list(self.model.classes_)
