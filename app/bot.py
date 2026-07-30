@@ -39,6 +39,13 @@ except ImportError:
     DirectionPredictor = None
     _HAS_DIR = False
 
+try:
+    from app.candle_ml import CandleML
+    _HAS_CANDLE = True
+except ImportError:
+    CandleML = None
+    _HAS_CANDLE = False
+
 
 class Bot:
     STATES = {
@@ -65,6 +72,7 @@ class Bot:
         self._symbol_regime_skipped: Dict[str, Optional[str]] = {}  # "high"|"normal"|None
         self._symbol_atr_history: Dict[str, list] = {}  # rolling ATR for vol detection
         self._symbol_vol_regime: Dict[str, bool] = {}  # track current vol regime per symbol
+        self._symbol_candle_ml: Dict[str, Optional[CandleML]] = {}
         self._symbol_last_rescan_ts: Dict[str, float] = {}
         self._symbol_rescan_count: Dict[str, int] = {}
         self._last_retrain_week: int = -1  # week number of last auto-retrain
@@ -114,6 +122,20 @@ class Bot:
                 except Exception as e:
                     self.logger.warning(f"[{sym}] Failed to load direction predictor: {e}")
 
+            # Candle ML model
+            candle_pred = None
+            if _HAS_CANDLE and getattr(cfg, "CANDLE_ML_ENABLED", True):
+                candle_path = cfg.CANDLE_ML_MODEL_PATHS.get(sym, cfg.CANDLE_ML_MODEL_PATHS.get("XAUUSD"))
+                try:
+                    candle_pred = CandleML(model_path=candle_path)
+                    if candle_pred.model is not None:
+                        self.logger.info(f"[{sym}] Candle ML loaded from {candle_path}")
+                    else:
+                        self.logger.warning(f"[{sym}] Candle ML model not found at {candle_path}")
+                        candle_pred = None
+                except Exception as e:
+                    self.logger.warning(f"[{sym}] Failed to load Candle ML: {e}")
+
             engine = SignalEngine(
                 asp_predictor=asp_pred,
                 swing_quality_predictor=sq_pred,
@@ -121,6 +143,7 @@ class Bot:
                 logger=self.logger,
             )
             self._symbol_engines[sym] = engine
+            self._symbol_candle_ml[sym] = candle_pred
             self._symbol_states[sym] = self.STATES["IDLE"]
             self._symbol_signals[sym] = None
             self._symbol_event_start_ts[sym] = None
@@ -131,6 +154,7 @@ class Bot:
             self._symbol_regime_skipped[sym] = None
             self._symbol_atr_history[sym] = []
             self._symbol_vol_regime[sym] = False  # False = normal vol
+            self._symbol_candle_entry[sym] = False
             self._symbol_last_rescan_ts[sym] = 0.0
             self._symbol_rescan_count[sym] = 0
 
@@ -671,19 +695,74 @@ class Bot:
             self.logger.debug(f"[{sym}] High volatility regime — tighter filters active")
 
         signal = None
-        asp_pred = getattr(engine, '_asp_predictor', None)
-        if asp_pred and asp_pred.ready and cfg.ASP_ENABLED:
-            h1_for_asp = None
+        candle_ml = self._symbol_candle_ml.get(sym)
+
+        # Decide whether to use Candle ML (replaces ASP+DP entirely)
+        def _use_candle_ml():
+            if candle_ml is None or candle_ml.model is None:
+                return False
+            mode = cfg.CANDLE_ML_MODE.get(sym, "volatility")
+            if mode == "always":
+                return True
+            if mode == "volatility":
+                return high_vol
+            return False
+
+        if _use_candle_ml():
+            # Candle ML path — bypasses ASP+DP entirely
             try:
-                h1_for_asp = self.client.get_rates(sym, cfg.BIAS_TIMEFRAME, 96)
-            except Exception:
-                pass
-            signal = engine.evaluate_asp_entry(
-                m1_data, current_price,
-                h1_data=h1_for_asp,
-            )
+                from app.candle_ml import compute_candle_features
+                m1_idx = m1_data.set_index("time") if "time" in m1_data.columns else m1_data
+                feats = compute_candle_features(m1_idx)
+                if feats is not None and len(feats) > 0:
+                    prob_up = candle_ml.predict_proba(feats)
+                    # Get M1 first-bar direction from last feature row
+                    last_row = feats.iloc[[-1]]
+                    m1_dir = last_row.get("m1_first_dir", pd.Series([0])).values[0]
+                    if np.isnan(m1_dir):
+                        m1_dir = 0
+                    m1_dir = int(m1_dir)
+                    conf_thresh = getattr(cfg, "CANDLE_ML_CONFIDENCE_THRESHOLD", 0.60)
+                    pred = candle_ml.predict(prob_up, m1_dir, confidence_threshold=conf_thresh)
+                    if pred is not None:
+                        direction = pred
+                        score = max(prob_up, 1 - prob_up)
+                        _atr = current_atr if current_atr and current_atr > 0 else 0.5
+                        sl_dist = _atr * getattr(cfg, "SL_ATR_MULTIPLIER", 1.0)
+                        tp_dist = _atr * getattr(cfg, "TP1_MULTIPLIER", 2.0)
+                        signal = {
+                            "direction": direction,
+                            "score": score,
+                            "ml_confidence": score,
+                            "price": current_price,
+                            "sl": current_price - sl_dist if direction == "BUY" else current_price + sl_dist,
+                            "tp1": current_price + tp_dist if direction == "BUY" else current_price - tp_dist,
+                            "signal_type": "candle_ml",
+                            "atr": _atr,
+                            "high_volatility": high_vol if high_vol else False,
+                        }
+                        self.logger.info(
+                            f"[{sym}] Candle ML: {direction} (conf={score:.3f}, "
+                            f"m1_dir={m1_dir}, prob_up={prob_up:.3f})"
+                        )
+            except Exception as e:
+                self.logger.warning(f"[{sym}] Candle ML eval failed: {e}")
+        else:
+            # ASP+DP path (original)
+            asp_pred = getattr(engine, '_asp_predictor', None)
+            if asp_pred and asp_pred.ready and cfg.ASP_ENABLED:
+                h1_for_asp = None
+                try:
+                    h1_for_asp = self.client.get_rates(sym, cfg.BIAS_TIMEFRAME, 96)
+                except Exception:
+                    pass
+                signal = engine.evaluate_asp_entry(
+                    m1_data, current_price,
+                    h1_data=h1_for_asp,
+                )
 
         if signal:
+            sig_type = signal.get("signal_type", "ASP")
             if high_vol:
                 vol_sq_thresh = getattr(cfg, "VOLATILITY_SQ_THRESHOLD", 0.50)
                 sq_p = signal.get("sq_prob")
@@ -692,12 +771,13 @@ class Bot:
                         f"[{sym}] High vol: sq_prob {sq_p:.3f} < {vol_sq_thresh} — blocked"
                     )
                     return
-                min_conf = getattr(cfg, "VOLATILITY_ASP_CONFIDENCE", 0.75)
-                if signal.get("score", 0) < min_conf:
-                    self.logger.info(
-                        f"[{sym}] High vol: ASP conf {signal['score']:.3f} < {min_conf} — blocked"
-                    )
-                    return
+                if sig_type != "candle_ml":
+                    min_conf = getattr(cfg, "VOLATILITY_ASP_CONFIDENCE", 0.75)
+                    if signal.get("score", 0) < min_conf:
+                        self.logger.info(
+                            f"[{sym}] High vol: ASP conf {signal['score']:.3f} < {min_conf} — blocked"
+                        )
+                        return
                 signal["high_volatility"] = True
 
         if signal and m1_data is not None and len(m1_data) >= 15:
@@ -712,9 +792,12 @@ class Bot:
             if sf_key != self._last_signal_found_key or sf_now - self._last_signal_found_time >= 30:
                 self._last_signal_found_key = sf_key
                 self._last_signal_found_time = sf_now
+                sig_type = signal.get("signal_type", "ASP").upper()
+                if sig_type == "candle_ml":
+                    sig_type = "CNDL"
                 self.logger.signal(
-                    f"[{sym}] Signal found: [ASP] {sig_dir} | "
-                    f"ASP swing prediction at ${current_price:.2f} "
+                    f"[{sym}] Signal found: [{sig_type}] {sig_dir} | "
+                    f"{sig_type} prediction at ${current_price:.2f} "
                     f"(score={signal['score']:.3f} SL={signal.get('sl', 'n/a')} TP={signal.get('tp1', 'n/a')})"
                 )
 
@@ -845,6 +928,7 @@ class Bot:
                 return
             self._symbol_states[sym] = self.STATES["IDLE"]
             self._symbol_event_start_ts[sym] = None
+            self._symbol_candle_entry[sym] = False
             self._symbol_exit_confirms[sym] = 0
             self._symbol_reversal_confirms[sym] = 0
             return
@@ -866,6 +950,7 @@ class Bot:
                 self._record_trade_result(sym, pnl, sig.get("high_volatility", False))
                 self._symbol_states[sym] = self.STATES["IDLE"]
                 self._symbol_event_start_ts[sym] = None
+                self._symbol_candle_entry[sym] = False
                 self._symbol_exit_confirms[sym] = 0
                 self._symbol_reversal_confirms[sym] = 0
                 self._symbol_last_rescan_ts[sym] = 0.0
@@ -969,10 +1054,33 @@ class Bot:
                     should_exit = True
                     exit_reason = "asp_tp_hit"
 
+            # Candle ML reversal check: exit if price crosses back past entry candle's M5 open
+            is_candle = self._symbol_candle_entry.get(sym, False)
+            candle_reversal = False
+            if is_candle and not should_exit:
+                try:
+                    m1_for_open = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, 6)
+                    if m1_for_open is not None and len(m1_for_open) > 0:
+                        m1_idx_o = m1_for_open.set_index("time") if "time" in m1_for_open.columns else m1_for_open
+                        m5_open = m1_idx_o.resample("5min").agg({"open": "first"}).dropna()
+                        if len(m5_open) > 0:
+                            entry_candle_open = m5_open["open"].iloc[-1]
+                            if direction == "BUY" and current_px < entry_candle_open:
+                                candle_reversal = True
+                            elif direction == "SELL" and current_px > entry_candle_open:
+                                candle_reversal = True
+                except Exception:
+                    pass
+                if candle_reversal:
+                    should_exit = True
+                    exit_reason = "candle_reversal"
+
             if should_exit:
+                _sl_str = f"{asp_sl:.2f}" if is_asp else "n/a"
+                _adx_str = f"{adx_at_entry:.1f}" if is_asp else "0.0"
                 self.logger.signal(
-                    f"[{sym}] ASP exit: {exit_reason} | dir={direction} entry={entry_price:.2f} "
-                    f"px={current_px:.2f} sl={asp_sl:.2f} adx={adx_at_entry:.1f} held={minutes_held:.1f}m"
+                    f"[{sym}] {'Candle' if is_candle else 'ASP'} exit: {exit_reason} | dir={direction} entry={entry_price:.2f} "
+                    f"px={current_px:.2f} sl={_sl_str} adx={_adx_str} held={minutes_held:.1f}m"
                 )
                 closed = self.trade_executor.close_all_bot_positions(symbol=sym)
                 for pos_data in closed:
@@ -982,6 +1090,7 @@ class Bot:
                     self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
                     self._symbol_states[sym] = self.STATES["IDLE"]
                     self._symbol_event_start_ts[sym] = None
+                    self._symbol_candle_entry[sym] = False
                     self._symbol_exit_confirms[sym] = 0
                     self._symbol_reversal_confirms[sym] = 0
                     if hasattr(self, f"_best_price_{sym}"):
@@ -1017,6 +1126,8 @@ class Bot:
             fresh_signal = None
             dir_flip = False
             h1_for_asp = None
+            is_candle = self._symbol_candle_entry.get(sym, False)
+            candle_flip = False
             if engine:
                 h1_for_asp = self.client.get_rates(sym, cfg.BIAS_TIMEFRAME, 48)
                 fresh_signal = engine.evaluate_asp_entry(m1_data, current_px, h1_data=h1_for_asp)
@@ -1039,6 +1150,28 @@ class Bot:
                     except Exception as e:
                         self.logger.debug(f"[{sym}] Dir predictor timeout check failed: {e}")
 
+                # Candle ML re-scan during timeout
+                if is_candle:
+                    try:
+                        from app.candle_ml import compute_candle_features as _candle_feats
+                        m1_idx = m1_data.set_index("time") if "time" in m1_data.columns else m1_data
+                        cfeats = _candle_feats(m1_idx)
+                        if cfeats is not None and len(cfeats) > 0:
+                            candle_ml = self._symbol_candle_ml.get(sym)
+                            if candle_ml is not None and candle_ml.model is not None:
+                                prob_up = candle_ml.predict_proba(cfeats)
+                                last_row = cfeats.iloc[[-1]]
+                                m1_dir = last_row.get("m1_first_dir", pd.Series([0])).values[0]
+                                if np.isnan(m1_dir):
+                                    m1_dir = 0
+                                m1_dir = int(m1_dir)
+                                conf_thresh = getattr(cfg, "CANDLE_ML_CONFIDENCE_THRESHOLD", 0.60)
+                                pred = candle_ml.predict(prob_up, m1_dir, confidence_threshold=conf_thresh)
+                                if pred is not None and pred != direction:
+                                    candle_flip = True
+                    except Exception as e:
+                        self.logger.debug(f"[{sym}] Candle ML timeout check failed: {e}")
+
             fresh_dir = fresh_signal.get("direction") if fresh_signal else None
             asp_flip = fresh_dir is not None and fresh_dir != direction
             event_pnl = sum(p.get("profit", 0) for p in sym_positions)
@@ -1057,6 +1190,37 @@ class Bot:
                     self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
                     self._symbol_states[sym] = self.STATES["IDLE"]
                     self._symbol_event_start_ts[sym] = None
+                    self._symbol_last_rescan_ts[sym] = 0.0
+                    self._symbol_rescan_count[sym] = 0
+                    if hasattr(self, f"_best_price_{sym}"):
+                        delattr(self, f"_best_price_{sym}")
+                    await self._notify(
+                        "trade_close",
+                        f"Trade Closed — {sym}",
+                        f"{direction} {sym} closed ({reason}) | PnL: ${pnl:+.2f} | held {int(minutes_held)}m",
+                        {"symbol": sym, "direction": direction, "exit_reason": reason, "pnl": pnl, "held_minutes": minutes_held},
+                    )
+                else:
+                    self.logger.warning(f"[{sym}] Timeout exit close failed, retrying next tick")
+                return
+
+            # Note: dir_flip block above already resets _symbol_candle_entry
+
+            if candle_flip:
+                reason = f"candle_timeout_{int(minutes_held)}min_flip"
+                self.logger.signal(
+                    f"[{sym}] Timeout exit: Candle ML flipped at {int(minutes_held)}m | "
+                    f"dir={direction} pnl=${event_pnl:+.2f} entry={entry_price:.2f} px={current_px:.2f}"
+                )
+                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                for pos_data in closed:
+                    self.position_manager.note_closed(pos_data, exit_reason=reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
+                if closed:
+                    pnl = sum(p.get("profit", 0) for p in closed)
+                    self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
+                    self._symbol_states[sym] = self.STATES["IDLE"]
+                    self._symbol_event_start_ts[sym] = None
+                    self._symbol_candle_entry[sym] = False
                     self._symbol_last_rescan_ts[sym] = 0.0
                     self._symbol_rescan_count[sym] = 0
                     if hasattr(self, f"_best_price_{sym}"):
@@ -1264,6 +1428,7 @@ class Bot:
         if any_opened:
             self._symbol_states[sym] = self.STATES["IN_TRADE"]
             self._symbol_event_start_ts[sym] = time.time()
+            self._symbol_candle_entry[sym] = (signal.get("signal_type") == "candle_ml")
             self.logger.info(
                 f"[{sym}] Entered {direction} with {max_trades} position(s) "
                 f"(ML conf={ml_conf:.2f})"
@@ -1348,6 +1513,7 @@ class Bot:
         self.state = self.STATES["STOPPED"]
         for sym in self.symbols:
             self._symbol_states[sym] = self.STATES["STOPPED"]
+            self._symbol_candle_entry[sym] = False
         self.logger.warning("Bot manually stopped")
 
     async def emergency_close(self):

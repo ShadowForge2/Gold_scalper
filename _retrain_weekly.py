@@ -39,6 +39,7 @@ def main():
         ("SwingQuality XAUUSD", os.path.join(base_dir, "_train_swing_xgb.py")),
         ("SwingQuality US100", os.path.join(base_dir, "_train_swing_xgb_us100.py")),
         ("Direction XAUUSD+US100", os.path.join(base_dir, "_train_direction_model.py")),
+        ("CandleML XAUUSD+US100", os.path.join(base_dir, "_train_candle_ml.py")),
     ]
 
     failures = 0

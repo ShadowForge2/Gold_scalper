@@ -250,6 +250,26 @@ DIRECTION_MODEL_PATHS = {
     "US100": _env_str("DIRECTION_MODEL_PATH_US100", "models/direction_xgb_m5_US100.joblib"),
 }
 
+# Candle ML — multi-timeframe M5 direction prediction
+# Replaces ASP+DP stack for US100; replaces during high-vol for Gold
+CANDLE_ML_ENABLED = _env_bool("CANDLE_ML_ENABLED", True)
+CANDLE_ML_CONFIDENCE_THRESHOLD = _env_float("CANDLE_ML_CONFIDENCE_THRESHOLD", 0.60)
+CANDLE_ML_M1_HISTORY_BARS = _env_int("CANDLE_ML_M1_HISTORY_BARS", 500)
+CANDLE_ML_MODEL_PATHS = {
+    "XAUUSD": _env_str("CANDLE_ML_MODEL_PATH_XAUUSD", "models/candle_xgb_m5_XAUUSD.joblib"),
+    "US100": _env_str("CANDLE_ML_MODEL_PATH_US100", "models/candle_xgb_m5_US100.joblib"),
+}
+# Mode: "always" = skip ASP+DP entirely for this symbol
+#       "volatility" = use Candle ML when vol_ratio > threshold
+CANDLE_ML_MODE = {
+    "XAUUSD": _env_str("CANDLE_ML_MODE_XAUUSD", "volatility"),
+    "US100": _env_str("CANDLE_ML_MODE_US100", "always"),
+}
+# For "volatility" mode: switch to Candle ML when short-term / long-term ATR > this
+CANDLE_ML_VOL_THRESHOLD = _env_float("CANDLE_ML_VOL_THRESHOLD", 1.3)
+CANDLE_ML_VOL_WINDOW_SHORT = _env_int("CANDLE_ML_VOL_WINDOW_SHORT", 5)   # M5 bars
+CANDLE_ML_VOL_WINDOW_LONG = _env_int("CANDLE_ML_VOL_WINDOW_LONG", 40)    # M5 bars
+
 # MaxelPay
 MAXELPAY_API_KEY = _env_str("MAXELPAY_API_KEY", "")
 
