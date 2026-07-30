@@ -75,6 +75,7 @@ class Bot:
         self._symbol_candle_ml: Dict[str, Optional[CandleML]] = {}
         self._symbol_last_rescan_ts: Dict[str, float] = {}
         self._symbol_rescan_count: Dict[str, int] = {}
+        self._symbol_candle_entry: Dict[str, bool] = {}
         self._last_retrain_week: int = -1  # week number of last auto-retrain
 
         # Load per-symbol models and signal engines
