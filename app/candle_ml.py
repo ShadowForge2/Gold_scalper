@@ -14,8 +14,14 @@ import logging
 import numpy as np
 import pandas as pd
 import joblib
-import xgboost as xgb
 from typing import Optional
+
+try:
+    import xgboost as xgb
+    _HAS_XGB = True
+except Exception:
+    xgb = None
+    _HAS_XGB = False
 
 logger = logging.getLogger("GoldScalper")
 
@@ -296,7 +302,7 @@ class CandleML:
     5. Exit if price reverses past open
     """
 
-    def __init__(self, model_path: str = None, model: xgb.XGBClassifier = None):
+    def __init__(self, model_path: str = None, model=None):
         if model is not None:
             self.model = model
         elif model_path and os.path.exists(model_path):

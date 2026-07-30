@@ -28,6 +28,8 @@ def load_year(client, year):
     m1 = m1.sort_values("time").drop_duplicates(subset="time")
     m5 = client.resample_to(m1, 5)
     h1 = client.resample_to(m1, 16385)
+    if len(m5) == 0:
+        return None, None
     return m5, h1
 
 
@@ -105,7 +107,8 @@ def train_for_symbol(cfg):
     joblib.dump(model, cfg["model_path"])
     print(f"  Saved: {cfg['model_path']}")
 
-    print(f"\n[7] OOS ({cfg['test_years'][0]}-{cfg['test_years'][-1]})...")
+    if cfg["test_years"]:
+        print(f"\n[7] OOS ({cfg['test_years'][0]}-{cfg['test_years'][-1]})...")
     for y in cfg["test_years"]:
         print(f"  {y}...", end=" ", flush=True)
         try:
@@ -140,8 +143,11 @@ def main():
     parser.add_argument("--year", type=int, default=datetime.now(timezone.utc).year, help="Training end year (default: current)")
     args = parser.parse_args()
 
-    train_years = list(range(TRAIN_START, args.year))
-    test_years = [args.year]
+    train_years = list(range(TRAIN_START, args.year + 1))
+    test_years = [] if args.year >= TRAIN_START else [args.year]
+    if len(train_years) < 2:
+        print(f"ERROR: Need at least 2 years of training data (got {train_years})")
+        return
 
     # Build per-symbol config dynamically
     SYMBOL_CONFIG = {

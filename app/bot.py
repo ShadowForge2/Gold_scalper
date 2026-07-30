@@ -42,7 +42,7 @@ except ImportError:
 try:
     from app.candle_ml import CandleML
     _HAS_CANDLE = True
-except ImportError:
+except Exception:
     CandleML = None
     _HAS_CANDLE = False
 

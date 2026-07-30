@@ -23,6 +23,8 @@ ATR_MULT = 0.3
 
 def load_year(year):
     m1 = client.download_year(year)
+    if m1 is None or len(m1) == 0:
+        return None, None
     m1 = m1.sort_values("time").drop_duplicates(subset="time")
     return (client.resample_to(m1, 5),
             client.resample_to(m1, 16385))
@@ -57,8 +59,11 @@ def main():
     parser.add_argument("--year", type=int, default=datetime.now(timezone.utc).year, help="Training end year (default: current)")
     args = parser.parse_args()
 
-    train_years = list(range(TRAIN_START, args.year))
-    test_years = [args.year]
+    train_years = list(range(TRAIN_START, args.year + 1))
+    test_years = [] if args.year >= TRAIN_START else [args.year]
+    if len(train_years) < 2:
+        print(f"ERROR: Need at least 2 years of training data (got {train_years})")
+        return
 
     t0 = time.time()
     print("=" * 60)
@@ -70,8 +75,13 @@ def main():
     for y in train_years:
         print(f"  {y}...", end=" ", flush=True)
         m5, h1 = load_year(y)
+        if m5 is None or len(m5) == 0:
+            print("no data")
+            continue
         print(f"{len(m5)} bars {time.time()-t0:.0f}s")
         all_m5.append(m5); all_h1.append(h1)
+    if not all_m5:
+        print("No training data available"); return
 
     m5_all = pd.concat(all_m5, ignore_index=True)
     h1_all = pd.concat(all_h1, ignore_index=True)
@@ -131,7 +141,8 @@ def main():
     np.save(FEATURE_PATH, np.array(ASP_FEATURE_COLS))
     print(f"  Saved: {MODEL_PATH}")
 
-    print(f"\n[4] OOS ({test_years[0]}-{test_years[-1]})...")
+    if test_years:
+        print(f"\n[4] OOS ({test_years[0]}-{test_years[-1]})...")
     for y in test_years:
         print(f"  {y}...", end=" ", flush=True)
         try:
