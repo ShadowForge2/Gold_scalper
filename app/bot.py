@@ -726,7 +726,12 @@ class Bot:
                     m1_dir = int(m1_dir)
                     conf_thresh = getattr(cfg, "CANDLE_ML_CONFIDENCE_THRESHOLD", 0.60)
                     pred = candle_ml.predict(prob_up, m1_dir, confidence_threshold=conf_thresh)
-                    if pred is not None:
+                    if pred is None and time.time() - getattr(self, '_last_candle_log_ts', 0) > 30:
+                        self._last_candle_log_ts = time.time()
+                        self.logger.info(
+                            f"[{sym}] Candle ML: no entry (prob_up={prob_up:.3f} "
+                            f"m1_dir={m1_dir} conf={max(prob_up, 1-prob_up):.3f})"
+                        )
                         direction = pred
                         score = max(prob_up, 1 - prob_up)
                         _atr = current_atr if current_atr and current_atr > 0 else 0.5
