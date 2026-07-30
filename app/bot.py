@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, List
 
 import numpy as np
+import pandas as pd
 
 import config as cfg
 from app.logger import BotLogger
@@ -719,7 +720,7 @@ class Bot:
                     prob_up = candle_ml.predict_proba(feats)
                     # Get M1 first-bar direction from last feature row
                     last_row = feats.iloc[[-1]]
-                    m1_dir = last_row.get("m1_first_dir", pd.Series([0])).values[0]
+                    m1_dir = last_row.get("m1_first_dir", pd.Series([0.0])).values[0]
                     if np.isnan(m1_dir):
                         m1_dir = 0
                     m1_dir = int(m1_dir)
@@ -1162,7 +1163,7 @@ class Bot:
                             if candle_ml is not None and candle_ml.model is not None:
                                 prob_up = candle_ml.predict_proba(cfeats)
                                 last_row = cfeats.iloc[[-1]]
-                                m1_dir = last_row.get("m1_first_dir", pd.Series([0])).values[0]
+                                m1_dir = last_row.get("m1_first_dir", pd.Series([0.0])).values[0]
                                 if np.isnan(m1_dir):
                                     m1_dir = 0
                                 m1_dir = int(m1_dir)
