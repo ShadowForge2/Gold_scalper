@@ -728,7 +728,7 @@ class Bot:
                     if np.isnan(m1_dir):
                         m1_dir = 0
                     m1_dir = int(m1_dir)
-                    conf_thresh = getattr(cfg, "CANDLE_ML_CONFIDENCE_THRESHOLD", 0.60)
+                    conf_thresh = getattr(cfg, "CANDLE_ML_CONFIDENCE_THRESHOLD", 0.65)
                     pred = candle_ml.predict(prob_up, m1_dir, confidence_threshold=conf_thresh)
                     if pred is not None:
                         direction = pred
@@ -1007,9 +1007,10 @@ class Bot:
 
         pos_signal = self._symbol_signals.get(sym)
         is_asp = pos_signal and pos_signal.get("asp_model")
+        is_candle = self._symbol_candle_entry.get(sym, False)
         minutes_held = (time.time() - event_start) / 60.0 if event_start else 0.0
 
-        if is_asp:
+        if is_asp or is_candle:
             asp_sl = pos_signal.get("sl")
             asp_tp = pos_signal.get("tp1")
             atr_val = pos_signal.get("atr_value", 0)
@@ -1074,20 +1075,19 @@ class Bot:
             if direction == "BUY":
                 if asp_sl and current_px <= asp_sl:
                     should_exit = True
-                    exit_reason = "asp_trail_sl" if trail_activated else "asp_sl_hit"
+                    exit_reason = "candle_sl_hit" if is_candle else ("asp_trail_sl" if trail_activated else "asp_sl_hit")
                 elif asp_tp and current_px >= asp_tp:
                     should_exit = True
-                    exit_reason = "asp_tp_hit"
+                    exit_reason = "candle_tp_hit" if is_candle else "asp_tp_hit"
             else:
                 if asp_sl and current_px >= asp_sl:
                     should_exit = True
-                    exit_reason = "asp_trail_sl" if trail_activated else "asp_sl_hit"
+                    exit_reason = "candle_sl_hit" if is_candle else ("asp_trail_sl" if trail_activated else "asp_sl_hit")
                 elif asp_tp and current_px <= asp_tp:
                     should_exit = True
-                    exit_reason = "asp_tp_hit"
+                    exit_reason = "candle_tp_hit" if is_candle else "asp_tp_hit"
 
             # Candle ML reversal check: exit if price crosses back past entry candle's M5 open
-            is_candle = self._symbol_candle_entry.get(sym, False)
             candle_reversal = False
             if is_candle and not should_exit:
                 try:
@@ -1108,7 +1108,7 @@ class Bot:
                     exit_reason = "candle_reversal"
 
             if should_exit:
-                _sl_str = f"{asp_sl:.2f}" if is_asp else "n/a"
+                _sl_str = f"{asp_sl:.2f}" if asp_sl else "n/a"
                 _adx_str = f"{adx_at_entry:.1f}" if is_asp else "0.0"
                 self.logger.signal(
                     f"[{sym}] {'Candle' if is_candle else 'ASP'} exit: {exit_reason} | dir={direction} entry={entry_price:.2f} "
@@ -1134,7 +1134,7 @@ class Bot:
                         {"symbol": sym, "direction": direction, "exit_reason": exit_reason, "pnl": pnl, "held_minutes": minutes_held},
                     )
                 else:
-                    self.logger.warning(f"[{sym}] ASP exit close failed, retrying next tick")
+                    self.logger.warning(f"[{sym}] Exit close failed, retrying next tick")
                 return
 
         dir_timeout_min = getattr(cfg, "SMART_TIMEOUT_DIR_MIN", 15)
@@ -1173,7 +1173,7 @@ class Bot:
                             if np.isnan(m1_dir):
                                 m1_dir = 0
                             m1_dir = int(m1_dir)
-                            conf_thresh = getattr(cfg, "CANDLE_ML_CONFIDENCE_THRESHOLD", 0.60)
+                            conf_thresh = getattr(cfg, "CANDLE_ML_CONFIDENCE_THRESHOLD", 0.65)
                             pred = candle_ml.predict(prob_up, m1_dir, confidence_threshold=conf_thresh)
                             if pred is not None and pred != direction:
                                 candle_flip = True
