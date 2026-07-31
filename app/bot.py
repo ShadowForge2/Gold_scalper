@@ -77,7 +77,10 @@ class Bot:
         self._symbol_last_rescan_ts: Dict[str, float] = {}
         self._symbol_rescan_count: Dict[str, int] = {}
         self._symbol_candle_entry: Dict[str, bool] = {}
-        self._symbol_candle_rescan_ts: Dict[str, float] = {}
+        # Candle ML backtest-parity exit state
+        self._symbol_candle_entry_open: Dict[str, Optional[float]] = {}  # entry candle open (bt reference)
+        self._symbol_candle_tp: Dict[str, Optional[float]] = {}          # TP price (bt: entry + 2*ATR)
+        self._symbol_candle_last_boundary: Dict[str, Optional[int]] = {} # last M5 boundary evaluated
         self._last_retrain_week: int = -1  # week number of last auto-retrain
 
         # Load per-symbol models and signal engines
@@ -158,6 +161,9 @@ class Bot:
             self._symbol_atr_history[sym] = []
             self._symbol_vol_regime[sym] = False  # False = normal vol
             self._symbol_candle_entry[sym] = False
+            self._symbol_candle_entry_open[sym] = None
+            self._symbol_candle_tp[sym] = None
+            self._symbol_candle_last_boundary[sym] = 0
             self._symbol_last_rescan_ts[sym] = 0.0
             self._symbol_rescan_count[sym] = 0
 
@@ -756,13 +762,21 @@ class Bot:
                         else:
                             sl_dist = _atr * getattr(cfg, "SL_ATR_MULTIPLIER", 1.0)
                             tp_dist = _atr * getattr(cfg, "TP1_MULTIPLIER", 2.0)
+                            # Entry candle open — matches backtest (entry = M5 candle open).
+                            # SL/TP are referenced from the candle open, not the 1-min-late fill.
+                            try:
+                                _co = m1_idx.resample("5min")["open"].first().dropna()
+                                candle_open = float(_co.iloc[-1]) if len(_co) else current_price
+                            except Exception:
+                                candle_open = current_price
                             signal = {
                                 "direction": direction,
                                 "score": score,
                                 "ml_confidence": score,
                                 "price": current_price,
-                                "sl": current_price - sl_dist if direction == "BUY" else current_price + sl_dist,
-                                "tp1": current_price + tp_dist if direction == "BUY" else current_price - tp_dist,
+                                "candle_open": candle_open,
+                                "sl": candle_open - sl_dist if direction == "BUY" else candle_open + sl_dist,
+                                "tp1": candle_open + tp_dist if direction == "BUY" else candle_open - tp_dist,
                                 "signal_type": "candle_ml",
                                 "atr": _atr,
                                 "high_volatility": high_vol if high_vol else False,
@@ -970,32 +984,37 @@ class Bot:
 
         direction = sym_positions[0].get("type", "BUY") if sym_positions else "BUY"
         event_pnl = sum(p.get("profit", 0) for p in sym_positions)
-        event_ok, event_msg = self.risk_manager.check_event_loss(event_pnl, balance)
-        if not event_ok:
-            self.logger.warning(f"[{sym}] Event stop: {event_msg}")
-            closed = self.trade_executor.close_all_bot_positions(symbol=sym)
-            sig = self._symbol_signals.get(sym) or {}
-            for pos_data in closed:
-                self.position_manager.note_closed(pos_data, exit_reason="event_loss", score=sig.get("score", 0), balance=balance)
-            if closed:
-                pnl = sum(p.get("profit", 0) for p in closed)
-                self._record_trade_result(sym, pnl, sig.get("high_volatility", False))
-                self._symbol_states[sym] = self.STATES["IDLE"]
-                self._symbol_event_start_ts[sym] = None
-                self._symbol_candle_entry[sym] = False
-                self._symbol_exit_confirms[sym] = 0
-                self._symbol_reversal_confirms[sym] = 0
-                self._symbol_last_rescan_ts[sym] = 0.0
-                self._symbol_rescan_count[sym] = 0
-                await self._notify(
-                    "trade_close",
-                    f"Trade Closed — {sym}",
-                    f"{direction} {sym} closed (event_loss) | PnL: ${pnl:+.2f}",
-                    {"symbol": sym, "direction": direction, "exit_reason": "event_loss", "pnl": pnl},
-                )
-            else:
-                self.logger.warning(f"[{sym}] Event stop close failed, retrying next tick")
-            return
+
+        # Candle ML trades skip event loss — exact backtest parity
+        # (_bt_us100_candle.py has no event-loss stop).
+        is_candle = self._symbol_candle_entry.get(sym, False)
+        if not is_candle:
+            event_ok, event_msg = self.risk_manager.check_event_loss(event_pnl, balance)
+            if not event_ok:
+                self.logger.warning(f"[{sym}] Event stop: {event_msg}")
+                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                sig = self._symbol_signals.get(sym) or {}
+                for pos_data in closed:
+                    self.position_manager.note_closed(pos_data, exit_reason="event_loss", score=sig.get("score", 0), balance=balance)
+                if closed:
+                    pnl = sum(p.get("profit", 0) for p in closed)
+                    self._record_trade_result(sym, pnl, sig.get("high_volatility", False))
+                    self._symbol_states[sym] = self.STATES["IDLE"]
+                    self._symbol_event_start_ts[sym] = None
+                    self._symbol_candle_entry[sym] = False
+                    self._symbol_exit_confirms[sym] = 0
+                    self._symbol_reversal_confirms[sym] = 0
+                    self._symbol_last_rescan_ts[sym] = 0.0
+                    self._symbol_rescan_count[sym] = 0
+                    await self._notify(
+                        "trade_close",
+                        f"Trade Closed — {sym}",
+                        f"{direction} {sym} closed (event_loss) | PnL: ${pnl:+.2f}",
+                        {"symbol": sym, "direction": direction, "exit_reason": "event_loss", "pnl": pnl},
+                    )
+                else:
+                    self.logger.warning(f"[{sym}] Event stop close failed, retrying next tick")
+                return
 
         pos = sym_positions[0]
         direction = pos.get("type", "BUY")
@@ -1007,10 +1026,107 @@ class Bot:
 
         pos_signal = self._symbol_signals.get(sym)
         is_asp = pos_signal and pos_signal.get("asp_model")
-        is_candle = self._symbol_candle_entry.get(sym, False)
         minutes_held = (time.time() - event_start) / 60.0 if event_start else 0.0
 
-        if is_asp or is_candle:
+        if is_candle:
+            # ── Candle ML exit — faithful port of _bt_us100_candle.py ──
+            # The backtest evaluates ONLY completed M5 candles at 5-min
+            # boundaries and has exactly two live exits:
+            #   1. candle_reversal — completed candle traded back through
+            #      the entry candle's open → exit at market.
+            #   2. tp — completed candle reached TP (2×ATR) without reversing.
+            # The SL branch is dead code in the backtest (1×ATR SL always
+            # sits inside the reversal zone), so there is NO SL exit.
+            # No break-even, no trailing, no timeout, no event loss.
+            now = time.time()
+            cur_boundary = int(now) - (int(now) % 300)
+            last_boundary = self._symbol_candle_last_boundary.get(sym, 0)
+            if last_boundary == 0:
+                self._symbol_candle_last_boundary[sym] = cur_boundary
+                return
+            if cur_boundary <= last_boundary:
+                return  # still inside the same M5 candle
+            self._symbol_candle_last_boundary[sym] = cur_boundary
+
+            # Skip the ENTRY candle — matches backtest (entry bar not re-checked).
+            if event_start is not None:
+                entry_boundary = int(event_start) - (int(event_start) % 300)
+                if entry_boundary == last_boundary:
+                    return
+
+            candle_open = self._symbol_candle_entry_open.get(sym) or entry_price
+            candle_tp = self._symbol_candle_tp.get(sym)
+            if candle_tp is None:
+                candle_tp = pos_signal.get("tp1") if pos_signal else None
+            if candle_tp is None:
+                self._symbol_candle_last_boundary[sym] = last_boundary
+                return
+
+            # Completed candle = M1 bars in [last_boundary, cur_boundary).
+            # If the M1 data lags the boundary (bar not published yet), revert
+            # last_boundary so the next tick retries the SAME candle — otherwise
+            # the boundary is consumed and never re-evaluated.
+            m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, 12)
+            if m1_data is None or len(m1_data) == 0:
+                self._symbol_candle_last_boundary[sym] = last_boundary
+                return
+            m1_idx = m1_data.set_index("time") if "time" in m1_data.columns else m1_data
+            try:
+                lo_ts = pd.Timestamp(last_boundary, unit="s")
+                hi_ts = pd.Timestamp(cur_boundary, unit="s")
+                cb = m1_idx[(m1_idx.index >= lo_ts) & (m1_idx.index < hi_ts)]
+            except Exception:
+                cb = pd.DataFrame()
+            if len(cb) == 0:
+                self._symbol_candle_last_boundary[sym] = last_boundary
+                return
+            c_high = float(cb["high"].max())
+            c_low = float(cb["low"].min())
+
+            exit_reason = ""
+            if direction == "BUY":
+                if c_low < candle_open:
+                    exit_reason = "candle_reversal"
+                elif c_high >= candle_tp:
+                    exit_reason = "candle_tp_hit"
+            else:
+                if c_high > candle_open:
+                    exit_reason = "candle_reversal"
+                elif c_low <= candle_tp:
+                    exit_reason = "candle_tp_hit"
+
+            if not exit_reason:
+                return  # candle trades use backtest logic only — no other exits
+
+            self.logger.signal(
+                f"[{sym}] Candle exit: {exit_reason} | dir={direction} entry={entry_price:.2f} "
+                f"px={current_px:.2f} candle_open={candle_open:.2f} tp={candle_tp:.2f} held={minutes_held:.1f}m"
+            )
+            closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+            for pos_data in closed:
+                self.position_manager.note_closed(pos_data, exit_reason=exit_reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
+            if closed:
+                pnl = sum(p.get("profit", 0) for p in closed)
+                self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
+                self._symbol_states[sym] = self.STATES["IDLE"]
+                self._symbol_event_start_ts[sym] = None
+                self._symbol_candle_entry[sym] = False
+                self._symbol_candle_entry_open[sym] = None
+                self._symbol_candle_tp[sym] = None
+                self._symbol_candle_last_boundary[sym] = 0
+                if hasattr(self, f"_best_price_{sym}"):
+                    delattr(self, f"_best_price_{sym}")
+                await self._notify(
+                    "trade_close",
+                    f"Trade Closed — {sym}",
+                    f"{direction} {sym} closed ({exit_reason}) | PnL: ${pnl:+.2f} | held {int(minutes_held)}m",
+                    {"symbol": sym, "direction": direction, "exit_reason": exit_reason, "pnl": pnl, "held_minutes": minutes_held},
+                )
+            else:
+                self.logger.warning(f"[{sym}] Candle exit close failed, retrying next tick")
+            return
+
+        if is_asp:
             asp_sl = pos_signal.get("sl")
             asp_tp = pos_signal.get("tp1")
             atr_val = pos_signal.get("atr_value", 0)
@@ -1075,23 +1191,23 @@ class Bot:
             if direction == "BUY":
                 if asp_sl and current_px <= asp_sl:
                     should_exit = True
-                    exit_reason = "candle_sl_hit" if is_candle else ("asp_trail_sl" if trail_activated else "asp_sl_hit")
+                    exit_reason = "asp_trail_sl" if trail_activated else "asp_sl_hit"
                 elif asp_tp and current_px >= asp_tp:
                     should_exit = True
-                    exit_reason = "candle_tp_hit" if is_candle else "asp_tp_hit"
+                    exit_reason = "asp_tp_hit"
             else:
                 if asp_sl and current_px >= asp_sl:
                     should_exit = True
-                    exit_reason = "candle_sl_hit" if is_candle else ("asp_trail_sl" if trail_activated else "asp_sl_hit")
+                    exit_reason = "asp_trail_sl" if trail_activated else "asp_sl_hit"
                 elif asp_tp and current_px <= asp_tp:
                     should_exit = True
-                    exit_reason = "candle_tp_hit" if is_candle else "asp_tp_hit"
+                    exit_reason = "asp_tp_hit"
 
             if should_exit:
                 _sl_str = f"{asp_sl:.2f}" if asp_sl else "n/a"
-                _adx_str = f"{adx_at_entry:.1f}" if is_asp else "0.0"
+                _adx_str = f"{adx_at_entry:.1f}"
                 self.logger.signal(
-                    f"[{sym}] {'Candle' if is_candle else 'ASP'} exit: {exit_reason} | dir={direction} entry={entry_price:.2f} "
+                    f"[{sym}] ASP exit: {exit_reason} | dir={direction} entry={entry_price:.2f} "
                     f"px={current_px:.2f} sl={_sl_str} adx={_adx_str} held={minutes_held:.1f}m"
                 )
                 closed = self.trade_executor.close_all_bot_positions(symbol=sym)
@@ -1120,75 +1236,6 @@ class Bot:
         dir_timeout_min = getattr(cfg, "SMART_TIMEOUT_DIR_MIN", 15)
         asp_timeout_min = getattr(cfg, "SMART_TIMEOUT_ASP_MIN", 45)
         rescan_interval = getattr(cfg, "SMART_TIMEOUT_RESCAN_SEC", 30)
-
-        # Candle ML smart timeout — own rescan cycle matching its ~4-min prediction horizon.
-        # Still falls under the every-tick SL/TP + price-reversal checks above.
-        is_candle = self._symbol_candle_entry.get(sym, False)
-        candle_timeout_min = getattr(cfg, "CANDLE_ML_TIMEOUT_MIN", 3.8)
-        candle_rescan_interval = getattr(cfg, "CANDLE_ML_TIMEOUT_RESCAN_SEC", 60)
-        if is_candle and minutes_held >= candle_timeout_min:
-            now = time.time()
-            last_candle_scan = self._symbol_candle_rescan_ts.get(sym, 0.0)
-            if now - last_candle_scan < candle_rescan_interval:
-                return
-            self._symbol_candle_rescan_ts[sym] = now
-
-            candle_m1_bars = max(
-                getattr(cfg, "ASP_M1_HISTORY_BARS", 300),
-                getattr(cfg, "CANDLE_ML_M1_HISTORY_BARS", 500),
-            )
-            m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, candle_m1_bars)
-            candle_flip = False
-            if m1_data is not None and len(m1_data) > 0:
-                try:
-                    from app.candle_ml import compute_candle_features as _candle_feats
-                    m1_idx = m1_data.set_index("time") if "time" in m1_data.columns else m1_data
-                    cfeats = _candle_feats(m1_idx)
-                    if cfeats is not None and len(cfeats) > 0:
-                        candle_ml = self._symbol_candle_ml.get(sym)
-                        if candle_ml is not None and candle_ml.model is not None:
-                            prob_up = candle_ml.predict_proba(cfeats)
-                            last_row = cfeats.iloc[[-1]]
-                            m1_dir = last_row.get("m1_first_dir", pd.Series([0.0])).values[0]
-                            if np.isnan(m1_dir):
-                                m1_dir = 0
-                            m1_dir = int(m1_dir)
-                            conf_thresh = getattr(cfg, "CANDLE_ML_CONFIDENCE_THRESHOLD", 0.65)
-                            pred = candle_ml.predict(prob_up, m1_dir, confidence_threshold=conf_thresh)
-                            if pred is not None and pred != direction:
-                                candle_flip = True
-                except Exception as e:
-                    self.logger.debug(f"[{sym}] Candle ML timeout check failed: {e}")
-
-            if candle_flip:
-                reason = f"candle_timeout_{int(minutes_held)}min_flip"
-                self.logger.signal(
-                    f"[{sym}] Timeout exit: Candle ML flipped at {int(minutes_held)}m | "
-                    f"dir={direction} pnl=${event_pnl:+.2f} entry={entry_price:.2f} px={current_px:.2f}"
-                )
-                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
-                for pos_data in closed:
-                    self.position_manager.note_closed(pos_data, exit_reason=reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
-                if closed:
-                    pnl = sum(p.get("profit", 0) for p in closed)
-                    self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
-                    self._symbol_states[sym] = self.STATES["IDLE"]
-                    self._symbol_event_start_ts[sym] = None
-                    self._symbol_candle_entry[sym] = False
-                    self._symbol_candle_rescan_ts[sym] = 0.0
-                    self._symbol_last_rescan_ts[sym] = 0.0
-                    self._symbol_rescan_count[sym] = 0
-                    if hasattr(self, f"_best_price_{sym}"):
-                        delattr(self, f"_best_price_{sym}")
-                    await self._notify(
-                        "trade_close",
-                        f"Trade Closed — {sym}",
-                        f"{direction} {sym} closed ({reason}) | PnL: ${pnl:+.2f} | held {int(minutes_held)}m",
-                        {"symbol": sym, "direction": direction, "exit_reason": reason, "pnl": pnl, "held_minutes": minutes_held},
-                    )
-                else:
-                    self.logger.warning(f"[{sym}] Timeout exit close failed, retrying next tick")
-                return
 
         if minutes_held >= dir_timeout_min:
             now = time.time()
@@ -1455,6 +1502,10 @@ class Bot:
             self._symbol_states[sym] = self.STATES["IN_TRADE"]
             self._symbol_event_start_ts[sym] = time.time()
             self._symbol_candle_entry[sym] = (signal.get("signal_type") == "candle_ml")
+            # Backtest-parity candle state: reference open, TP, and entry M5 boundary.
+            self._symbol_candle_entry_open[sym] = signal.get("candle_open") or current_price
+            self._symbol_candle_tp[sym] = signal.get("tp1")
+            self._symbol_candle_last_boundary[sym] = int(time.time()) - (int(time.time()) % 300)
             self.logger.info(
                 f"[{sym}] Entered {direction} with {max_trades} position(s) "
                 f"(ML conf={ml_conf:.2f})"
@@ -1529,6 +1580,10 @@ class Bot:
             self._symbol_regime_skipped[sym] = None
             self._symbol_vol_regime[sym] = False
             self._symbol_signals[sym] = None
+            self._symbol_candle_entry[sym] = False
+            self._symbol_candle_entry_open[sym] = None
+            self._symbol_candle_tp[sym] = None
+            self._symbol_candle_last_boundary[sym] = 0
             self._symbol_last_rescan_ts[sym] = 0.0
             self._symbol_rescan_count[sym] = 0
             if hasattr(self, f"_best_price_{sym}"):
@@ -1540,6 +1595,9 @@ class Bot:
         for sym in self.symbols:
             self._symbol_states[sym] = self.STATES["STOPPED"]
             self._symbol_candle_entry[sym] = False
+            self._symbol_candle_entry_open[sym] = None
+            self._symbol_candle_tp[sym] = None
+            self._symbol_candle_last_boundary[sym] = 0
         self.logger.warning("Bot manually stopped")
 
     async def emergency_close(self):
@@ -1557,6 +1615,10 @@ class Bot:
                 self._symbol_reversal_confirms[sym] = 0
                 self._symbol_consecutive_losses[sym] = 0
                 self._symbol_regime_skipped[sym] = None
+                self._symbol_candle_entry[sym] = False
+                self._symbol_candle_entry_open[sym] = None
+                self._symbol_candle_tp[sym] = None
+                self._symbol_candle_last_boundary[sym] = 0
                 self._symbol_last_rescan_ts[sym] = 0.0
                 self._symbol_rescan_count[sym] = 0
                 if hasattr(self, f"_best_price_{sym}"):
