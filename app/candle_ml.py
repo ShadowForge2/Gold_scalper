@@ -266,6 +266,89 @@ def compute_candle_features(m1_df: pd.DataFrame) -> pd.DataFrame:
     return feats
 
 
+def candle_pattern_gate(m1_idx, direction: str, atr: float, mode: str = "strict"):
+    """Classify the current M5 entry candle's pattern and decide if it's worth trading.
+
+    Evaluated from the first M1 bar of the current M5 candle plus the previous
+    completed M5 candle. Research-backed filter (gold M5 scalping):
+    trade decisive bodies / rejections / engulfings, skip dojis and dead range.
+
+    Patterns:
+      strong_body  : body >= 60% of range, range >= 0.4*ATR  (marubozu-like, decisive)
+      pin_bar      : wick opposite trade dir >= 2x body (rejection / hammer / shooting star)
+      engulfing    : first M1 bar body engulfs previous M5 candle body in trade direction
+      normal       : in-between — tradable only in "basic" mode
+      indecision   : body < 25% of range (doji-like) — skip
+      tiny_range   : range < 0.3*ATR (no volatility to trade) — skip
+
+    Returns (ok, pattern_name). mode: "strict" (default) | "basic" | "off".
+    """
+    if mode == "off":
+        return True, "off"
+    if m1_idx is None or len(m1_idx) == 0:
+        return False, "no_data"
+    if atr is None or atr <= 0:
+        atr = 1.0
+    try:
+        idx = m1_idx
+        if not isinstance(idx.index, pd.DatetimeIndex):
+            idx = m1_idx.set_index("time") if "time" in m1_idx.columns else m1_idx
+        idx = idx[~idx.index.duplicated(keep="last")].sort_index()
+        if len(idx) == 0:
+            return False, "no_data"
+
+        cur_start = idx.index[-1].floor("5min")
+        cur_bars = idx.loc[cur_start:]
+        if len(cur_bars) == 0:
+            cur_bars = idx.iloc[[-1]]
+        first = cur_bars.iloc[0]
+
+        o = float(first["open"])
+        h = float(first["high"])
+        l = float(first["low"])
+        c = float(first["close"])
+        body = abs(c - o)
+        rng = h - l
+        if rng <= 0:
+            return False, "no_range"
+
+        body_ratio = body / rng
+        lower_wick = min(o, c) - l
+        upper_wick = h - max(o, c)
+        is_buy = direction == "BUY"
+        rng_atr = rng / atr
+
+        if body_ratio >= 0.6 and rng_atr >= 0.4:
+            return True, "strong_body"
+
+        if is_buy and lower_wick >= 2 * body and body_ratio <= 0.5 and rng_atr >= 0.5:
+            return True, "pin_bar"
+        if not is_buy and upper_wick >= 2 * body and body_ratio <= 0.5 and rng_atr >= 0.5:
+            return True, "pin_bar"
+
+        m5 = idx.resample("5min").agg({
+            "open": "first", "high": "max", "low": "min", "close": "last",
+        }).dropna()
+        if len(m5) >= 2:
+            prev = m5.iloc[-2]
+            po = float(prev["open"])
+            pc = float(prev["close"])
+            if is_buy and c > max(po, pc) and o <= min(po, pc):
+                return True, "engulfing"
+            if not is_buy and c < min(po, pc) and o >= max(po, pc):
+                return True, "engulfing"
+
+        if rng_atr < 0.3:
+            return False, "tiny_range"
+        if body_ratio < 0.25:
+            return False, "indecision"
+        if mode == "strict":
+            return False, "normal_strict"
+        return True, "normal"
+    except Exception:
+        return False, "error"
+
+
 def create_candle_target(m1_df: pd.DataFrame) -> pd.Series:
     """Target: 1 if M5 candle closes UP, 0 if DOWN.
 

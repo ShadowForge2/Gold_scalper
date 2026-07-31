@@ -274,6 +274,14 @@ CANDLE_ML_MODE = {
 CANDLE_ML_VOL_THRESHOLD = _env_float("CANDLE_ML_VOL_THRESHOLD", 1.3)
 CANDLE_ML_VOL_WINDOW_SHORT = _env_int("CANDLE_ML_VOL_WINDOW_SHORT", 5)   # M5 bars
 CANDLE_ML_VOL_WINDOW_LONG = _env_int("CANDLE_ML_VOL_WINDOW_LONG", 40)    # M5 bars
+# Entry quality filter (research-backed): only trade on strong candles at best sessions.
+# mode: "strict" (strong_body/pin_bar/engulfing only) | "basic" (+normal, skip doji/tiny) | "off"
+CANDLE_ML_PATTERN_FILTER = _env_str("CANDLE_ML_PATTERN_FILTER", "strict")
+# Best hours per symbol (UTC). Empty string = all hours. XAUUSD backtest: 13-18 UTC = London/NY (WR 55-61%).
+CANDLE_ML_ALLOWED_HOURS = {
+    "XAUUSD": _env_str("CANDLE_ML_ALLOWED_HOURS_XAUUSD", "13,14,15,16,17,18"),
+    "US100": _env_str("CANDLE_ML_ALLOWED_HOURS_US100", ""),
+}
 
 # MaxelPay
 MAXELPAY_API_KEY = _env_str("MAXELPAY_API_KEY", "")

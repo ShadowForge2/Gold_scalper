@@ -734,23 +734,43 @@ class Bot:
                         direction = pred
                         score = max(prob_up, 1 - prob_up)
                         _atr = current_atr if current_atr and current_atr > 0 else 0.5
-                        sl_dist = _atr * getattr(cfg, "SL_ATR_MULTIPLIER", 1.0)
-                        tp_dist = _atr * getattr(cfg, "TP1_MULTIPLIER", 2.0)
-                        signal = {
-                            "direction": direction,
-                            "score": score,
-                            "ml_confidence": score,
-                            "price": current_price,
-                            "sl": current_price - sl_dist if direction == "BUY" else current_price + sl_dist,
-                            "tp1": current_price + tp_dist if direction == "BUY" else current_price - tp_dist,
-                            "signal_type": "candle_ml",
-                            "atr": _atr,
-                            "high_volatility": high_vol if high_vol else False,
-                        }
-                        self.logger.info(
-                            f"[{sym}] Candle ML: {direction} (conf={score:.3f}, "
-                            f"m1_dir={m1_dir}, prob_up={prob_up:.3f})"
-                        )
+                        # Entry quality filter: trade only best candles at best times
+                        pat_mode = getattr(cfg, "CANDLE_ML_PATTERN_FILTER", "strict")
+                        from app.candle_ml import candle_pattern_gate
+                        pat_ok, pat_name = candle_pattern_gate(m1_idx, direction, _atr, pat_mode)
+                        hour = datetime.now(timezone.utc).hour
+                        allowed = getattr(cfg, "CANDLE_ML_ALLOWED_HOURS", {}).get(sym, "")
+                        hour_ok = True
+                        if allowed:
+                            allowed_list = [int(x) for x in str(allowed).split(",") if str(x).strip() != ""]
+                            hour_ok = hour in allowed_list
+                        if not pat_ok:
+                            self.logger.info(
+                                f"[{sym}] Candle ML: skip pattern={pat_name} dir={direction} "
+                                f"conf={score:.3f} m1_dir={m1_dir}"
+                            )
+                        elif not hour_ok:
+                            self.logger.info(
+                                f"[{sym}] Candle ML: skip hour={hour} (allowed={allowed}) dir={direction} conf={score:.3f}"
+                            )
+                        else:
+                            sl_dist = _atr * getattr(cfg, "SL_ATR_MULTIPLIER", 1.0)
+                            tp_dist = _atr * getattr(cfg, "TP1_MULTIPLIER", 2.0)
+                            signal = {
+                                "direction": direction,
+                                "score": score,
+                                "ml_confidence": score,
+                                "price": current_price,
+                                "sl": current_price - sl_dist if direction == "BUY" else current_price + sl_dist,
+                                "tp1": current_price + tp_dist if direction == "BUY" else current_price - tp_dist,
+                                "signal_type": "candle_ml",
+                                "atr": _atr,
+                                "high_volatility": high_vol if high_vol else False,
+                            }
+                            self.logger.info(
+                                f"[{sym}] Candle ML: {direction} pattern={pat_name} (conf={score:.3f}, "
+                                f"m1_dir={m1_dir}, prob_up={prob_up:.3f})"
+                            )
                     elif time.time() - getattr(self, '_last_candle_log_ts', 0) > 30:
                         self._last_candle_log_ts = time.time()
                         self.logger.info(
