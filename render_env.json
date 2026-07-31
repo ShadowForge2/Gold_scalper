@@ -44,6 +44,8 @@
   "ASP_SL_ATR_MULTIPLIER": "2.0",
   "ASP_TP_ATR_MULTIPLIER": "1.0",
   "ASP_MIN_ATR_DIST": "0.50",
+  "CANDLE_ML_TRAILING_ENABLED": "true",
+  "CANDLE_ML_TRAIL_ATR": "1.5",
   "API_HOST": "0.0.0.0",
   "API_PORT": "8000",
   "MAXELPAY_API_KEY": "pk_test_z2pcs2SbzyRky3tvQuV6omnhVM3JpZt0",

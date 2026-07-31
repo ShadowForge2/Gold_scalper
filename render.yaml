@@ -87,6 +87,10 @@ services:
         value: "1.0"
       - key: ASP_MIN_ATR_DIST
         value: "0.50"
+      - key: CANDLE_ML_TRAILING_ENABLED
+        value: "true"
+      - key: CANDLE_ML_TRAIL_ATR
+        value: "1.5"
       - key: MIN_BALANCE
         value: "10.0"
       - key: MIN_VOLATILITY_PIPS

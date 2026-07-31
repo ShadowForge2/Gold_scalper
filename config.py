@@ -282,6 +282,11 @@ CANDLE_ML_ALLOWED_HOURS = {
     "XAUUSD": _env_str("CANDLE_ML_ALLOWED_HOURS_XAUUSD", "13,14,15,16,17,18"),
     "US100": _env_str("CANDLE_ML_ALLOWED_HOURS_US100", ""),
 }
+# Exit: the candle_reversal line trails the best price by CANDLE_ML_TRAIL_ATR x
+# ATR (floored at the fill/break-even), so normal pullbacks don't close a trade
+# CandleML still agrees with. Wider value = more room to breathe, less locked in.
+CANDLE_ML_TRAILING_ENABLED = _env_bool("CANDLE_ML_TRAILING_ENABLED", True)
+CANDLE_ML_TRAIL_ATR = _env_float("CANDLE_ML_TRAIL_ATR", 1.5)
 
 # MaxelPay
 MAXELPAY_API_KEY = _env_str("MAXELPAY_API_KEY", "")

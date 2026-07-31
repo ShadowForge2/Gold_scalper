@@ -985,8 +985,7 @@ class Bot:
         direction = sym_positions[0].get("type", "BUY") if sym_positions else "BUY"
         event_pnl = sum(p.get("profit", 0) for p in sym_positions)
 
-        # Candle ML trades skip event loss — exact backtest parity
-        # (_bt_us100_candle.py has no event-loss stop).
+        # Candle ML trades skip event loss — the candle backtest has no event-loss stop.
         is_candle = self._symbol_candle_entry.get(sym, False)
         if not is_candle:
             event_ok, event_msg = self.risk_manager.check_event_loss(event_pnl, balance)
@@ -1029,15 +1028,17 @@ class Bot:
         minutes_held = (time.time() - event_start) / 60.0 if event_start else 0.0
 
         if is_candle:
-            # ── Candle ML exit — faithful port of _bt_us100_candle.py ──
-            # The backtest evaluates ONLY completed M5 candles at 5-min
+            # ── Candle ML exit — trailing reversal line + TP only ──
+            # The candle backtest evaluates ONLY completed M5 candles at 5-min
             # boundaries and has exactly two live exits:
-            #   1. candle_reversal — completed candle traded back through
-            #      the entry candle's open → exit at market.
-            #   2. tp — completed candle reached TP (2×ATR) without reversing.
+            #   1. candle_reversal — completed candle traded back through the
+            #      trailing reversal line → exit at market. The line trails the
+            #      best price by CANDLE_ML_TRAIL_ATR x ATR, floored at the
+            #      fill/break-even, so pullbacks don't close a valid trade.
+            #   2. candle_tp_hit — completed candle reached TP (2×ATR from fill).
             # The SL branch is dead code in the backtest (1×ATR SL always
             # sits inside the reversal zone), so there is NO SL exit.
-            # No break-even, no trailing, no timeout, no event loss.
+            # No timeout, no event loss.
             now = time.time()
             cur_boundary = int(now) - (int(now) % 300)
             last_boundary = self._symbol_candle_last_boundary.get(sym, 0)
@@ -1083,14 +1084,33 @@ class Bot:
             c_high = float(cb["high"].max())
             c_low = float(cb["low"].min())
 
+            atr_val = pos_signal.get("atr", 0) if pos_signal else 0
+            trailing_enabled = getattr(cfg, "CANDLE_ML_TRAILING_ENABLED", True) and atr_val > 0
+            trail_mult = getattr(cfg, "CANDLE_ML_TRAIL_ATR", 1.5)
+
+            best_key = f"_best_price_{sym}"
+            if not hasattr(self, best_key):
+                setattr(self, best_key, entry_price)
+            best = getattr(self, best_key)
+
             exit_reason = ""
             if direction == "BUY":
-                if c_low < candle_open:
+                best = max(best, c_high)
+                setattr(self, best_key, best)
+                anchor = candle_open
+                if trailing_enabled:
+                    anchor = max(candle_open, best - atr_val * trail_mult)
+                if c_low < anchor:
                     exit_reason = "candle_reversal"
                 elif c_high >= candle_tp:
                     exit_reason = "candle_tp_hit"
             else:
-                if c_high > candle_open:
+                best = min(best, c_low)
+                setattr(self, best_key, best)
+                anchor = candle_open
+                if trailing_enabled:
+                    anchor = min(candle_open, best + atr_val * trail_mult)
+                if c_high > anchor:
                     exit_reason = "candle_reversal"
                 elif c_low <= candle_tp:
                     exit_reason = "candle_tp_hit"
@@ -1100,7 +1120,8 @@ class Bot:
 
             self.logger.signal(
                 f"[{sym}] Candle exit: {exit_reason} | dir={direction} entry={entry_price:.2f} "
-                f"px={current_px:.2f} candle_open={candle_open:.2f} tp={candle_tp:.2f} held={minutes_held:.1f}m"
+                f"px={current_px:.2f} candle_open={candle_open:.2f} tp={candle_tp:.2f} "
+                f"anchor={anchor:.2f} best={best:.2f} held={minutes_held:.1f}m"
             )
             closed = self.trade_executor.close_all_bot_positions(symbol=sym)
             for pos_data in closed:
@@ -1503,8 +1524,13 @@ class Bot:
             self._symbol_event_start_ts[sym] = time.time()
             self._symbol_candle_entry[sym] = (signal.get("signal_type") == "candle_ml")
             # Backtest-parity candle state: reference open, TP, and entry M5 boundary.
-            self._symbol_candle_entry_open[sym] = signal.get("candle_open") or current_price
-            self._symbol_candle_tp[sym] = signal.get("tp1")
+            # Anchor at the ACTUAL fill (break-even), not the candle open — matches
+            # _bt_live_sim ANCHOR="fill". TP shifted by the same delta so it is
+            # measured from the real entry, not the entry candle's open.
+            sig_open = signal.get("candle_open") or current_price
+            sig_tp = signal.get("tp1")
+            self._symbol_candle_entry_open[sym] = current_price
+            self._symbol_candle_tp[sym] = (current_price + (sig_tp - sig_open)) if sig_tp is not None else None
             self._symbol_candle_last_boundary[sym] = int(time.time()) - (int(time.time()) % 300)
             self.logger.info(
                 f"[{sym}] Entered {direction} with {max_trades} position(s) "
