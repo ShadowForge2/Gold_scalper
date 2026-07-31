@@ -754,6 +754,12 @@ class Bot:
                                 f"[{sym}] Candle ML: skip hour={hour} (allowed={allowed}) dir={direction} conf={score:.3f}"
                             )
                         else:
+                            m5_entry_open = None
+                            if isinstance(m1_idx.index, pd.DatetimeIndex):
+                                _cs = m1_idx.index[-1].floor("5min")
+                                _cb = m1_idx.loc[_cs:]
+                                if len(_cb) > 0:
+                                    m5_entry_open = float(_cb["open"].iloc[0])
                             sl_dist = _atr * getattr(cfg, "SL_ATR_MULTIPLIER", 1.0)
                             tp_dist = _atr * getattr(cfg, "TP1_MULTIPLIER", 2.0)
                             signal = {
@@ -764,6 +770,7 @@ class Bot:
                                 "sl": current_price - sl_dist if direction == "BUY" else current_price + sl_dist,
                                 "tp1": current_price + tp_dist if direction == "BUY" else current_price - tp_dist,
                                 "signal_type": "candle_ml",
+                                "m5_entry_open": m5_entry_open,
                                 "atr": _atr,
                                 "high_volatility": high_vol if high_vol else False,
                             }
@@ -1090,19 +1097,22 @@ class Bot:
             # Candle ML reversal check: exit if price crosses back past entry candle's M5 open
             candle_reversal = False
             if is_candle and not should_exit:
-                try:
-                    m1_for_open = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, 6)
-                    if m1_for_open is not None and len(m1_for_open) > 0:
-                        m1_idx_o = m1_for_open.set_index("time") if "time" in m1_for_open.columns else m1_for_open
-                        m5_open = m1_idx_o.resample("5min").agg({"open": "first"}).dropna()
-                        if len(m5_open) > 0:
-                            entry_candle_open = m5_open["open"].iloc[-1]
-                            if direction == "BUY" and current_px < entry_candle_open:
-                                candle_reversal = True
-                            elif direction == "SELL" and current_px > entry_candle_open:
-                                candle_reversal = True
-                except Exception:
-                    pass
+                entry_candle_open = pos_signal.get("m5_entry_open") if pos_signal else None
+                if entry_candle_open is None:
+                    try:
+                        m1_for_open = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, 6)
+                        if m1_for_open is not None and len(m1_for_open) > 0:
+                            m1_idx_o = m1_for_open.set_index("time") if "time" in m1_for_open.columns else m1_for_open
+                            m5_open = m1_idx_o.resample("5min").agg({"open": "first"}).dropna()
+                            if len(m5_open) > 0:
+                                entry_candle_open = m5_open["open"].iloc[-1]
+                    except Exception:
+                        pass
+                if entry_candle_open is not None:
+                    if direction == "BUY" and current_px < entry_candle_open:
+                        candle_reversal = True
+                    elif direction == "SELL" and current_px > entry_candle_open:
+                        candle_reversal = True
                 if candle_reversal:
                     should_exit = True
                     exit_reason = "candle_reversal"
