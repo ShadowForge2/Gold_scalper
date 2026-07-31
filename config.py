@@ -267,7 +267,7 @@ CANDLE_ML_MODEL_PATHS = {
 # Mode: "always" = skip ASP+DP entirely for this symbol
 #       "volatility" = use Candle ML when vol_ratio > threshold
 CANDLE_ML_MODE = {
-    "XAUUSD": _env_str("CANDLE_ML_MODE_XAUUSD", "volatility"),
+    "XAUUSD": _env_str("CANDLE_ML_MODE_XAUUSD", "always"),
     "US100": _env_str("CANDLE_ML_MODE_US100", "always"),
 }
 # For "volatility" mode: switch to Candle ML when short-term / long-term ATR > this
