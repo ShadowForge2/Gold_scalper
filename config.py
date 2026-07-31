@@ -165,6 +165,11 @@ SMART_TIMEOUT_DIR_MIN = _env_float("SMART_TIMEOUT_DIR_MIN", 15.0)  # direction p
 SMART_TIMEOUT_ASP_MIN = _env_float("SMART_TIMEOUT_ASP_MIN", 45.0)  # ASP starts at 45 min
 SMART_TIMEOUT_RESCAN_SEC = _env_int("SMART_TIMEOUT_RESCAN_SEC", 900)  # re-scan every 15 min (matches DP forecast horizon)
 
+# Candle ML smart timeout — own rescan cycle matching its ~4-min prediction horizon
+# First re-scan ~1 candle after entry, then every CANDLE_ML_TIMEOUT_RESCAN_SEC
+CANDLE_ML_TIMEOUT_MIN = _env_float("CANDLE_ML_TIMEOUT_MIN", 3.8)
+CANDLE_ML_TIMEOUT_RESCAN_SEC = _env_int("CANDLE_ML_TIMEOUT_RESCAN_SEC", 60)
+
 # Adaptive confirmation
 ADAPTIVE_CONFIRMATION_ENABLED = _env_bool("ADAPTIVE_CONFIRMATION_ENABLED", True)
 ADAPTIVE_CONF_WINDOW = _env_int("ADAPTIVE_CONF_WINDOW", 200)
@@ -253,7 +258,7 @@ DIRECTION_MODEL_PATHS = {
 # Candle ML — multi-timeframe M5 direction prediction
 # Replaces ASP+DP stack for US100; replaces during high-vol for Gold
 CANDLE_ML_ENABLED = _env_bool("CANDLE_ML_ENABLED", True)
-CANDLE_ML_CONFIDENCE_THRESHOLD = _env_float("CANDLE_ML_CONFIDENCE_THRESHOLD", 0.60)
+CANDLE_ML_CONFIDENCE_THRESHOLD = _env_float("CANDLE_ML_CONFIDENCE_THRESHOLD", 0.65)
 CANDLE_ML_M1_HISTORY_BARS = _env_int("CANDLE_ML_M1_HISTORY_BARS", 500)
 CANDLE_ML_MODEL_PATHS = {
     "XAUUSD": _env_str("CANDLE_ML_MODEL_PATH_XAUUSD", "models/candle_xgb_m5_XAUUSD.joblib"),

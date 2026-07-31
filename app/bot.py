@@ -77,6 +77,7 @@ class Bot:
         self._symbol_last_rescan_ts: Dict[str, float] = {}
         self._symbol_rescan_count: Dict[str, int] = {}
         self._symbol_candle_entry: Dict[str, bool] = {}
+        self._symbol_candle_rescan_ts: Dict[str, float] = {}
         self._last_retrain_week: int = -1  # week number of last auto-retrain
 
         # Load per-symbol models and signal engines
@@ -1120,6 +1121,75 @@ class Bot:
         asp_timeout_min = getattr(cfg, "SMART_TIMEOUT_ASP_MIN", 45)
         rescan_interval = getattr(cfg, "SMART_TIMEOUT_RESCAN_SEC", 30)
 
+        # Candle ML smart timeout — own rescan cycle matching its ~4-min prediction horizon.
+        # Still falls under the every-tick SL/TP + price-reversal checks above.
+        is_candle = self._symbol_candle_entry.get(sym, False)
+        candle_timeout_min = getattr(cfg, "CANDLE_ML_TIMEOUT_MIN", 3.8)
+        candle_rescan_interval = getattr(cfg, "CANDLE_ML_TIMEOUT_RESCAN_SEC", 60)
+        if is_candle and minutes_held >= candle_timeout_min:
+            now = time.time()
+            last_candle_scan = self._symbol_candle_rescan_ts.get(sym, 0.0)
+            if now - last_candle_scan < candle_rescan_interval:
+                return
+            self._symbol_candle_rescan_ts[sym] = now
+
+            candle_m1_bars = max(
+                getattr(cfg, "ASP_M1_HISTORY_BARS", 300),
+                getattr(cfg, "CANDLE_ML_M1_HISTORY_BARS", 500),
+            )
+            m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, candle_m1_bars)
+            candle_flip = False
+            if m1_data is not None and len(m1_data) > 0:
+                try:
+                    from app.candle_ml import compute_candle_features as _candle_feats
+                    m1_idx = m1_data.set_index("time") if "time" in m1_data.columns else m1_data
+                    cfeats = _candle_feats(m1_idx)
+                    if cfeats is not None and len(cfeats) > 0:
+                        candle_ml = self._symbol_candle_ml.get(sym)
+                        if candle_ml is not None and candle_ml.model is not None:
+                            prob_up = candle_ml.predict_proba(cfeats)
+                            last_row = cfeats.iloc[[-1]]
+                            m1_dir = last_row.get("m1_first_dir", pd.Series([0.0])).values[0]
+                            if np.isnan(m1_dir):
+                                m1_dir = 0
+                            m1_dir = int(m1_dir)
+                            conf_thresh = getattr(cfg, "CANDLE_ML_CONFIDENCE_THRESHOLD", 0.60)
+                            pred = candle_ml.predict(prob_up, m1_dir, confidence_threshold=conf_thresh)
+                            if pred is not None and pred != direction:
+                                candle_flip = True
+                except Exception as e:
+                    self.logger.debug(f"[{sym}] Candle ML timeout check failed: {e}")
+
+            if candle_flip:
+                reason = f"candle_timeout_{int(minutes_held)}min_flip"
+                self.logger.signal(
+                    f"[{sym}] Timeout exit: Candle ML flipped at {int(minutes_held)}m | "
+                    f"dir={direction} pnl=${event_pnl:+.2f} entry={entry_price:.2f} px={current_px:.2f}"
+                )
+                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                for pos_data in closed:
+                    self.position_manager.note_closed(pos_data, exit_reason=reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
+                if closed:
+                    pnl = sum(p.get("profit", 0) for p in closed)
+                    self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
+                    self._symbol_states[sym] = self.STATES["IDLE"]
+                    self._symbol_event_start_ts[sym] = None
+                    self._symbol_candle_entry[sym] = False
+                    self._symbol_candle_rescan_ts[sym] = 0.0
+                    self._symbol_last_rescan_ts[sym] = 0.0
+                    self._symbol_rescan_count[sym] = 0
+                    if hasattr(self, f"_best_price_{sym}"):
+                        delattr(self, f"_best_price_{sym}")
+                    await self._notify(
+                        "trade_close",
+                        f"Trade Closed — {sym}",
+                        f"{direction} {sym} closed ({reason}) | PnL: ${pnl:+.2f} | held {int(minutes_held)}m",
+                        {"symbol": sym, "direction": direction, "exit_reason": reason, "pnl": pnl, "held_minutes": minutes_held},
+                    )
+                else:
+                    self.logger.warning(f"[{sym}] Timeout exit close failed, retrying next tick")
+                return
+
         if minutes_held >= dir_timeout_min:
             now = time.time()
             last_scan = self._symbol_last_rescan_ts.get(sym, 0.0)
@@ -1137,8 +1207,6 @@ class Bot:
             fresh_signal = None
             dir_flip = False
             h1_for_asp = None
-            is_candle = self._symbol_candle_entry.get(sym, False)
-            candle_flip = False
             if engine:
                 h1_for_asp = self.client.get_rates(sym, cfg.BIAS_TIMEFRAME, 48)
                 fresh_signal = engine.evaluate_asp_entry(m1_data, current_px, h1_data=h1_for_asp)
@@ -1161,28 +1229,6 @@ class Bot:
                     except Exception as e:
                         self.logger.debug(f"[{sym}] Dir predictor timeout check failed: {e}")
 
-                # Candle ML re-scan during timeout
-                if is_candle:
-                    try:
-                        from app.candle_ml import compute_candle_features as _candle_feats
-                        m1_idx = m1_data.set_index("time") if "time" in m1_data.columns else m1_data
-                        cfeats = _candle_feats(m1_idx)
-                        if cfeats is not None and len(cfeats) > 0:
-                            candle_ml = self._symbol_candle_ml.get(sym)
-                            if candle_ml is not None and candle_ml.model is not None:
-                                prob_up = candle_ml.predict_proba(cfeats)
-                                last_row = cfeats.iloc[[-1]]
-                                m1_dir = last_row.get("m1_first_dir", pd.Series([0.0])).values[0]
-                                if np.isnan(m1_dir):
-                                    m1_dir = 0
-                                m1_dir = int(m1_dir)
-                                conf_thresh = getattr(cfg, "CANDLE_ML_CONFIDENCE_THRESHOLD", 0.60)
-                                pred = candle_ml.predict(prob_up, m1_dir, confidence_threshold=conf_thresh)
-                                if pred is not None and pred != direction:
-                                    candle_flip = True
-                    except Exception as e:
-                        self.logger.debug(f"[{sym}] Candle ML timeout check failed: {e}")
-
             fresh_dir = fresh_signal.get("direction") if fresh_signal else None
             asp_flip = fresh_dir is not None and fresh_dir != direction
             event_pnl = sum(p.get("profit", 0) for p in sym_positions)
@@ -1201,37 +1247,6 @@ class Bot:
                     self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
                     self._symbol_states[sym] = self.STATES["IDLE"]
                     self._symbol_event_start_ts[sym] = None
-                    self._symbol_last_rescan_ts[sym] = 0.0
-                    self._symbol_rescan_count[sym] = 0
-                    if hasattr(self, f"_best_price_{sym}"):
-                        delattr(self, f"_best_price_{sym}")
-                    await self._notify(
-                        "trade_close",
-                        f"Trade Closed — {sym}",
-                        f"{direction} {sym} closed ({reason}) | PnL: ${pnl:+.2f} | held {int(minutes_held)}m",
-                        {"symbol": sym, "direction": direction, "exit_reason": reason, "pnl": pnl, "held_minutes": minutes_held},
-                    )
-                else:
-                    self.logger.warning(f"[{sym}] Timeout exit close failed, retrying next tick")
-                return
-
-            # Note: dir_flip block above already resets _symbol_candle_entry
-
-            if candle_flip:
-                reason = f"candle_timeout_{int(minutes_held)}min_flip"
-                self.logger.signal(
-                    f"[{sym}] Timeout exit: Candle ML flipped at {int(minutes_held)}m | "
-                    f"dir={direction} pnl=${event_pnl:+.2f} entry={entry_price:.2f} px={current_px:.2f}"
-                )
-                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
-                for pos_data in closed:
-                    self.position_manager.note_closed(pos_data, exit_reason=reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
-                if closed:
-                    pnl = sum(p.get("profit", 0) for p in closed)
-                    self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
-                    self._symbol_states[sym] = self.STATES["IDLE"]
-                    self._symbol_event_start_ts[sym] = None
-                    self._symbol_candle_entry[sym] = False
                     self._symbol_last_rescan_ts[sym] = 0.0
                     self._symbol_rescan_count[sym] = 0
                     if hasattr(self, f"_best_price_{sym}"):
