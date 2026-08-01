@@ -129,6 +129,10 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: FAILOVER_ENABLED
+        value: "true"
+      - key: FAILOVER_ROLE
+        value: "primary"
       - key: FIREBASE_CREDENTIALS_JSON
         sync: false
       - key: CORS_ORIGINS

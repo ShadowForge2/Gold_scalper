@@ -82,7 +82,6 @@ class Bot:
         self._symbol_candle_entry_open: Dict[str, Optional[float]] = {}  # entry candle open (bt reference)
         self._symbol_candle_tp: Dict[str, Optional[float]] = {}          # TP price (bt: entry + 2*ATR)
         self._symbol_candle_last_boundary: Dict[str, Optional[int]] = {} # last M5 boundary evaluated
-        self._last_retrain_week: int = -1  # week number of last auto-retrain
 
         # Load per-symbol models and signal engines
         for sym in self.symbols:
@@ -449,34 +448,6 @@ class Bot:
                 self._last_reconnect_time = now_t
             self._write_state()
             return
-
-        now_dt = datetime.now(timezone.utc)
-        if now_dt.weekday() == 5:  # Saturday — markets closed
-            week_num = now_dt.isocalendar()[1]
-            if week_num != self._last_retrain_week:
-                self.logger.info(f"[RETRAIN] Saturday detected, starting weekly retrain (week {week_num})...")
-                self._last_retrain_week = week_num
-                base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                script = os.path.join(base, "_retrain_weekly.py")
-                if os.path.exists(script):
-                    try:
-                        proc = await asyncio.create_subprocess_exec(
-                            sys.executable, script,
-                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                            cwd=base,
-                        )
-                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=600)
-                        output = stdout.decode() if stdout else ""
-                        for line in output.splitlines():
-                            self.logger.info(f"[RETRAIN] {line}")
-                        if proc.returncode == 0:
-                            self.logger.info("[RETRAIN] All models retrained successfully")
-                        else:
-                            self.logger.error(f"[RETRAIN] Retraining failed (exit={proc.returncode})")
-                    except asyncio.TimeoutError:
-                        self.logger.error("[RETRAIN] Retraining timed out after 600s")
-                    except Exception as e:
-                        self.logger.error(f"[RETRAIN] Retraining error: {e}")
 
         if self.state not in (self.STATES["IN_TRADE"], self.STATES["WAITING_FOR_FUNDS"]):
             info = self.client.get_account_info()

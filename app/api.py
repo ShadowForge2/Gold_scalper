@@ -98,6 +98,15 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                 db_type = "postgresql" if "postgres" in url else "sqlite"
             except Exception:
                 db_type = "unknown"
+        failover = getattr(bot, "_failover", None)
+        failover_info = None
+        if failover is not None:
+            primary_alive = True
+            try:
+                primary_alive = await failover.check_primary_alive()
+            except Exception:
+                pass
+            failover_info = {**failover.status(), "primary_alive": primary_alive}
         return {
             "status": "healthy" if connected else "degraded",
             "state": bot.state,
@@ -106,6 +115,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             "db_type": db_type,
             "broker": cfg.BROKER,
             "symbol": bot.symbol,
+            "failover": failover_info,
         }
 
     @app.get("/api/account")
