@@ -15,14 +15,20 @@ bot_pool = BotPool()
 failover = FailoverManager()
 _db_connected = False
 
+_background_tasks: set = set()
+
 
 def _fire_task(coro, name: str = "task"):
     task = asyncio.create_task(coro)
-    task.add_done_callback(
-        lambda t: bot.logger.error(
-            f"{name} failed: {t.exception()}"
-        ) if t.exception() else None
-    )
+    _background_tasks.add(task)
+
+    def _done(t):
+        _background_tasks.discard(t)
+        exc = t.exception()
+        if exc and not isinstance(exc, asyncio.CancelledError):
+            bot.logger.error(f"{name} failed: {exc}")
+
+    task.add_done_callback(_done)
     return task
 
 
@@ -57,7 +63,10 @@ async def startup_db():
 
 async def shutdown_db():
     if _db_connected:
-        await db_mod.database.disconnect()
+        try:
+            await asyncio.wait_for(db_mod.database.disconnect(), timeout=15)
+        except Exception as e:
+            bot.logger.warning(f"Database disconnect failed: {e}")
 
 
 def is_db_connected() -> bool:
@@ -156,6 +165,10 @@ async def shutdown():
         await failover.release_lease()
     except Exception as e:
         bot.logger.warning(f"Failover lease release on shutdown failed: {e}")
+    for t in list(_background_tasks):
+        t.cancel()
+    if _background_tasks:
+        await asyncio.gather(*_background_tasks, return_exceptions=True)
     await bot.shutdown()
     bot_pool.stop_all()
     await shutdown_db()
