@@ -396,7 +396,7 @@ class Bot:
 
     async def _tick(self):
         failover = getattr(self, '_failover', None)
-        if failover and not failover.can_trade():
+        if failover and not await failover.can_trade():
             await asyncio.sleep(5)
             return
 

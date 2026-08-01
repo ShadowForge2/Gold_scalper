@@ -64,19 +64,33 @@ def is_db_connected() -> bool:
     return _db_connected
 
 
+def _failover_ready() -> bool:
+    client = getattr(bot, "client", None)
+    if client is None:
+        return False
+    try:
+        return bool(client.is_connected())
+    except Exception:
+        return False
+
+
 async def failover_heartbeat_loop():
     while True:
         try:
             await failover.send_heartbeat()
             if await failover.should_takeover():
-                bot.logger.warning("FAILOVER: Taking over as primary!")
+                bot.logger.warning("FAILOVER: acquired leader lease — primary mode activated")
                 if bot.state == bot.STATES["STOPPED"]:
                     await bot.initialize()
                     bot._account_id = cfg.CAPITAL_IDENTIFIER
                     _fire_task(bot.run(), name="bot.run_recovered")
+            elif failover.should_step_down():
+                bot.logger.warning(
+                    "FAILOVER: lost leader lease — backup mode activated, trading paused"
+                )
         except Exception as e:
             bot.logger.error(f"Failover heartbeat error: {e}")
-        await asyncio.sleep(30)
+        await asyncio.sleep(failover.HEARTBEAT_INTERVAL)
 
 
 app = create_app(bot, bot_pool=bot_pool, db_check=is_db_connected)
@@ -93,6 +107,7 @@ async def startup():
     await bot.initialize()
     bot._account_id = cfg.CAPITAL_IDENTIFIER
     bot._failover = failover
+    failover.set_readiness_fn(_failover_ready)
     _fire_task(bot.run(), name="bot.run")
     if failover.enabled:
         _fire_task(failover_heartbeat_loop(), name="failover.heartbeat")
@@ -117,6 +132,10 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
+    try:
+        await failover.release_lease()
+    except Exception as e:
+        bot.logger.warning(f"Failover lease release on shutdown failed: {e}")
     await bot.shutdown()
     bot_pool.stop_all()
     await shutdown_db()
