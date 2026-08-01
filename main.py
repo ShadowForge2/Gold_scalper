@@ -7,7 +7,7 @@ from app.bot_pool import BotPool
 from app import database as db_mod
 from app.database import init_db
 from app.subscription import get_active_accounts, can_start_live, start_trial
-from app.failover import FailoverManager
+from app.failover import FailoverManager, HEARTBEAT_INTERVAL, OP_TIMEOUT
 import config as cfg
 
 bot = Bot()
@@ -93,12 +93,12 @@ async def failover_heartbeat_loop():
     while True:
         try:
             age = failover.heartbeat_age()
-            if age > failover.HEARTBEAT_INTERVAL * 3:
+            if age > HEARTBEAT_INTERVAL * 3:
                 bot.logger.warning(
                     f"FAILOVER: heartbeat stale ({age:.0f}s) — self-healing, forcing beat"
                 )
             try:
-                await asyncio.wait_for(_failover_step(), timeout=failover.OP_TIMEOUT * 3)
+                await asyncio.wait_for(_failover_step(), timeout=OP_TIMEOUT * 3)
             except asyncio.TimeoutError:
                 bot.logger.error("FAILOVER: heartbeat step timed out — skipping this cycle")
             except asyncio.CancelledError:
@@ -110,7 +110,7 @@ async def failover_heartbeat_loop():
             break
         except Exception as e:
             bot.logger.error(f"Failover heartbeat loop failed: {e}")
-        await asyncio.sleep(failover.HEARTBEAT_INTERVAL)
+        await asyncio.sleep(HEARTBEAT_INTERVAL)
 
 
 app = create_app(bot, bot_pool=bot_pool, db_check=is_db_connected)
