@@ -92,10 +92,13 @@ async def _failover_step():
             await bot.initialize()
             bot._account_id = cfg.CAPITAL_IDENTIFIER
             _fire_task(bot.run(), name="bot.run_recovered")
+        await _restore_user_bots()
     elif failover.should_step_down():
         bot.logger.warning(
             "FAILOVER: lost leader lease — backup mode activated, trading paused"
         )
+        bot_pool.stop_all(close_positions=False)
+        bot.logger.warning("FAILOVER: stopped user bots — backup is heartbeat-only")
 
 
 async def failover_heartbeat_loop():
@@ -122,6 +125,27 @@ async def failover_heartbeat_loop():
         await asyncio.sleep(HEARTBEAT_INTERVAL)
 
 
+async def _restore_user_bots():
+    if not _db_connected:
+        return
+    try:
+        accounts = await get_active_accounts()
+        for acct in accounts:
+            _fire_task(
+                _try_start_user_bot(
+                    ident=acct["identifier"],
+                    api_key=acct["api_key"],
+                    password=acct["password"],
+                    demo=bool(acct.get("demo", True)),
+                ),
+                name=f"user_bot_{acct.get('identifier', '?')}",
+            )
+        if accounts:
+            bot.logger.info(f"Scheduled {len(accounts)} user bot(s) for restoration")
+    except Exception as e:
+        bot.logger.warning(f"Failed to restore user bots: {e}")
+
+
 app = create_app(bot, bot_pool=bot_pool, db_check=is_db_connected)
 
 
@@ -141,22 +165,10 @@ async def startup():
     if failover.enabled:
         _fire_task(failover_heartbeat_loop(), name="failover.heartbeat")
     if _db_connected:
-        try:
-            accounts = await get_active_accounts()
-            for acct in accounts:
-                _fire_task(
-                    _try_start_user_bot(
-                        ident=acct["identifier"],
-                        api_key=acct["api_key"],
-                        password=acct["password"],
-                        demo=bool(acct.get("demo", True)),
-                    ),
-                    name=f"user_bot_{acct.get('identifier', '?')}",
-                )
-            if accounts:
-                bot.logger.info(f"Scheduled {len(accounts)} user bot(s) for restoration")
-        except Exception as e:
-            bot.logger.warning(f"Failed to restore user bots: {e}")
+        if failover.enabled:
+            bot.logger.info("FAILOVER enabled — user bots start only on lease leadership")
+        else:
+            await _restore_user_bots()
 
 
 @app.on_event("shutdown")

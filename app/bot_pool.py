@@ -63,19 +63,22 @@ class BotPool:
 
             return {"success": True, "message": "Bot started"}
 
-    def stop(self, identifier: str) -> Dict:
+    def stop(self, identifier: str, close_positions: bool = True) -> Dict:
         ident = _fmt_id(identifier)
         with self._lock:
+            if ident not in self._bots:
+                return {"success": False, "error": "No bot running for this account"}
             bot = self._bots.pop(ident, None)
             loop = self._loops.pop(ident, None)
-            thread = self._threads.pop(ident, None)
-            if bot is None:
-                return {"success": False, "error": "No bot running for this account"}
-            if loop and loop.is_running():
-                for task in asyncio.all_tasks():
-                    task.cancel()
-                loop.call_soon_threadsafe(loop.stop)
-            return {"success": True, "message": "Bot stopped"}
+            self._threads.pop(ident, None)
+        if loop is not None and loop.is_running() and bot is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    bot.shutdown(grace_period=5, close_positions=close_positions), loop
+                )
+            except RuntimeError:
+                pass
+        return {"success": True, "message": "Bot stopped"}
 
     def is_running(self, identifier: str) -> bool:
         ident = _fmt_id(identifier)
@@ -185,11 +188,11 @@ class BotPool:
             self._loops.pop(ident, None)
             self._threads.pop(ident, None)
 
-    def stop_all(self):
+    def stop_all(self, close_positions: bool = True):
         with self._lock:
             ids = list(self._bots.keys())
         for ident in ids:
-            self.stop(ident)
+            self.stop(ident, close_positions=close_positions)
 
     def _run_bot_thread(self, ident: str, bot: Bot, loop: asyncio.AbstractEventLoop, creds: Dict):
         asyncio.set_event_loop(loop)

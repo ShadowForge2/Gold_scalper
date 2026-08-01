@@ -353,7 +353,7 @@ class Bot:
                 self._symbol_states[sym] = self.STATES["STOPPED"]
             return False
 
-    async def shutdown(self, grace_period: float = 25.0):
+    async def shutdown(self, grace_period: float = 25.0, close_positions: bool = True):
         self._winding_down = True
         self._shutdown_deadline = time.time() + grace_period
         self.logger.info(
@@ -362,12 +362,18 @@ class Bot:
         )
         while self._running and self.position_manager.open_count > 0:
             if time.time() > self._shutdown_deadline:
-                self.logger.warning(
-                    f"Grace period expired, force-closing {self.position_manager.open_count} position(s)"
-                )
-                if hasattr(self, 'trade_executor'):
-                    for pos_data in self.trade_executor.close_all_bot_positions():
-                        self.position_manager.note_closed(pos_data, exit_reason="shutdown")
+                if close_positions:
+                    self.logger.warning(
+                        f"Grace period expired, force-closing {self.position_manager.open_count} position(s)"
+                    )
+                    if hasattr(self, 'trade_executor'):
+                        for pos_data in self.trade_executor.close_all_bot_positions():
+                            self.position_manager.note_closed(pos_data, exit_reason="shutdown")
+                else:
+                    self.logger.warning(
+                        f"Grace period expired, leaving {self.position_manager.open_count} position(s) "
+                        f"for the new leader to recover"
+                    )
                 break
             await asyncio.sleep(0.5)
         self._running = False
