@@ -90,8 +90,32 @@ class Bot:
             sq_pred = None
             dir_pred = None
 
+            candle_mode = cfg.CANDLE_ML_MODE.get(sym, "volatility")
+
+            # Candle ML model — loaded first so we know whether the old ASP/DP
+            # stack is needed at all.
+            candle_pred = None
+            if _HAS_CANDLE and getattr(cfg, "CANDLE_ML_ENABLED", True):
+                candle_path = cfg.CANDLE_ML_MODEL_PATHS.get(sym, cfg.CANDLE_ML_MODEL_PATHS.get("XAUUSD"))
+                try:
+                    candle_pred = CandleML(model_path=candle_path)
+                    if candle_pred.model is not None:
+                        self.logger.info(f"[{sym}] Candle ML loaded from {candle_path}")
+                    else:
+                        self.logger.warning(f"[{sym}] Candle ML model not found at {candle_path}")
+                        candle_pred = None
+                except Exception as e:
+                    self.logger.warning(f"[{sym}] Failed to load Candle ML: {e}")
+
+            # In "always" mode _search_symbol bypasses the ASP+DP stack entirely,
+            # so skip loading those models when Candle ML is actually active.
+            # They still load as fallback for "volatility" mode symbols or when
+            # the candle model failed to initialize.
+            candle_active = (candle_mode == "always"
+                             and candle_pred is not None and candle_pred.model is not None)
+
             # ASP model
-            if _HAS_ASP and cfg.ASP_ENABLED:
+            if not candle_active and _HAS_ASP and cfg.ASP_ENABLED:
                 asp_path = cfg.ASP_MODEL_PATHS.get(sym, cfg.ASP_MODEL_PATHS.get("XAUUSD"))
                 feat_path = cfg.ASP_FEATURE_PATHS.get(sym, cfg.ASP_FEATURE_PATHS.get("XAUUSD"))
                 try:
@@ -105,7 +129,7 @@ class Bot:
                     self.logger.warning(f"[{sym}] Failed to load ASP model: {e}")
 
             # Swing quality model
-            if _HAS_SQ:
+            if not candle_active and _HAS_SQ:
                 sq_path = cfg.SWING_QUALITY_MODEL_PATHS.get(sym, cfg.SWING_QUALITY_MODEL_PATHS.get("XAUUSD"))
                 try:
                     sq_pred = SwingQualityPredictor(model_path=sq_path)
@@ -117,7 +141,7 @@ class Bot:
                     self.logger.warning(f"[{sym}] Failed to load swing quality model: {e}")
 
             # Direction predictor model
-            if _HAS_DIR and getattr(cfg, "DIRECTION_PREDICTOR_ENABLED", True):
+            if not candle_active and _HAS_DIR and getattr(cfg, "DIRECTION_PREDICTOR_ENABLED", True):
                 dir_path = cfg.DIRECTION_MODEL_PATHS.get(sym, cfg.DIRECTION_MODEL_PATHS.get("XAUUSD"))
                 try:
                     dir_pred = DirectionPredictor(model_path=dir_path)
@@ -128,20 +152,6 @@ class Bot:
                         dir_pred = None
                 except Exception as e:
                     self.logger.warning(f"[{sym}] Failed to load direction predictor: {e}")
-
-            # Candle ML model
-            candle_pred = None
-            if _HAS_CANDLE and getattr(cfg, "CANDLE_ML_ENABLED", True):
-                candle_path = cfg.CANDLE_ML_MODEL_PATHS.get(sym, cfg.CANDLE_ML_MODEL_PATHS.get("XAUUSD"))
-                try:
-                    candle_pred = CandleML(model_path=candle_path)
-                    if candle_pred.model is not None:
-                        self.logger.info(f"[{sym}] Candle ML loaded from {candle_path}")
-                    else:
-                        self.logger.warning(f"[{sym}] Candle ML model not found at {candle_path}")
-                        candle_pred = None
-                except Exception as e:
-                    self.logger.warning(f"[{sym}] Failed to load Candle ML: {e}")
 
             engine = SignalEngine(
                 asp_predictor=asp_pred,
