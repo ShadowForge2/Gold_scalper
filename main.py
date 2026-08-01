@@ -74,22 +74,42 @@ def _failover_ready() -> bool:
         return False
 
 
+async def _failover_step():
+    """One full heartbeat cycle. Kept separate so it can be time-boxed."""
+    await failover.send_heartbeat()
+    if await failover.should_takeover():
+        bot.logger.warning("FAILOVER: acquired leader lease — primary mode activated")
+        if bot.state == bot.STATES["STOPPED"]:
+            await bot.initialize()
+            bot._account_id = cfg.CAPITAL_IDENTIFIER
+            _fire_task(bot.run(), name="bot.run_recovered")
+    elif failover.should_step_down():
+        bot.logger.warning(
+            "FAILOVER: lost leader lease — backup mode activated, trading paused"
+        )
+
+
 async def failover_heartbeat_loop():
     while True:
         try:
-            await failover.send_heartbeat()
-            if await failover.should_takeover():
-                bot.logger.warning("FAILOVER: acquired leader lease — primary mode activated")
-                if bot.state == bot.STATES["STOPPED"]:
-                    await bot.initialize()
-                    bot._account_id = cfg.CAPITAL_IDENTIFIER
-                    _fire_task(bot.run(), name="bot.run_recovered")
-            elif failover.should_step_down():
+            age = failover.heartbeat_age()
+            if age > failover.HEARTBEAT_INTERVAL * 3:
                 bot.logger.warning(
-                    "FAILOVER: lost leader lease — backup mode activated, trading paused"
+                    f"FAILOVER: heartbeat stale ({age:.0f}s) — self-healing, forcing beat"
                 )
+            try:
+                await asyncio.wait_for(_failover_step(), timeout=failover.OP_TIMEOUT * 3)
+            except asyncio.TimeoutError:
+                bot.logger.error("FAILOVER: heartbeat step timed out — skipping this cycle")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                bot.logger.error(f"Failover heartbeat error: {e}")
+        except asyncio.CancelledError:
+            bot.logger.info("FAILOVER: heartbeat loop cancelled — shutting down")
+            break
         except Exception as e:
-            bot.logger.error(f"Failover heartbeat error: {e}")
+            bot.logger.error(f"Failover heartbeat loop failed: {e}")
         await asyncio.sleep(failover.HEARTBEAT_INTERVAL)
 
 

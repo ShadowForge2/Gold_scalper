@@ -34,6 +34,7 @@ logger = logging.getLogger("failover")
 
 HEARTBEAT_INTERVAL = 30
 HEARTBEAT_TIMEOUT = 120          # lease length; failover latency if the leader stops renewing
+OP_TIMEOUT = 15.0                # max time a single DB call may take before it's aborted
 LEADER_LOCK = "__leader__"
 
 
@@ -69,37 +70,53 @@ class FailoverManager:
             logger.error(f"Readiness check failed ({e}); treating as not ready")
             return False
 
+    async def _exec(self, sql, values=None):
+        """DB execute with a hard timeout so a hung connection can never
+        stall the heartbeat loop."""
+        return await asyncio.wait_for(
+            self._db.execute(sql, values or {}), timeout=OP_TIMEOUT
+        )
+
+    async def _fetch(self, sql, values=None):
+        """DB fetch_one with a hard timeout (see _exec)."""
+        return await asyncio.wait_for(
+            self._db.fetch_one(sql, values or {}), timeout=OP_TIMEOUT
+        )
+
     async def init_db(self, database):
         if not self.enabled:
             return
         self._db = database
-        await self._db.execute("""
-            CREATE TABLE IF NOT EXISTS failover_heartbeats (
-                identifier TEXT PRIMARY KEY,
-                role TEXT,
-                last_beat FLOAT,
-                is_leader INTEGER DEFAULT 0,
-                owner TEXT,
-                expires_at FLOAT
-            )
-        """)
-        for col, ddl in (("is_leader", "INTEGER DEFAULT 0"),
-                         ("owner", "TEXT"),
-                         ("expires_at", "FLOAT")):
-            try:
-                await self._db.execute(
-                    f"ALTER TABLE failover_heartbeats ADD COLUMN {col} {ddl}"
-                )
-            except Exception:
-                pass  # column already exists
         try:
-            await self._db.execute("""
+            await self._exec("""
+                CREATE TABLE IF NOT EXISTS failover_heartbeats (
+                    identifier TEXT PRIMARY KEY,
+                    role TEXT,
+                    last_beat FLOAT,
+                    is_leader INTEGER DEFAULT 0,
+                    owner TEXT,
+                    expires_at FLOAT
+                )
+            """)
+            for col, ddl in (("is_leader", "INTEGER DEFAULT 0"),
+                             ("owner", "TEXT"),
+                             ("expires_at", "FLOAT")):
+                try:
+                    await self._exec(
+                        f"ALTER TABLE failover_heartbeats ADD COLUMN {col} {ddl}"
+                    )
+                except Exception:
+                    pass  # column already exists
+            await self._exec("""
                 INSERT INTO failover_heartbeats (identifier, role, last_beat, is_leader, owner, expires_at)
                 VALUES (:id, '', 0.0, 0, NULL, 0.0)
                 ON CONFLICT (identifier) DO NOTHING
             """, {"id": LEADER_LOCK})
         except Exception as e:
-            logger.error(f"Failed to seed leader lease row: {e}")
+            self._db = None
+            self.enabled = False
+            logger.error(f"Failover init failed ({e}); failover disabled — running without a lease")
+            return
         logger.info(f"Failover initialized as {self.role} (instance={self.instance_id})")
 
     async def _acquire_or_renew_lease(self) -> bool:
@@ -107,7 +124,7 @@ class FailoverManager:
         instance now holds the lease."""
         now = time.time()
         expires = now + HEARTBEAT_TIMEOUT
-        row = await self._db.fetch_one("""
+        row = await self._fetch("""
             INSERT INTO failover_heartbeats (identifier, role, last_beat, is_leader, owner, expires_at)
             VALUES (:id, :role, :now, 1, :owner, :expires)
             ON CONFLICT (identifier) DO UPDATE SET
@@ -131,7 +148,7 @@ class FailoverManager:
     async def _write_instance_beat(self):
         """Record this instance's own heartbeat row for observability."""
         try:
-            await self._db.execute("""
+            await self._exec("""
                 INSERT INTO failover_heartbeats (identifier, role, last_beat, is_leader, owner, expires_at)
                 VALUES (:id, :role, :beat, :is_leader, NULL, 0.0)
                 ON CONFLICT (identifier) DO UPDATE SET
@@ -192,7 +209,7 @@ class FailoverManager:
                 alive = await self.check_primary_alive()
                 age = f"<1s"
                 try:
-                    row = await self._db.fetch_one(
+                    row = await self._fetch(
                         "SELECT expires_at FROM failover_heartbeats WHERE identifier = :id",
                         {"id": LEADER_LOCK},
                     )
@@ -212,7 +229,7 @@ class FailoverManager:
         if not self.enabled or not self._db:
             return
         try:
-            await self._db.execute("""
+            await self._exec("""
                 UPDATE failover_heartbeats
                 SET is_leader = 0, owner = NULL, expires_at = 0.0
                 WHERE identifier = :id AND owner = :owner
@@ -228,7 +245,7 @@ class FailoverManager:
         if not self._db:
             return True
         try:
-            row = await self._db.fetch_one(
+            row = await self._fetch(
                 "SELECT expires_at FROM failover_heartbeats WHERE identifier = :id",
                 {"id": LEADER_LOCK},
             )
@@ -244,6 +261,12 @@ class FailoverManager:
     def should_step_down(self) -> bool:
         return self._lost_leader
 
+    def heartbeat_age(self) -> float:
+        """Seconds since this instance last beat (sentinel if never)."""
+        if not self._last_beat:
+            return HEARTBEAT_INTERVAL * 100
+        return time.time() - self._last_beat
+
     async def can_trade(self) -> bool:
         if not self.enabled:
             return True
@@ -252,7 +275,7 @@ class FailoverManager:
             return self.is_leader and now < self._lease_expires_at
         self._last_lease_check = now
         try:
-            row = await self._db.fetch_one(
+            row = await self._fetch(
                 "SELECT owner, expires_at FROM failover_heartbeats WHERE identifier = :id",
                 {"id": LEADER_LOCK},
             )
