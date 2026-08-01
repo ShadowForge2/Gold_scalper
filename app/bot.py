@@ -77,6 +77,7 @@ class Bot:
         self._symbol_last_rescan_ts: Dict[str, float] = {}
         self._symbol_rescan_count: Dict[str, int] = {}
         self._symbol_candle_entry: Dict[str, bool] = {}
+        self._symbol_flip_streak: Dict[str, int] = {}  # consecutive strong-opposite calls for flip-cut
         # Candle ML backtest-parity exit state
         self._symbol_candle_entry_open: Dict[str, Optional[float]] = {}  # entry candle open (bt reference)
         self._symbol_candle_tp: Dict[str, Optional[float]] = {}          # TP price (bt: entry + 2*ATR)
@@ -1115,6 +1116,55 @@ class Bot:
                 elif c_low <= candle_tp:
                     exit_reason = "candle_tp_hit"
 
+            if not exit_reason and getattr(cfg, "CANDLE_ML_FLIP_EXIT_ENABLED", True):
+                cm = self._symbol_candle_ml.get(sym)
+                if cm is not None and cm.model is not None and atr_val > 0 and entry_price > 0:
+                    try:
+                        flip_bars = self.client.get_rates(
+                            sym, cfg.SIGNAL_TIMEFRAME,
+                            getattr(cfg, "CANDLE_ML_M1_HISTORY_BARS", 500))
+                        if flip_bars is not None and len(flip_bars) > 0:
+                            from app.candle_ml import compute_candle_features
+                            f_idx = flip_bars.set_index("time") if "time" in flip_bars.columns else flip_bars
+                            f = compute_candle_features(f_idx)
+                            if f is not None and len(f) > 0:
+                                prob_up = cm.predict_proba(f)
+                                last_row = f.iloc[[-1]]
+                                m1_dir = last_row.get("m1_first_dir", pd.Series([0.0])).values[0]
+                                if np.isnan(m1_dir):
+                                    m1_dir = 0
+                                # Rigid "no": only strong opposite signals count,
+                                # and only after CANDLE_ML_FLIP_CONSECUTIVE of them
+                                # in a row (single blips are noise — 48% of runs).
+                                flip_conf = getattr(cfg, "CANDLE_ML_FLIP_CONF", 0.75)
+                                pred = cm.predict(
+                                    prob_up, int(m1_dir), confidence_threshold=flip_conf)
+                                streak = self._symbol_flip_streak.get(sym, 0)
+                                if pred is None:
+                                    pass  # no strong opposite call — keep streak
+                                elif pred == direction:
+                                    streak = 0  # model agrees again — flip cancelled
+                                else:
+                                    streak += 1  # strong opposite call
+                                self._symbol_flip_streak[sym] = streak
+                                need = getattr(cfg, "CANDLE_ML_FLIP_CONSECUTIVE", 2)
+                                if streak >= need:
+                                    loss_atr = getattr(cfg, "CANDLE_ML_FLIP_LOSS_ATR", 0.25) * atr_val
+                                    if direction == "BUY":
+                                        losing = current_px <= entry_price - loss_atr
+                                    else:
+                                        losing = current_px >= entry_price + loss_atr
+                                    if losing:
+                                        exit_reason = "candle_model_flip"
+                                        self.logger.signal(
+                                            f"[{sym}] Candle ML flip-cut: {direction} px={current_px:.2f} "
+                                            f"entry={entry_price:.2f} loss_thr={loss_atr:.2f} "
+                                            f"streak={streak}/{need} pred={pred} prob_up={prob_up:.3f} "
+                                            f"held={minutes_held:.1f}m"
+                                        )
+                    except Exception as e:
+                        self.logger.warning(f"[{sym}] Candle ML flip-check failed: {e}")
+
             if not exit_reason:
                 return  # candle trades use backtest logic only — no other exits
 
@@ -1135,6 +1185,7 @@ class Bot:
                 self._symbol_candle_entry_open[sym] = None
                 self._symbol_candle_tp[sym] = None
                 self._symbol_candle_last_boundary[sym] = 0
+                self._symbol_flip_streak[sym] = 0
                 if hasattr(self, f"_best_price_{sym}"):
                     delattr(self, f"_best_price_{sym}")
                 await self._notify(
@@ -1399,6 +1450,19 @@ class Bot:
             self._last_market_status_check = 0.0
             return
 
+        # Friday close awareness: no NEW positions inside the last
+        # FRIDAY_CLOSE_BLOCK_MIN minutes before the weekly close, so no fresh
+        # trade gets stuck over the weekend. Existing positions are unaffected.
+        mins_left = cfg.minutes_to_friday_close(sym)
+        block_min = getattr(cfg, "FRIDAY_CLOSE_BLOCK_MIN", 60)
+        if mins_left is not None and mins_left < block_min:
+            self.logger.info(
+                f"[{sym}] Entry blocked: Friday close in {mins_left:.0f}m "
+                f"(block window {block_min}m) — no new positions"
+            )
+            self._symbol_states[sym] = self.STATES["IDLE"]
+            return
+
         account = self.client.get_account_info()
         if account is None:
             self.logger.warning(f"[{sym}] Entry blocked: cannot fetch account info")
@@ -1523,6 +1587,7 @@ class Bot:
             self._symbol_states[sym] = self.STATES["IN_TRADE"]
             self._symbol_event_start_ts[sym] = time.time()
             self._symbol_candle_entry[sym] = (signal.get("signal_type") == "candle_ml")
+            self._symbol_flip_streak[sym] = 0  # fresh trade — no stale flip streak
             # Backtest-parity candle state: reference open, TP, and entry M5 boundary.
             # Anchor at the ACTUAL fill (break-even), not the candle open — matches
             # _bt_live_sim ANCHOR="fill". TP shifted by the same delta so it is

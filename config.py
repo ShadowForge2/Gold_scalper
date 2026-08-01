@@ -210,6 +210,12 @@ US100_OPEN_HOUR_UTC = 14
 US100_OPEN_MINUTE_UTC = 30
 US100_CLOSE_HOUR_UTC = 21
 
+# Friday close awareness: block NEW entries within this many minutes before the
+# symbol's weekly (Friday) close so no fresh position gets stuck over the
+# weekend. Existing positions are never force-closed — they stay open and are
+# managed by the normal exit logic (trailing reversal line, TP, model-flip cut).
+FRIDAY_CLOSE_BLOCK_MIN = _env_int("FRIDAY_CLOSE_BLOCK_MIN", 60)
+
 
 # ASP (Adaptive Swing Probability) model
 ASP_ENABLED = _env_bool("ASP_ENABLED", True)
@@ -287,6 +293,22 @@ CANDLE_ML_ALLOWED_HOURS = {
 # CandleML still agrees with. Wider value = more room to breathe, less locked in.
 CANDLE_ML_TRAILING_ENABLED = _env_bool("CANDLE_ML_TRAILING_ENABLED", True)
 CANDLE_ML_TRAIL_ATR = _env_float("CANDLE_ML_TRAIL_ATR", 1.5)
+# Model-flip loss cut: at each M5 boundary re-run the candle model for the open
+# symbol. If it now predicts the OPPOSITE direction AND the trade is already
+# underwater by CANDLE_ML_FLIP_LOSS_ATR x ATR, exit immediately
+# ("candle_model_flip"). Never triggers on winners — only cuts losers short.
+#
+# Rigidity (the model is flippy: ~48% of runs are single-boundary blips, and
+# first-flip confidence is only ~0.73-0.74 median):
+#   - CANDLE_ML_FLIP_CONSECUTIVE (default 2): the opposite call must repeat for
+#     2 consecutive M5 boundaries (a single blip is ignored; a real reversal
+#     persists). Halves the flip-trigger rate at every horizon.
+#   - CANDLE_ML_FLIP_CONF (default 0.75): the opposite call must be strong,
+#     higher than the 0.65 entry threshold, so weak "no"s don't count.
+CANDLE_ML_FLIP_EXIT_ENABLED = _env_bool("CANDLE_ML_FLIP_EXIT_ENABLED", True)
+CANDLE_ML_FLIP_LOSS_ATR = _env_float("CANDLE_ML_FLIP_LOSS_ATR", 0.25)
+CANDLE_ML_FLIP_CONSECUTIVE = _env_int("CANDLE_ML_FLIP_CONSECUTIVE", 2)
+CANDLE_ML_FLIP_CONF = _env_float("CANDLE_ML_FLIP_CONF", 0.75)
 
 # MaxelPay
 MAXELPAY_API_KEY = _env_str("MAXELPAY_API_KEY", "")
@@ -352,3 +374,22 @@ def is_market_open_for_symbol(sym: str) -> bool:
             return False
         return True
     return False
+
+
+def minutes_to_friday_close(sym: str):
+    """Minutes until this symbol's weekly (Friday) close, or None if not Friday.
+
+    Friday-aware entry gate: on Friday the bot stops opening NEW positions once
+    the remaining time drops below FRIDAY_CLOSE_BLOCK_MIN. Existing positions
+    are never force-closed by this.
+    """
+    from datetime import datetime as _dt
+    now = _dt.utcnow()
+    if now.weekday() != 4:
+        return None
+    h = now.hour + now.minute / 60.0
+    if sym in ("US100", "NASDAQ", "NAS100", "US500", "SP500"):
+        close_t = US100_CLOSE_HOUR_UTC
+    else:
+        close_t = MARKET_CLOSE_FRIDAY_UTC
+    return (close_t - h) * 60.0
