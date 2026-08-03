@@ -1115,12 +1115,17 @@ class Bot:
             best = getattr(self, best_key)
 
             exit_reason = ""
+            peak_retrace = getattr(cfg, "CANDLE_ML_PEAK_RETRACE_ENABLED", True)
+            retrace_frac = getattr(cfg, "CANDLE_ML_PEAK_RETRACE_FRAC", 0.5)
             if direction == "BUY":
                 best = max(best, c_high)
                 setattr(self, best_key, best)
                 anchor = candle_open
                 if trailing_enabled:
-                    anchor = max(candle_open, best - atr_val * trail_mult)
+                    if peak_retrace and retrace_frac > 0 and best > entry_price:
+                        anchor = max(candle_open, best - retrace_frac * (best - entry_price))
+                    else:
+                        anchor = max(candle_open, best - atr_val * trail_mult)
                 if c_low < anchor:
                     exit_reason = "candle_reversal"
                 elif c_high >= candle_tp:
@@ -1130,7 +1135,10 @@ class Bot:
                 setattr(self, best_key, best)
                 anchor = candle_open
                 if trailing_enabled:
-                    anchor = min(candle_open, best + atr_val * trail_mult)
+                    if peak_retrace and retrace_frac > 0 and best < entry_price:
+                        anchor = min(candle_open, best + retrace_frac * (entry_price - best))
+                    else:
+                        anchor = min(candle_open, best + atr_val * trail_mult)
                 if c_high > anchor:
                     exit_reason = "candle_reversal"
                 elif c_low <= candle_tp:

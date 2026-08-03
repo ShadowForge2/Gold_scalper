@@ -351,6 +351,13 @@ CANDLE_ML_ALLOWED_HOURS = {
 # CandleML still agrees with. Wider value = more room to breathe, less locked in.
 CANDLE_ML_TRAILING_ENABLED = _env_bool("CANDLE_ML_TRAILING_ENABLED", True)
 CANDLE_ML_TRAIL_ATR = _env_float("CANDLE_ML_TRAIL_ATR", 1.5)
+# Peak-retrace trailing (profitable trades only): instead of trailing a fixed ATR
+# distance behind the best price, trail a fraction of the peak profit already made
+# (CANDLE_ML_PEAK_RETRACE_FRAC). Auto-adapts to lot/equity scaling — small moves
+# keep half their profit, big moves lock in proportionally. Only applied while the
+# trade is in profit; losing trades keep the existing flip-cut / break-even logic.
+CANDLE_ML_PEAK_RETRACE_ENABLED = _env_bool("CANDLE_ML_PEAK_RETRACE_ENABLED", True)
+CANDLE_ML_PEAK_RETRACE_FRAC = _env_float("CANDLE_ML_PEAK_RETRACE_FRAC", 0.5)
 # Model-flip loss cut: at each M5 boundary re-run the candle model for the open
 # symbol. If it now predicts the OPPOSITE direction AND the trade is already
 # underwater by CANDLE_ML_FLIP_LOSS_ATR x ATR, exit immediately

@@ -101,6 +101,10 @@ services:
         value: "true"
       - key: CANDLE_ML_TRAIL_ATR
         value: "1.5"
+      - key: CANDLE_ML_PEAK_RETRACE_ENABLED
+        value: "true"
+      - key: CANDLE_ML_PEAK_RETRACE_FRAC
+        value: "0.5"
       - key: CANDLE_ML_FLIP_EXIT_ENABLED
         value: "true"
       - key: CANDLE_ML_FLIP_LOSS_ATR
