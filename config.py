@@ -354,10 +354,10 @@ CANDLE_ML_TRAIL_ATR = _env_float("CANDLE_ML_TRAIL_ATR", 1.5)
 # Peak-retrace trailing (profitable trades only): instead of trailing a fixed ATR
 # distance behind the best price, trail a fraction of the peak profit already made
 # (CANDLE_ML_PEAK_RETRACE_FRAC). Auto-adapts to lot/equity scaling — small moves
-# keep half their profit, big moves lock in proportionally. Only applied while the
-# trade is in profit; losing trades keep the existing flip-cut / break-even logic.
+# keep most of their profit (70%), big moves lock in proportionally. Only applied
+# while the trade is in profit; losing trades keep the existing flip-cut logic.
 CANDLE_ML_PEAK_RETRACE_ENABLED = _env_bool("CANDLE_ML_PEAK_RETRACE_ENABLED", True)
-CANDLE_ML_PEAK_RETRACE_FRAC = _env_float("CANDLE_ML_PEAK_RETRACE_FRAC", 0.5)
+CANDLE_ML_PEAK_RETRACE_FRAC = _env_float("CANDLE_ML_PEAK_RETRACE_FRAC", 0.3)
 # Model-flip loss cut: at each M5 boundary re-run the candle model for the open
 # symbol. If it now predicts the OPPOSITE direction AND the trade is already
 # underwater by CANDLE_ML_FLIP_LOSS_ATR x ATR, exit immediately
@@ -368,12 +368,12 @@ CANDLE_ML_PEAK_RETRACE_FRAC = _env_float("CANDLE_ML_PEAK_RETRACE_FRAC", 0.5)
 #   - CANDLE_ML_FLIP_CONSECUTIVE (default 2): the opposite call must repeat for
 #     2 consecutive M5 boundaries (a single blip is ignored; a real reversal
 #     persists). Halves the flip-trigger rate at every horizon.
-#   - CANDLE_ML_FLIP_CONF (default 0.75): the opposite call must be strong,
-#     higher than the 0.65 entry threshold, so weak "no"s don't count.
+#   - CANDLE_ML_FLIP_CONF (default 0.70): the opposite call must be strong,
+#     above the 0.65 entry threshold, so weak "no"s don't count.
 CANDLE_ML_FLIP_EXIT_ENABLED = _env_bool("CANDLE_ML_FLIP_EXIT_ENABLED", True)
 CANDLE_ML_FLIP_LOSS_ATR = _env_float("CANDLE_ML_FLIP_LOSS_ATR", 0.25)
 CANDLE_ML_FLIP_CONSECUTIVE = _env_int("CANDLE_ML_FLIP_CONSECUTIVE", 2)
-CANDLE_ML_FLIP_CONF = _env_float("CANDLE_ML_FLIP_CONF", 0.75)
+CANDLE_ML_FLIP_CONF = _env_float("CANDLE_ML_FLIP_CONF", 0.70)
 # Per-symbol flip-cut overrides (default to the global values above).
 CANDLE_ML_FLIP_CONSECUTIVES = {
     "XAUUSD": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_XAUUSD", CANDLE_ML_FLIP_CONSECUTIVE),

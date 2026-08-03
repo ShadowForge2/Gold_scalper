@@ -1165,7 +1165,7 @@ class Bot:
                                 # and only after CANDLE_ML_FLIP_CONSECUTIVE of them
                                 # in a row (single blips are noise — 48% of runs).
                                 flip_conf = getattr(cfg, "CANDLE_ML_FLIP_CONFS", {}).get(
-                                    sym, getattr(cfg, "CANDLE_ML_FLIP_CONF", 0.75))
+                                    sym, getattr(cfg, "CANDLE_ML_FLIP_CONF", 0.70))
                                 pred = cm.predict(
                                     prob_up, int(m1_dir), confidence_threshold=flip_conf)
                                 streak = self._symbol_flip_streak.get(sym, 0)
