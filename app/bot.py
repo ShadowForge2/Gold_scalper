@@ -455,11 +455,13 @@ class Bot:
             self._write_state()
             return
 
+        acct = self.client.get_account_info()
+        balance = acct.get("balance", 0) if acct else 0
+
         if self.state not in (self.STATES["IN_TRADE"], self.STATES["WAITING_FOR_FUNDS"]):
-            info = self.client.get_account_info()
-            if info and info["balance"] < cfg.MIN_BALANCE:
+            if balance < cfg.MIN_BALANCE:
                 self.logger.warning(
-                    f"Balance ${info['balance']:.2f} below minimum "
+                    f"Balance ${balance:.2f} below minimum "
                     f"${cfg.MIN_BALANCE:.2f}. Waiting for funds..."
                 )
                 self.state = self.STATES["WAITING_FOR_FUNDS"]
@@ -474,7 +476,7 @@ class Bot:
         await self._update_news_state()
 
         for sym in self.symbols:
-            await self._tick_symbol(sym, pnl_data)
+            await self._tick_symbol(sym, pnl_data, balance)
 
         if self.state not in (self.STATES["STOPPED"], self.STATES["WAITING_FOR_FUNDS"]):
             has_trade = any(s == self.STATES["IN_TRADE"] for s in self._symbol_states.values())
@@ -482,7 +484,7 @@ class Bot:
 
         self._write_state()
 
-    async def _tick_symbol(self, sym: str, pnl_data: Dict):
+    async def _tick_symbol(self, sym: str, pnl_data: Dict, balance: float = 0.0):
         state = self._symbol_states[sym]
 
         if state == self.STATES["STOPPED"]:
@@ -566,6 +568,20 @@ class Bot:
 
         if self._winding_down:
             return
+
+        # Per-symbol balance gate: each symbol only trades once balance reaches
+        # its minimum (e.g. US500 unlocks at $30). Open positions are never
+        # orphaned — if a trade is open, it stays IN_TRADE and is managed.
+        sym_min_balance = cfg.SYMBOL_MIN_BALANCE.get(sym, cfg.MIN_BALANCE)
+        if balance < sym_min_balance:
+            if state != self.STATES["WAITING_FOR_FUNDS"] and not sym_open:
+                self.logger.info(
+                    f"[{sym}] Balance ${balance:.2f} below ${sym_min_balance:.2f} "
+                    f"threshold — waiting for funds"
+                )
+                self._symbol_states[sym] = self.STATES["WAITING_FOR_FUNDS"]
+            if not sym_open:
+                return
 
         state = self._symbol_states[sym]
         if state == self.STATES["IN_TRADE"]:
@@ -722,14 +738,16 @@ class Bot:
                     if np.isnan(m1_dir):
                         m1_dir = 0
                     m1_dir = int(m1_dir)
-                    conf_thresh = getattr(cfg, "CANDLE_ML_CONFIDENCE_THRESHOLD", 0.65)
+                    conf_thresh = getattr(cfg, "CANDLE_ML_CONFIDENCE_THRESHOLDS", {}).get(
+                        sym, getattr(cfg, "CANDLE_ML_CONFIDENCE_THRESHOLD", 0.65))
                     pred = candle_ml.predict(prob_up, m1_dir, confidence_threshold=conf_thresh)
                     if pred is not None:
                         direction = pred
                         score = max(prob_up, 1 - prob_up)
                         _atr = current_atr if current_atr and current_atr > 0 else 0.5
                         # Entry quality filter: trade only best candles at best times
-                        pat_mode = getattr(cfg, "CANDLE_ML_PATTERN_FILTER", "strict")
+                        pat_mode = getattr(cfg, "CANDLE_ML_PATTERN_FILTERS", {}).get(
+                            sym, getattr(cfg, "CANDLE_ML_PATTERN_FILTER", "strict"))
                         from app.candle_ml import candle_pattern_gate
                         pat_ok, pat_name = candle_pattern_gate(m1_idx, direction, _atr, pat_mode)
                         hour = datetime.now(timezone.utc).hour
@@ -971,28 +989,43 @@ class Bot:
         balance = acct.get("balance", 0) if acct else 0
 
         direction = sym_positions[0].get("type", "BUY") if sym_positions else "BUY"
-        event_pnl = sum(p.get("profit", 0) for p in sym_positions)
 
         # Candle ML trades skip event loss — the candle backtest has no event-loss stop.
         is_candle = self._symbol_candle_entry.get(sym, False)
         if not is_candle:
+            # Correlated symbols (EVENT_LOSS_GROUP) share ONE combined event-loss
+            # budget. US100 + US500 move ~95% together, so pool their PnL so a
+            # single drawdown trips one stop instead of two separate budgets.
+            group = getattr(cfg, "EVENT_LOSS_GROUP", {}).get(sym, sym)
+            group_syms = [
+                s for s in self.symbols
+                if getattr(cfg, "EVENT_LOSS_GROUP", {}).get(s, s) == group
+            ]
+            group_positions = [
+                p for p in pnl_data.get("positions", [])
+                if p.get("_symbol_code") in group_syms
+            ]
+            event_pnl = sum(p.get("profit", 0) for p in group_positions)
             event_ok, event_msg = self.risk_manager.check_event_loss(event_pnl, balance)
             if not event_ok:
                 self.logger.warning(f"[{sym}] Event stop: {event_msg}")
-                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                closed = []
+                for g_sym in group_syms:
+                    closed += self.trade_executor.close_all_bot_positions(symbol=g_sym) or []
                 sig = self._symbol_signals.get(sym) or {}
                 for pos_data in closed:
                     self.position_manager.note_closed(pos_data, exit_reason="event_loss", score=sig.get("score", 0), balance=balance)
                 if closed:
                     pnl = sum(p.get("profit", 0) for p in closed)
                     self._record_trade_result(sym, pnl, sig.get("high_volatility", False))
-                    self._symbol_states[sym] = self.STATES["IDLE"]
-                    self._symbol_event_start_ts[sym] = None
-                    self._symbol_candle_entry[sym] = False
-                    self._symbol_exit_confirms[sym] = 0
-                    self._symbol_reversal_confirms[sym] = 0
-                    self._symbol_last_rescan_ts[sym] = 0.0
-                    self._symbol_rescan_count[sym] = 0
+                    for g_sym in group_syms:
+                        self._symbol_states[g_sym] = self.STATES["IDLE"]
+                        self._symbol_event_start_ts[g_sym] = None
+                        self._symbol_candle_entry[g_sym] = False
+                        self._symbol_exit_confirms[g_sym] = 0
+                        self._symbol_reversal_confirms[g_sym] = 0
+                        self._symbol_last_rescan_ts[g_sym] = 0.0
+                        self._symbol_rescan_count[g_sym] = 0
                     await self._notify(
                         "trade_close",
                         f"Trade Closed — {sym}",
@@ -1123,7 +1156,8 @@ class Bot:
                                 # Rigid "no": only strong opposite signals count,
                                 # and only after CANDLE_ML_FLIP_CONSECUTIVE of them
                                 # in a row (single blips are noise — 48% of runs).
-                                flip_conf = getattr(cfg, "CANDLE_ML_FLIP_CONF", 0.75)
+                                flip_conf = getattr(cfg, "CANDLE_ML_FLIP_CONFS", {}).get(
+                                    sym, getattr(cfg, "CANDLE_ML_FLIP_CONF", 0.75))
                                 pred = cm.predict(
                                     prob_up, int(m1_dir), confidence_threshold=flip_conf)
                                 streak = self._symbol_flip_streak.get(sym, 0)
@@ -1134,7 +1168,8 @@ class Bot:
                                 else:
                                     streak += 1  # strong opposite call
                                 self._symbol_flip_streak[sym] = streak
-                                need = getattr(cfg, "CANDLE_ML_FLIP_CONSECUTIVE", 2)
+                                need = getattr(cfg, "CANDLE_ML_FLIP_CONSECUTIVES", {}).get(
+                                    sym, getattr(cfg, "CANDLE_ML_FLIP_CONSECUTIVE", 2))
                                 if streak >= need:
                                     loss_atr = getattr(cfg, "CANDLE_ML_FLIP_LOSS_ATR", 0.25) * atr_val
                                     if direction == "BUY":
@@ -1402,12 +1437,13 @@ class Bot:
 
     async def _handle_waiting_for_funds(self, sym: str = None):
         info = self.client.get_account_info()
-        if info and info["balance"] >= cfg.MIN_BALANCE:
+        min_balance = cfg.SYMBOL_MIN_BALANCE.get(sym, cfg.MIN_BALANCE) if sym else cfg.MIN_BALANCE
+        if info and info["balance"] >= min_balance:
             self.scaler.update_peak(info["balance"])
             if self.scaler.starting_balance is None:
                 self.scaler.initialize(info["balance"])
             self.logger.info(
-                f"Funds detected: ${info['balance']:.2f}. Starting bot."
+                f"Funds detected: ${info['balance']:.2f} (need ${min_balance:.2f}). Starting bot."
             )
             self.state = self.STATES["IDLE"]
             if sym:
@@ -1456,9 +1492,10 @@ class Bot:
             self._symbol_states[sym] = self.STATES["IDLE"]
             return
         balance = account.get("balance", 0)
-        if balance < cfg.MIN_BALANCE:
+        min_balance = cfg.SYMBOL_MIN_BALANCE.get(sym, cfg.MIN_BALANCE)
+        if balance < min_balance:
             self.logger.warning(
-                f"[{sym}] Entry blocked: balance ${balance:.2f} below minimum ${cfg.MIN_BALANCE:.2f}"
+                f"[{sym}] Entry blocked: balance ${balance:.2f} below minimum ${min_balance:.2f}"
             )
             self._symbol_states[sym] = self.STATES["WAITING_FOR_FUNDS"]
             return

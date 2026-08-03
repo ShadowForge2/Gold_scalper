@@ -87,6 +87,17 @@ TP_CLOSE_MOMENTUM_MIN = _env_float("TP_CLOSE_MOMENTUM_MIN", 0.25)
 # Event loss — percentage of balance (scales with equity)
 MAX_EVENT_LOSS_PCT = _env_float("MAX_EVENT_LOSS_PCT", 5.0)  # 5% of balance
 
+# Correlated symbols share ONE combined event-loss budget. US100 and US500
+# move ~95% together, so two separate 5% budgets would let a single US-equity
+# drawdown hit both symbols before tripping a stop. Grouping them means one
+# budget of MAX_EVENT_LOSS_PCT covers both. Symbols not listed here get their
+# own budget.
+EVENT_LOSS_GROUP = {
+    "XAUUSD": "XAUUSD",
+    "US100": "US_EQUITY",
+    "US500": "US_EQUITY",
+}
+
 # Volatility regime — adaptive filters during high volatility
 VOLATILITY_REGIME_ENABLED = _env_bool("VOLATILITY_REGIME_ENABLED", True)
 VOLATILITY_ATR_MULT = _env_float("VOLATILITY_ATR_MULT", 1.5)  # current ATR > 1.5x avg = high vol
@@ -117,8 +128,16 @@ AGGRESSIVE_STRONG_LOT_MULT = _env_float("AGGRESSIVE_STRONG_LOT_MULT", 1.5)
 # ML override
 ML_OVERRIDE_MAX_PER_SESSION = _env_int("ML_OVERRIDE_MAX_PER_SESSION", 3)
 
-# Multi-symbol: bot trades both XAUUSD and US100 automatically
-SYMBOLS = [s.strip() for s in _env_str("SYMBOLS", "XAUUSD,US100").split(",")]
+# Multi-symbol: bot trades XAUUSD, US100, and US500 automatically.
+# US500 only trades once balance reaches SYMBOL_MIN_BALANCE["US500"] (default $30).
+SYMBOLS = [s.strip() for s in _env_str("SYMBOLS", "XAUUSD,US100,US500").split(",")]
+
+# Per-symbol minimum balance before that symbol becomes tradeable.
+SYMBOL_MIN_BALANCE = {
+    "XAUUSD": _env_float("MIN_BALANCE_XAUUSD", MIN_BALANCE),
+    "US100": _env_float("MIN_BALANCE_US100", MIN_BALANCE),
+    "US500": _env_float("MIN_BALANCE_US500", 30.0),
+}
 
 # Per-symbol model paths
 ASP_MODEL_PATHS = {
@@ -138,26 +157,32 @@ SWING_QUALITY_MODEL_PATHS = {
 SYMBOL_LOT_SIZES = {
     "XAUUSD": _env_float("LOT_SIZE_XAUUSD", 0.02),
     "US100": _env_float("LOT_SIZE_US100", 0.02),
+    "US500": _env_float("LOT_SIZE_US500", 0.02),
 }
 
 # Per-symbol spread limits (pips)
 SYMBOL_MAX_SPREAD = {
-    "XAUUSD": _env_float("MAX_SPREAD_PIPS", 35.0),
+    "XAUUSD": _env_float("MAX_SPREAD_PIPS_XAUUSD", 35.0),
     "US100": _env_float("MAX_SPREAD_PIPS_US100", 50.0),
+    "US500": _env_float("MAX_SPREAD_PIPS_US500", 50.0),
 }
 
 # Per-symbol max drift (absolute price units, not pips)
 # XAUUSD: $0.50 (gold H1 range ~$7-10)
 # US100: $5.00 (US100 H1 range ~50-100 points)
+# US500: $1.50 (S&P prices ~3.5x lower than Nasdaq, so the same relative
+# drift is a much smaller absolute number — $5 would be ~0.08% of US500)
 SYMBOL_MAX_DRIFT = {
     "XAUUSD": _env_float("MAX_DRIFT_XAUUSD", 0.50),
     "US100": _env_float("MAX_DRIFT_US100", 5.00),
+    "US500": _env_float("MAX_DRIFT_US500", 1.50),
 }
 
 # Per-symbol ASP timeout (in M5 bars; 10 = 50 minutes)
 SYMBOL_ASP_TIMEOUT_BARS = {
     "XAUUSD": _env_int("ASP_TIMEOUT_BARS_XAUUSD", 10),
     "US100": _env_int("ASP_TIMEOUT_BARS_US100", 10),
+    "US500": _env_int("ASP_TIMEOUT_BARS_US500", 10),
 }
 
 # Smart timeout — dual-model time-based re-scan
@@ -183,6 +208,7 @@ ALLOWED_SESSIONS = _env_str("ALLOWED_SESSIONS", "LONDON,NEW_YORK")
 SYMBOL_ALLOWED_SESSIONS = {
     "XAUUSD": _env_str("SESSIONS_XAUUSD", "ASIA,LONDON,NEW_YORK"),
     "US100": _env_str("SESSIONS_US100", "LONDON,NEW_YORK"),
+    "US500": _env_str("SESSIONS_US500", "LONDON,NEW_YORK"),
 }
 
 # Deviation / slippage
@@ -242,6 +268,7 @@ ASP_BREAK_EVEN_TRIGGER_ATR = _env_float("ASP_BREAK_EVEN_TRIGGER_ATR", 0.30)
 SYMBOL_BREAK_EVEN_TRIGGER = {
     "XAUUSD": _env_float("BREAK_EVEN_TRIGGER_XAUUSD", 0.30),
     "US100": _env_float("BREAK_EVEN_TRIGGER_US100", 0.30),
+    "US500": _env_float("BREAK_EVEN_TRIGGER_US500", 0.30),
 }
 
 # Chop filter — reject ASP signals when market is stagnant
@@ -265,16 +292,26 @@ DIRECTION_MODEL_PATHS = {
 # Replaces ASP+DP stack for US100; replaces during high-vol for Gold
 CANDLE_ML_ENABLED = _env_bool("CANDLE_ML_ENABLED", True)
 CANDLE_ML_CONFIDENCE_THRESHOLD = _env_float("CANDLE_ML_CONFIDENCE_THRESHOLD", 0.65)
+# Per-symbol entry confidence override (defaults to CANDLE_ML_CONFIDENCE_THRESHOLD).
+# US500 (S&P 500) is less volatile and more mean-reverting than US100 (Nasdaq),
+# so it may want a different bar than the US100-tuned global default.
+CANDLE_ML_CONFIDENCE_THRESHOLDS = {
+    "XAUUSD": _env_float("CANDLE_ML_CONFIDENCE_XAUUSD", CANDLE_ML_CONFIDENCE_THRESHOLD),
+    "US100": _env_float("CANDLE_ML_CONFIDENCE_US100", CANDLE_ML_CONFIDENCE_THRESHOLD),
+    "US500": _env_float("CANDLE_ML_CONFIDENCE_US500", CANDLE_ML_CONFIDENCE_THRESHOLD),
+}
 CANDLE_ML_M1_HISTORY_BARS = _env_int("CANDLE_ML_M1_HISTORY_BARS", 500)
 CANDLE_ML_MODEL_PATHS = {
     "XAUUSD": _env_str("CANDLE_ML_MODEL_PATH_XAUUSD", "models/candle_xgb_m5_XAUUSD.joblib"),
     "US100": _env_str("CANDLE_ML_MODEL_PATH_US100", "models/candle_xgb_m5_US100.joblib"),
+    "US500": _env_str("CANDLE_ML_MODEL_PATH_US500", "models/candle_xgb_m5_US500.joblib"),
 }
 # Mode: "always" = skip ASP+DP entirely for this symbol
 #       "volatility" = use Candle ML when vol_ratio > threshold
 CANDLE_ML_MODE = {
     "XAUUSD": _env_str("CANDLE_ML_MODE_XAUUSD", "always"),
     "US100": _env_str("CANDLE_ML_MODE_US100", "always"),
+    "US500": _env_str("CANDLE_ML_MODE_US500", "always"),
 }
 # For "volatility" mode: switch to Candle ML when short-term / long-term ATR > this
 CANDLE_ML_VOL_THRESHOLD = _env_float("CANDLE_ML_VOL_THRESHOLD", 1.3)
@@ -283,10 +320,17 @@ CANDLE_ML_VOL_WINDOW_LONG = _env_int("CANDLE_ML_VOL_WINDOW_LONG", 40)    # M5 ba
 # Entry quality filter (research-backed): only trade on strong candles at best sessions.
 # mode: "strict" (strong_body/pin_bar/engulfing only) | "basic" (+normal, skip doji/tiny) | "off"
 CANDLE_ML_PATTERN_FILTER = _env_str("CANDLE_ML_PATTERN_FILTER", "strict")
+# Per-symbol pattern filter override (defaults to CANDLE_ML_PATTERN_FILTER).
+CANDLE_ML_PATTERN_FILTERS = {
+    "XAUUSD": _env_str("CANDLE_ML_PATTERN_XAUUSD", CANDLE_ML_PATTERN_FILTER),
+    "US100": _env_str("CANDLE_ML_PATTERN_US100", CANDLE_ML_PATTERN_FILTER),
+    "US500": _env_str("CANDLE_ML_PATTERN_US500", CANDLE_ML_PATTERN_FILTER),
+}
 # Best hours per symbol (UTC). Empty string = all hours. XAUUSD backtest: 13-18 UTC = London/NY (WR 55-61%).
 CANDLE_ML_ALLOWED_HOURS = {
     "XAUUSD": _env_str("CANDLE_ML_ALLOWED_HOURS_XAUUSD", "13,14,15,16,17,18"),
     "US100": _env_str("CANDLE_ML_ALLOWED_HOURS_US100", ""),
+    "US500": _env_str("CANDLE_ML_ALLOWED_HOURS_US500", ""),
 }
 # Exit: the candle_reversal line trails the best price by CANDLE_ML_TRAIL_ATR x
 # ATR (floored at the fill/break-even), so normal pullbacks don't close a trade
@@ -309,6 +353,17 @@ CANDLE_ML_FLIP_EXIT_ENABLED = _env_bool("CANDLE_ML_FLIP_EXIT_ENABLED", True)
 CANDLE_ML_FLIP_LOSS_ATR = _env_float("CANDLE_ML_FLIP_LOSS_ATR", 0.25)
 CANDLE_ML_FLIP_CONSECUTIVE = _env_int("CANDLE_ML_FLIP_CONSECUTIVE", 2)
 CANDLE_ML_FLIP_CONF = _env_float("CANDLE_ML_FLIP_CONF", 0.75)
+# Per-symbol flip-cut overrides (default to the global values above).
+CANDLE_ML_FLIP_CONSECUTIVES = {
+    "XAUUSD": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_XAUUSD", CANDLE_ML_FLIP_CONSECUTIVE),
+    "US100": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_US100", CANDLE_ML_FLIP_CONSECUTIVE),
+    "US500": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_US500", CANDLE_ML_FLIP_CONSECUTIVE),
+}
+CANDLE_ML_FLIP_CONFS = {
+    "XAUUSD": _env_float("CANDLE_ML_FLIP_CONF_XAUUSD", CANDLE_ML_FLIP_CONF),
+    "US100": _env_float("CANDLE_ML_FLIP_CONF_US100", CANDLE_ML_FLIP_CONF),
+    "US500": _env_float("CANDLE_ML_FLIP_CONF_US500", CANDLE_ML_FLIP_CONF),
+}
 
 # MaxelPay
 MAXELPAY_API_KEY = _env_str("MAXELPAY_API_KEY", "")
