@@ -16,7 +16,7 @@ from app.candle_ml import (
     compute_candle_features, create_candle_target, CANDLE_FEATURE_COLS,
 )
 
-SYMBOLS = ["XAUUSD", "US100", "US500"]
+SYMBOLS = ["XAUUSD", "US100", "US500", "US30"]
 TRAIN_START = 2022
 TRAIN_SPLIT = 0.85
 
@@ -179,7 +179,7 @@ def train_for_symbol(cfg):
 def main():
     parser = argparse.ArgumentParser(description="Train Candle ML models")
     parser.add_argument("--year", type=int, default=datetime.now(timezone.utc).year, help="Training end year (default: current)")
-    parser.add_argument("--symbol", type=str, default=None, help="Train only this symbol (XAUUSD|US100|US500). Default: all")
+    parser.add_argument("--symbol", type=str, default=None, help="Train only this symbol (XAUUSD|US100|US500|US30). Default: all")
     args = parser.parse_args()
 
     train_years = list(range(TRAIN_START, args.year + 1))
@@ -207,6 +207,13 @@ def main():
             "symbol": "US500",
             "cache_dir": "data/dukascopy_us500",
             "model_path": "models/candle_xgb_m5_US500.joblib",
+            "train_years": train_years,
+            "test_years": test_years,
+        },
+        "US30": {
+            "symbol": "US30",
+            "cache_dir": "data/dukascopy_us30",
+            "model_path": "models/candle_xgb_m5_US30.joblib",
             "train_years": train_years,
             "test_years": test_years,
         },

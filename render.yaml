@@ -77,6 +77,8 @@ services:
         value: "5.00"
       - key: MAX_DRIFT_US500
         value: "1.50"
+      - key: MAX_DRIFT_US30
+        value: "10.00"
       - key: MAX_SLIPPAGE_PIPS
         value: "10"
       - key: ASP_ENABLED
@@ -86,6 +88,8 @@ services:
       - key: ASP_TIMEOUT_BARS_US100
         value: "10"
       - key: ASP_TIMEOUT_BARS_US500
+        value: "10"
+      - key: ASP_TIMEOUT_BARS_US30
         value: "10"
       - key: ASP_SL_ATR_MULTIPLIER
         value: "2.0"
@@ -120,6 +124,8 @@ services:
       - key: SESSIONS_US100
         value: LONDON,NEW_YORK
       - key: SESSIONS_US500
+        value: LONDON,NEW_YORK
+      - key: SESSIONS_US30
         value: LONDON,NEW_YORK
       - key: PEAK_HARVEST_TRAIL_TRIGGER
         value: "3.0"

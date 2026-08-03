@@ -134,18 +134,6 @@ class RiskManager:
             return False, f"event_loss_limit ({event_pnl:.2f} < -${max_loss_usd:.2f} = {loss_pct:.1f}% of ${balance:.2f})"
         return True, "ok"
 
-    def calculate_lot_size(self, balance: float,
-                           stop_distance_pips: float,
-                           point: float = 0.0001) -> float:
-        if stop_distance_pips <= 0:
-            return cfg.LOT_SIZE
-        risk_per_trade = balance * 0.01
-        lot = risk_per_trade / (stop_distance_pips * 10)
-        lot = max(cfg.MIN_LOT, min(lot, cfg.MAX_LOT))
-        step = cfg.LOT_STEP
-        lot = round(lot / step) * step
-        return lot
-
     def _check_session(self, dt: datetime, symbol: str = "XAUUSD") -> Tuple[bool, str]:
         hour = dt.hour
         minute = dt.minute
