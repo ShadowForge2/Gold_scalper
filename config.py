@@ -388,6 +388,10 @@ CANDLE_ML_FLIP_CONFS = {
     "US30": _env_float("CANDLE_ML_FLIP_CONF_US30", CANDLE_ML_FLIP_CONF),
 }
 
+# Max loss time — force close Candle ML trades that are underwater after this many minutes.
+# Prevents losing positions from blocking better opportunities indefinitely.
+CANDLE_ML_MAX_LOSS_MINUTES = _env_float("CANDLE_ML_MAX_LOSS_MINUTES", 120.0)
+
 # MaxelPay
 MAXELPAY_API_KEY = _env_str("MAXELPAY_API_KEY", "")
 
@@ -410,6 +414,25 @@ FINNHUB_API_KEY = _env_str("FINNHUB_API_KEY", "")
 # Failover
 FAILOVER_ENABLED = _env_bool("FAILOVER_ENABLED", False)
 FAILOVER_ROLE = _env_str("FAILOVER_ROLE", "primary")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BRAIN — Hierarchical Trade Decision Intelligence
+# ══════════════════════════════════════════════════════════════════════════════
+BRAIN_ENABLED = _env_bool("BRAIN_ENABLED", True)
+BRAIN_MODEL_DIR = _env_str("BRAIN_MODEL_DIR", "models/brain")
+BRAIN_SIM_COUNT = _env_int("BRAIN_SIM_COUNT", 800)  # Monte Carlo sims (Option B)
+
+# Cascade thresholds — controls when expensive layers are skipped
+BRAIN_THESIS_HOLD_THRESHOLD = _env_float("BRAIN_THESIS_HOLD_THRESHOLD", 75.0)  # >75% → fast HOLD
+BRAIN_THESIS_EXIT_THRESHOLD = _env_float("BRAIN_THESIS_EXIT_THRESHOLD", 25.0)  # <25% → fast EXIT
+BRAIN_THESIS_CONFIDENCE_MIN = _env_float("BRAIN_THESIS_CONFIDENCE_MIN", 0.6)
+
+# Meta-Fusion ensemble weights
+BRAIN_FUSION_WEIGHT_XGB = _env_float("BRAIN_FUSION_WEIGHT_XGB", 0.25)
+BRAIN_FUSION_WEIGHT_LGB = _env_float("BRAIN_FUSION_WEIGHT_LGB", 0.25)
+BRAIN_FUSION_WEIGHT_CAT = _env_float("BRAIN_FUSION_WEIGHT_CAT", 0.20)
+BRAIN_FUSION_WEIGHT_NN = _env_float("BRAIN_FUSION_WEIGHT_NN", 0.20)
+BRAIN_FUSION_WEIGHT_RF = _env_float("BRAIN_FUSION_WEIGHT_RF", 0.10)
 
 def is_market_open() -> bool:
     from datetime import datetime as _dt

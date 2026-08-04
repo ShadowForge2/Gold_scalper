@@ -47,6 +47,13 @@ except Exception:
     CandleML = None
     _HAS_CANDLE = False
 
+try:
+    from app.brain import BrainOrchestrator
+    _HAS_BRAIN = True
+except Exception:
+    BrainOrchestrator = None
+    _HAS_BRAIN = False
+
 
 class Bot:
     STATES = {
@@ -176,6 +183,20 @@ class Bot:
             self._symbol_candle_last_boundary[sym] = 0
             self._symbol_last_rescan_ts[sym] = 0.0
             self._symbol_rescan_count[sym] = 0
+
+        # ── BRAIN — hierarchical trade decision intelligence ──
+        self.brain = None
+        if _HAS_BRAIN and getattr(cfg, "BRAIN_ENABLED", True):
+            try:
+                self.brain = BrainOrchestrator(
+                    symbols=self.symbols,
+                    model_dir=getattr(cfg, "BRAIN_MODEL_DIR", "models/brain"),
+                    candle_models=self._symbol_candle_ml,
+                )
+                self.logger.info(f"Brain initialized: {len(self.symbols)} symbols")
+            except Exception as e:
+                self.logger.warning(f"Brain init failed: {e}")
+                self.brain = None
 
         # Legacy single-symbol references (use first symbol for backward compat)
         first_sym = self.symbols[0] if self.symbols else cfg.SYMBOL
@@ -584,6 +605,34 @@ class Bot:
                 return
 
         state = self._symbol_states[sym]
+
+        # ── BRAIN: update feature cache every tick ──
+        if self.brain is not None and state == self.STATES["IN_TRADE"]:
+            try:
+                m1_bars_brain = getattr(cfg, "CANDLE_ML_M1_HISTORY_BARS", 500)
+                m1_brain = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, m1_bars_brain)
+                if m1_brain is not None and len(m1_brain) > 10:
+                    sym_positions_brain = [p for p in pnl_data.get("positions", []) if p.get("_symbol_code") == sym]
+                    entry_info = None
+                    if sym_positions_brain:
+                        pos_b = sym_positions_brain[0]
+                        entry_info = {
+                            "direction": pos_b.get("type", "BUY"),
+                            "entry_price": pos_b.get("price_open", 0),
+                            "sl": pos_b.get("sl", 0),
+                            "tp1": pos_b.get("tp", 0),
+                            "atr": self._symbol_signals.get(sym, {}).get("atr_value", 0),
+                            "ml_confidence": self._symbol_signals.get(sym, {}).get("score", 0.5),
+                            "adx_at_entry": self._symbol_signals.get(sym, {}).get("adx_at_entry", 0),
+                            "regime_at_entry": self._symbol_signals.get(sym, {}).get("regime_at_entry", "UNKNOWN"),
+                            "event_start": self._symbol_event_start_ts.get(sym),
+                        }
+                    symbol_info_b = self.client.get_symbol_info(sym)
+                    price_b = symbol_info_b.get("ask", 0) if symbol_info_b else 0
+                    self.brain.update_features(sym, m1_brain, price_b, entry_info)
+            except Exception as e:
+                self.logger.debug(f"[{sym}] Brain feature update failed: {e}")
+
         if state == self.STATES["IN_TRADE"]:
             await self._handle_in_trade(sym, pnl_data)
         elif state == self.STATES["WAITING_FOR_FUNDS"]:
@@ -1144,6 +1193,19 @@ class Bot:
                 elif c_low <= candle_tp:
                     exit_reason = "candle_tp_hit"
 
+            # Max-loss time guard — force close a Candle ML trade that has been
+            # underwater past CANDLE_ML_MAX_LOSS_MINUTES so it can't block better
+            # opportunities indefinitely (config.py:393).
+            if not exit_reason and getattr(cfg, "CANDLE_ML_MAX_LOSS_MINUTES", 0) > 0:
+                max_loss_min = cfg.CANDLE_ML_MAX_LOSS_MINUTES
+                underwater = (current_px < entry_price) if direction == "BUY" else (current_px > entry_price)
+                if minutes_held >= max_loss_min and underwater:
+                    exit_reason = "candle_max_loss_time"
+                    self.logger.signal(
+                        f"[{sym}] Candle ML max-loss time: {direction} px={current_px:.2f} "
+                        f"entry={entry_price:.2f} held={minutes_held:.1f}m (limit={max_loss_min:.0f}m)"
+                    )
+
             if not exit_reason and getattr(cfg, "CANDLE_ML_FLIP_EXIT_ENABLED", True):
                 cm = self._symbol_candle_ml.get(sym)
                 if cm is not None and cm.model is not None and atr_val > 0 and entry_price > 0:
@@ -1195,6 +1257,33 @@ class Bot:
                     except Exception as e:
                         self.logger.warning(f"[{sym}] Candle ML flip-check failed: {e}")
 
+            # ── BRAIN EVALUATION for Candle ML trades ──
+            # If no Candle ML exit triggered, let the Brain decide.
+            if not exit_reason and self.brain is not None:
+                try:
+                    brain_decision = self.brain.evaluate(
+                        symbol=sym,
+                        current_pnl=(current_px - entry_price) / atr_val if direction == "BUY" and atr_val > 0 else (entry_price - current_px) / atr_val if atr_val > 0 else 0,
+                        current_price=current_px,
+                        entry_price=entry_price,
+                        direction=direction,
+                        atr=atr_val,
+                        minutes_held=minutes_held,
+                        pending_signals=self._symbol_signals,
+                    )
+                    if brain_decision.get("action") == "EXIT" and brain_decision.get("confidence", 0) > 0.4:
+                        exit_reason = f"brain_exit({brain_decision.get('reason', 'cascade')})"
+                        self.logger.signal(
+                            f"[{sym}] Brain EXIT: {brain_decision.get('reason', '')} | "
+                            f"conf={brain_decision['confidence']:.2f} method={brain_decision.get('method', '?')} | "
+                            f"dir={direction} entry={entry_price:.2f} px={current_px:.2f} "
+                            f"held={minutes_held:.1f}m cascade={brain_decision.get('cascade_path', '?')} "
+                            f"layers={brain_decision.get('layers_evaluated', 0)} "
+                            f"timing={brain_decision.get('timing_ms', 0):.1f}ms"
+                        )
+                except Exception as e:
+                    self.logger.warning(f"[{sym}] Brain evaluation failed: {e}")
+
             if not exit_reason:
                 return  # candle trades use backtest logic only — no other exits
 
@@ -1216,6 +1305,11 @@ class Bot:
                 self._symbol_candle_tp[sym] = None
                 self._symbol_candle_last_boundary[sym] = 0
                 self._symbol_flip_streak[sym] = 0
+                if self.brain:
+                    self.brain.record_exit(sym, {
+                        "exit_reason": exit_reason, "pnl": pnl,
+                        "exit_price": current_px, "atr": atr_val,
+                    })
                 if hasattr(self, f"_best_price_{sym}"):
                     delattr(self, f"_best_price_{sym}")
                 await self._notify(
@@ -1443,6 +1537,62 @@ class Bot:
                 f"[{sym}] Timeout hold ({int(minutes_held)}m): {status} pnl=${event_pnl:+.2f}"
             )
 
+            # ── BRAIN EVALUATION for ASP trades ──
+            # After smart timeout says "hold", let the Brain do a final check.
+            if self.brain is not None and minutes_held >= asp_timeout_min:
+                try:
+                    atr_val = pos_signal.get("atr_value", 0) if pos_signal else 0
+                    if atr_val <= 0:
+                        atr_val = current_px * 0.001
+                    brain_decision = self.brain.evaluate(
+                        symbol=sym,
+                        current_pnl=(current_px - entry_price) / atr_val if direction == "BUY" and atr_val > 0 else (entry_price - current_px) / atr_val if atr_val > 0 else 0,
+                        current_price=current_px,
+                        entry_price=entry_price,
+                        direction=direction,
+                        atr=atr_val,
+                        minutes_held=minutes_held,
+                        pending_signals=self._symbol_signals,
+                    )
+                    if brain_decision.get("action") == "EXIT" and brain_decision.get("confidence", 0) > 0.5:
+                        reason = f"brain_exit({brain_decision.get('reason', 'cascade')})"
+                        self.logger.signal(
+                            f"[{sym}] Brain EXIT: {brain_decision.get('reason', '')} | "
+                            f"conf={brain_decision['confidence']:.2f} method={brain_decision.get('method', '?')} | "
+                            f"dir={direction} entry={entry_price:.2f} px={current_px:.2f} "
+                            f"held={minutes_held:.1f}m cascade={brain_decision.get('cascade_path', '?')} "
+                            f"layers={brain_decision.get('layers_evaluated', 0)} "
+                            f"timing={brain_decision.get('timing_ms', 0):.1f}ms"
+                        )
+                        closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                        for pos_data in closed:
+                            self.position_manager.note_closed(pos_data, exit_reason=reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
+                        if closed:
+                            pnl = sum(p.get("profit", 0) for p in closed)
+                            self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
+                            self._symbol_states[sym] = self.STATES["IDLE"]
+                            self._symbol_event_start_ts[sym] = None
+                            self._symbol_last_rescan_ts[sym] = 0.0
+                            self._symbol_rescan_count[sym] = 0
+                            if hasattr(self, f"_best_price_{sym}"):
+                                delattr(self, f"_best_price_{sym}")
+                            if self.brain:
+                                self.brain.record_exit(sym, {
+                                    "exit_reason": reason, "pnl": pnl,
+                                    "exit_price": current_px, "atr": atr_val,
+                                })
+                            await self._notify(
+                                "trade_close",
+                                f"Trade Closed — {sym}",
+                                f"{direction} {sym} closed ({reason}) | PnL: ${pnl:+.2f} | held {int(minutes_held)}m",
+                                {"symbol": sym, "direction": direction, "exit_reason": reason, "pnl": pnl, "held_minutes": minutes_held},
+                            )
+                        else:
+                            self.logger.warning(f"[{sym}] Brain exit close failed")
+                        return
+                except Exception as e:
+                    self.logger.warning(f"[{sym}] Brain evaluation failed: {e}")
+
     async def _handle_waiting_for_funds(self, sym: str = None):
         info = self.client.get_account_info()
         min_balance = cfg.SYMBOL_MIN_BALANCE.get(sym, cfg.MIN_BALANCE) if sym else cfg.MIN_BALANCE
@@ -1639,6 +1789,24 @@ class Bot:
                 f"{direction} {lot:.2f} lot {sym} @ ${current_price:.2f} | score={score:.2f}",
                 {"symbol": sym, "direction": direction, "lot": lot, "price": current_price, "score": score},
             )
+            # ── BRAIN: record entry for thesis tracking ──
+            if self.brain is not None:
+                try:
+                    self.brain.record_entry(sym, {
+                        "direction": direction,
+                        "price": current_price,
+                        "sl": signal.get("sl", 0),
+                        "tp1": signal.get("tp1", 0),
+                        "atr": signal.get("atr", signal.get("atr_value", 0)),
+                        "score": score,
+                        "ml_confidence": ml_conf,
+                        "adx_at_entry": signal.get("adx_at_entry", 0),
+                        "regime_at_entry": self.brain.cache.get_regime(sym) if self.brain else "UNKNOWN",
+                        "signal_type": signal.get("signal_type", ""),
+                        "bias_agreement": signal.get("bias_agreement", 0.5),
+                    })
+                except Exception:
+                    pass
         else:
             self._symbol_states[sym] = self.STATES["IDLE"]
 
@@ -1687,6 +1855,7 @@ class Bot:
             "scaler": self.scaler.summary(current_balance) if self.scaler.starting_balance else None,
             "last_logs": self.logger.logs[-50:],
             "closed_trades": self.position_manager.closed_history[-100:],
+            "brain": self.brain.get_stats() if self.brain else None,
         }
 
     def start(self):

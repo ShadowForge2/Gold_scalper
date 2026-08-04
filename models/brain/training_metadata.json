@@ -1,0 +1,157 @@
+{
+  "models": {
+    "thesis_validator": {
+      "auc": 0.8995787748618875,
+      "train_time": 3.2497684955596924,
+      "features": [
+        "pnl_atr_ratio",
+        "bars_since_entry",
+        "ml_confidence_entry",
+        "ml_confidence_current",
+        "ml_confidence_delta",
+        "adx_entry",
+        "adx_current",
+        "adx_delta",
+        "regime_entry",
+        "regime_current",
+        "regime_changed",
+        "momentum_5m",
+        "momentum_15m",
+        "price_acceleration",
+        "consecutive_bars_in_direction",
+        "volatility_percentile",
+        "atr_ratio",
+        "structure_quality_score",
+        "structure_break_detected",
+        "distance_to_sl",
+        "distance_to_tp",
+        "session_active",
+        "is_friday",
+        "opportunity_cost_per_hour",
+        "recent_win_rate_20"
+      ],
+      "n_features": 25
+    },
+    "meta_fusion_xgb": {
+      "train_time": 1.2186636924743652,
+      "features": [
+        "thesis_validity",
+        "thesis_confidence",
+        "perception_composite",
+        "regime_type_encoded",
+        "opportunity_cost",
+        "opportunity_count",
+        "dt_ev_diff",
+        "dt_hold_win_pct",
+        "dt_confidence",
+        "pnl_atr_ratio",
+        "ml_confidence_current",
+        "adx_current",
+        "momentum_5m",
+        "volatility_percentile",
+        "bars_since_entry",
+        "session_active",
+        "is_friday",
+        "recent_win_rate_20",
+        "consecutive_losses",
+        "portfolio_heat"
+      ],
+      "n_features": 20
+    },
+    "meta_fusion_lgb": {
+      "train_time": 0.5311424732208252,
+      "features": [
+        "thesis_validity",
+        "thesis_confidence",
+        "perception_composite",
+        "regime_type_encoded",
+        "opportunity_cost",
+        "opportunity_count",
+        "dt_ev_diff",
+        "dt_hold_win_pct",
+        "dt_confidence",
+        "pnl_atr_ratio",
+        "ml_confidence_current",
+        "adx_current",
+        "momentum_5m",
+        "volatility_percentile",
+        "bars_since_entry",
+        "session_active",
+        "is_friday",
+        "recent_win_rate_20",
+        "consecutive_losses",
+        "portfolio_heat"
+      ],
+      "n_features": 20
+    },
+    "meta_fusion_nn": {
+      "train_time": 0.9062199592590332,
+      "features": [
+        "thesis_validity",
+        "thesis_confidence",
+        "perception_composite",
+        "regime_type_encoded",
+        "opportunity_cost",
+        "opportunity_count",
+        "dt_ev_diff",
+        "dt_hold_win_pct",
+        "dt_confidence",
+        "pnl_atr_ratio",
+        "ml_confidence_current",
+        "adx_current",
+        "momentum_5m",
+        "volatility_percentile",
+        "bars_since_entry",
+        "session_active",
+        "is_friday",
+        "recent_win_rate_20",
+        "consecutive_losses",
+        "portfolio_heat"
+      ],
+      "n_features": 20
+    },
+    "meta_fusion_rf": {
+      "train_time": 2.575786590576172,
+      "features": [
+        "thesis_validity",
+        "thesis_confidence",
+        "perception_composite",
+        "regime_type_encoded",
+        "opportunity_cost",
+        "opportunity_count",
+        "dt_ev_diff",
+        "dt_hold_win_pct",
+        "dt_confidence",
+        "pnl_atr_ratio",
+        "ml_confidence_current",
+        "adx_current",
+        "momentum_5m",
+        "volatility_percentile",
+        "bars_since_entry",
+        "session_active",
+        "is_friday",
+        "recent_win_rate_20",
+        "consecutive_losses",
+        "portfolio_heat"
+      ],
+      "n_features": 20
+    },
+    "twin_calibrator": {
+      "train_mse": 0.08511347139171271,
+      "train_time": 0.18748235702514648,
+      "input_features": [
+        "atr_current",
+        "regime_type_encoded",
+        "volatility_percentile",
+        "adx_current"
+      ],
+      "target_features": [
+        "twin_drift_scale",
+        "twin_vol_scale"
+      ]
+    }
+  },
+  "n_samples": 3000,
+  "total_train_time": 8.669063568115234,
+  "timestamp": "2026-08-04T14:11:33"
+}

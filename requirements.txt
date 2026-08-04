@@ -14,3 +14,7 @@ scikit-learn>=1.5.0
 torch>=2.0.0
 firebase-admin>=6.5.0
 dukascopy-python>=0.1.0
+onnxruntime>=1.17.0
+lightgbm>=4.3.0
+catboost>=1.2.0
+psutil>=5.9.0
