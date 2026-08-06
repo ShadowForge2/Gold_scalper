@@ -68,9 +68,13 @@ class BotPool:
         with self._lock:
             if ident not in self._bots:
                 return {"success": False, "error": "No bot running for this account"}
-            bot = self._bots.pop(ident, None)
-            loop = self._loops.pop(ident, None)
-            self._threads.pop(ident, None)
+            bot = self._bots.get(ident)
+            loop = self._loops.get(ident)
+            thread = self._threads.get(ident)
+
+        # Kick off a graceful shutdown on the bot's loop (fire-and-forget); we
+        # then block on the thread so "stopped" means the bot is actually dead
+        # and the account is free to restart without any overlap.
         if loop is not None and loop.is_running() and bot is not None:
             try:
                 asyncio.run_coroutine_threadsafe(
@@ -78,6 +82,14 @@ class BotPool:
                 )
             except RuntimeError:
                 pass
+
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=30.0)
+            if thread.is_alive():
+                self._remove_bot(ident, bot)
+                return {"success": False, "error": "Bot stop timed out (thread still alive)"}
+
+        self._remove_bot(ident, bot)
         return {"success": True, "message": "Bot stopped"}
 
     def is_running(self, identifier: str) -> bool:
@@ -182,8 +194,16 @@ class BotPool:
             bot.update_settings(settings)
             return {"success": True, "message": "Settings updated"}
 
-    def _remove_bot(self, ident: str):
+    def _remove_bot(self, ident: str, bot: Optional[Bot] = None):
+        """Remove a bot entry ONLY if it still owns this identifier.
+
+        Passing the bot instance guards against a rapid stop->start race: a
+        freshly started replacement bot for the same ident must not be deleted
+        by a winding-down thread's cleanup.
+        """
         with self._lock:
+            if bot is not None and self._bots.get(ident) is not bot:
+                return
             self._bots.pop(ident, None)
             self._loops.pop(ident, None)
             self._threads.pop(ident, None)
@@ -201,7 +221,7 @@ class BotPool:
         except Exception as e:
             bot.logger.error(f"Bot thread error: {e}")
         finally:
-            self._remove_bot(ident)
+            self._remove_bot(ident, bot)
             loop.close()
 
     async def _run_bot(self, ident: str, bot: Bot, creds: Dict):
@@ -214,7 +234,7 @@ class BotPool:
         if not ok:
             bot.logger.error("Failed to initialize bot with credentials")
             self._write_state(ident, {"state": "STOPPED", "error": "init_failed"})
-            self._remove_bot(ident)
+            self._remove_bot(ident, bot)
             return
 
         if not creds.get("demo", True):
@@ -238,7 +258,7 @@ class BotPool:
         })
 
         await bot.run()
-        self._remove_bot(ident)
+        self._remove_bot(ident, bot)
 
     def _write_state(self, ident: str, extra: Optional[Dict] = None):
         with self._lock:
