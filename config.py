@@ -133,12 +133,15 @@ ML_OVERRIDE_MAX_PER_SESSION = _env_int("ML_OVERRIDE_MAX_PER_SESSION", 3)
 
 # Multi-symbol: bot trades XAUUSD, US100, US500, and US30 automatically.
 # US500/US30 only trade once balance reaches SYMBOL_MIN_BALANCE (default $30).
-SYMBOLS = [s.strip() for s in _env_str("SYMBOLS", "XAUUSD,US100,US500,US30").split(",")]
+# JP225/DE40 are momentum-engine pairs (per-pair adapted params + regime gate).
+SYMBOLS = [s.strip() for s in _env_str("SYMBOLS", "XAUUSD,US100,JP225,DE40,US500,US30").split(",")]
 
 # Per-symbol minimum balance before that symbol becomes tradeable.
 SYMBOL_MIN_BALANCE = {
     "XAUUSD": _env_float("MIN_BALANCE_XAUUSD", MIN_BALANCE),
     "US100": _env_float("MIN_BALANCE_US100", MIN_BALANCE),
+    "JP225": _env_float("MIN_BALANCE_JP225", MIN_BALANCE),
+    "DE40": _env_float("MIN_BALANCE_DE40", MIN_BALANCE),
     "US500": _env_float("MIN_BALANCE_US500", 30.0),
     "US30": _env_float("MIN_BALANCE_US30", 30.0),
 }
@@ -147,6 +150,8 @@ SYMBOL_MIN_BALANCE = {
 SYMBOL_LOT_SIZES = {
     "XAUUSD": _env_float("LOT_SIZE_XAUUSD", 0.02),
     "US100": _env_float("LOT_SIZE_US100", 0.02),
+    "JP225": _env_float("LOT_SIZE_JP225", 0.02),
+    "DE40": _env_float("LOT_SIZE_DE40", 0.02),
     "US500": _env_float("LOT_SIZE_US500", 0.02),
     "US30": _env_float("LOT_SIZE_US30", 0.02),
 }
@@ -158,6 +163,8 @@ SYMBOL_LOT_SIZES = {
 SYMBOL_CONTRACT_SIZE = {
     "XAUUSD": _env_float("CONTRACT_SIZE_XAUUSD", 1),
     "US100": _env_float("CONTRACT_SIZE_US100", 1),
+    "JP225": _env_float("CONTRACT_SIZE_JP225", 1),
+    "DE40": _env_float("CONTRACT_SIZE_DE40", 1),
     "US500": _env_float("CONTRACT_SIZE_US500", 1),
     "US30": _env_float("CONTRACT_SIZE_US30", 1),
 }
@@ -166,6 +173,8 @@ SYMBOL_CONTRACT_SIZE = {
 SYMBOL_ASSET_CLASS = {
     "XAUUSD": _env_str("ASSET_CLASS_XAUUSD", "COMMODITIES"),
     "US100": _env_str("ASSET_CLASS_US100", "INDICES"),
+    "JP225": _env_str("ASSET_CLASS_JP225", "INDICES"),
+    "DE40": _env_str("ASSET_CLASS_DE40", "INDICES"),
     "US500": _env_str("ASSET_CLASS_US500", "INDICES"),
     "US30": _env_str("ASSET_CLASS_US30", "INDICES"),
 }
@@ -174,6 +183,8 @@ SYMBOL_ASSET_CLASS = {
 SYMBOL_MARGIN_FACTOR = {
     "XAUUSD": _env_float("MARGIN_FACTOR_XAUUSD", 0.01),
     "US100": _env_float("MARGIN_FACTOR_US100", 0.01),
+    "JP225": _env_float("MARGIN_FACTOR_JP225", 0.01),
+    "DE40": _env_float("MARGIN_FACTOR_DE40", 0.01),
     "US500": _env_float("MARGIN_FACTOR_US500", 0.01),
     "US30": _env_float("MARGIN_FACTOR_US30", 0.01),
 }
@@ -182,6 +193,8 @@ SYMBOL_MARGIN_FACTOR = {
 SYMBOL_MAX_SPREAD = {
     "XAUUSD": _env_float("MAX_SPREAD_PIPS_XAUUSD", 35.0),
     "US100": _env_float("MAX_SPREAD_PIPS_US100", 50.0),
+    "JP225": _env_float("MAX_SPREAD_PIPS_JP225", 50.0),
+    "DE40": _env_float("MAX_SPREAD_PIPS_DE40", 50.0),
     "US500": _env_float("MAX_SPREAD_PIPS_US500", 50.0),
     "US30": _env_float("MAX_SPREAD_PIPS_US30", 50.0),
 }
@@ -195,6 +208,8 @@ SYMBOL_MAX_SPREAD = {
 SYMBOL_MAX_DRIFT = {
     "XAUUSD": _env_float("MAX_DRIFT_XAUUSD", 0.50),
     "US100": _env_float("MAX_DRIFT_US100", 5.00),
+    "JP225": _env_float("MAX_DRIFT_JP225", 10.00),
+    "DE40": _env_float("MAX_DRIFT_DE40", 5.00),
     "US500": _env_float("MAX_DRIFT_US500", 1.50),
     "US30": _env_float("MAX_DRIFT_US30", 10.00),
 }
@@ -217,6 +232,8 @@ ALLOWED_SESSIONS = _env_str("ALLOWED_SESSIONS", "LONDON,NEW_YORK")
 SYMBOL_ALLOWED_SESSIONS = {
     "XAUUSD": _env_str("SESSIONS_XAUUSD", "ASIA,LONDON,NEW_YORK"),
     "US100": _env_str("SESSIONS_US100", "LONDON,NEW_YORK"),
+    "JP225": _env_str("SESSIONS_JP225", "ASIA"),
+    "DE40": _env_str("SESSIONS_DE40", "LONDON"),
     "US500": _env_str("SESSIONS_US500", "LONDON,NEW_YORK"),
     "US30": _env_str("SESSIONS_US30", "LONDON,NEW_YORK"),
 }
@@ -246,6 +263,18 @@ US100_OPEN_HOUR_UTC = 14
 US100_OPEN_MINUTE_UTC = 30
 US100_CLOSE_HOUR_UTC = 21
 
+# JP225 (Nikkei 225) market hours — Asia session (Mon-Fri 23:00-06:00 UTC).
+# JP225 is an overnight (Asia) pair vs the US session pairs, keeping the bot
+# busy across sessions.
+JP225_OPEN_HOUR_UTC = 23
+JP225_OPEN_MINUTE_UTC = 0
+JP225_CLOSE_HOUR_UTC = 6
+
+# DE40 (Germany 40) market hours — Europe session (Mon-Fri 07:00-21:00 UTC).
+DE40_OPEN_HOUR_UTC = 7
+DE40_OPEN_MINUTE_UTC = 0
+DE40_CLOSE_HOUR_UTC = 21
+
 # Friday close awareness: block NEW entries within this many minutes before the
 # symbol's weekly (Friday) close so no fresh position gets stuck over the
 # weekend. Existing positions are never force-closed — they stay open and are
@@ -262,6 +291,8 @@ CANDLE_ML_CONFIDENCE_THRESHOLD = _env_float("CANDLE_ML_CONFIDENCE_THRESHOLD", 0.
 CANDLE_ML_CONFIDENCE_THRESHOLDS = {
     "XAUUSD": _env_float("CANDLE_ML_CONFIDENCE_XAUUSD", CANDLE_ML_CONFIDENCE_THRESHOLD),
     "US100": _env_float("CANDLE_ML_CONFIDENCE_US100", CANDLE_ML_CONFIDENCE_THRESHOLD),
+    "JP225": _env_float("CANDLE_ML_CONFIDENCE_JP225", CANDLE_ML_CONFIDENCE_THRESHOLD),
+    "DE40": _env_float("CANDLE_ML_CONFIDENCE_DE40", CANDLE_ML_CONFIDENCE_THRESHOLD),
     "US500": _env_float("CANDLE_ML_CONFIDENCE_US500", CANDLE_ML_CONFIDENCE_THRESHOLD),
     "US30": _env_float("CANDLE_ML_CONFIDENCE_US30", CANDLE_ML_CONFIDENCE_THRESHOLD),
 }
@@ -269,6 +300,8 @@ CANDLE_ML_M1_HISTORY_BARS = _env_int("CANDLE_ML_M1_HISTORY_BARS", 500)
 CANDLE_ML_MODEL_PATHS = {
     "XAUUSD": _env_str("CANDLE_ML_MODEL_PATH_XAUUSD", "models/candle_xgb_m5_XAUUSD.joblib"),
     "US100": _env_str("CANDLE_ML_MODEL_PATH_US100", "models/candle_xgb_m5_US100.joblib"),
+    "JP225": _env_str("CANDLE_ML_MODEL_PATH_JP225", "models/candle_xgb_m5_JP225.joblib"),
+    "DE40": _env_str("CANDLE_ML_MODEL_PATH_DE40", "models/candle_xgb_m5_DE40.joblib"),
     "US500": _env_str("CANDLE_ML_MODEL_PATH_US500", "models/candle_xgb_m5_US500.joblib"),
     "US30": _env_str("CANDLE_ML_MODEL_PATH_US30", "models/candle_xgb_m5_US30.joblib"),
 }
@@ -277,6 +310,8 @@ CANDLE_ML_MODEL_PATHS = {
 CANDLE_ML_MODE = {
     "XAUUSD": _env_str("CANDLE_ML_MODE_XAUUSD", "always"),
     "US100": _env_str("CANDLE_ML_MODE_US100", "always"),
+    "JP225": _env_str("CANDLE_ML_MODE_JP225", "always"),
+    "DE40": _env_str("CANDLE_ML_MODE_DE40", "always"),
     "US500": _env_str("CANDLE_ML_MODE_US500", "always"),
     "US30": _env_str("CANDLE_ML_MODE_US30", "always"),
 }
@@ -291,6 +326,8 @@ CANDLE_ML_PATTERN_FILTER = _env_str("CANDLE_ML_PATTERN_FILTER", "strict")
 CANDLE_ML_PATTERN_FILTERS = {
     "XAUUSD": _env_str("CANDLE_ML_PATTERN_XAUUSD", CANDLE_ML_PATTERN_FILTER),
     "US100": _env_str("CANDLE_ML_PATTERN_US100", CANDLE_ML_PATTERN_FILTER),
+    "JP225": _env_str("CANDLE_ML_PATTERN_JP225", CANDLE_ML_PATTERN_FILTER),
+    "DE40": _env_str("CANDLE_ML_PATTERN_DE40", CANDLE_ML_PATTERN_FILTER),
     "US500": _env_str("CANDLE_ML_PATTERN_US500", CANDLE_ML_PATTERN_FILTER),
     "US30": _env_str("CANDLE_ML_PATTERN_US30", CANDLE_ML_PATTERN_FILTER),
 }
@@ -298,6 +335,8 @@ CANDLE_ML_PATTERN_FILTERS = {
 CANDLE_ML_ALLOWED_HOURS = {
     "XAUUSD": _env_str("CANDLE_ML_ALLOWED_HOURS_XAUUSD", "13,14,15,16,17,18"),
     "US100": _env_str("CANDLE_ML_ALLOWED_HOURS_US100", ""),
+    "JP225": _env_str("CANDLE_ML_ALLOWED_HOURS_JP225", ""),
+    "DE40": _env_str("CANDLE_ML_ALLOWED_HOURS_DE40", ""),
     "US500": _env_str("CANDLE_ML_ALLOWED_HOURS_US500", ""),
     "US30": _env_str("CANDLE_ML_ALLOWED_HOURS_US30", ""),
 }
@@ -333,12 +372,16 @@ CANDLE_ML_FLIP_CONF = _env_float("CANDLE_ML_FLIP_CONF", 0.70)
 CANDLE_ML_FLIP_CONSECUTIVES = {
     "XAUUSD": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_XAUUSD", CANDLE_ML_FLIP_CONSECUTIVE),
     "US100": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_US100", CANDLE_ML_FLIP_CONSECUTIVE),
+    "JP225": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_JP225", CANDLE_ML_FLIP_CONSECUTIVE),
+    "DE40": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_DE40", CANDLE_ML_FLIP_CONSECUTIVE),
     "US500": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_US500", CANDLE_ML_FLIP_CONSECUTIVE),
     "US30": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_US30", CANDLE_ML_FLIP_CONSECUTIVE),
 }
 CANDLE_ML_FLIP_CONFS = {
     "XAUUSD": _env_float("CANDLE_ML_FLIP_CONF_XAUUSD", CANDLE_ML_FLIP_CONF),
     "US100": _env_float("CANDLE_ML_FLIP_CONF_US100", CANDLE_ML_FLIP_CONF),
+    "JP225": _env_float("CANDLE_ML_FLIP_CONF_JP225", CANDLE_ML_FLIP_CONF),
+    "DE40": _env_float("CANDLE_ML_FLIP_CONF_DE40", CANDLE_ML_FLIP_CONF),
     "US500": _env_float("CANDLE_ML_FLIP_CONF_US500", CANDLE_ML_FLIP_CONF),
     "US30": _env_float("CANDLE_ML_FLIP_CONF_US30", CANDLE_ML_FLIP_CONF),
 }
@@ -354,6 +397,8 @@ CANDLE_BRAIN_ENABLED = _env_bool("CANDLE_BRAIN_ENABLED", True)
 CANDLE_BRAIN_MODEL_PATHS = {
     "XAUUSD": _env_str("CANDLE_BRAIN_MODEL_XAUUSD", "models/candle_brain_XAUUSD.pt"),
     "US100": _env_str("CANDLE_BRAIN_MODEL_US100", "models/candle_brain_US100.pt"),
+    "JP225": _env_str("CANDLE_BRAIN_MODEL_JP225", "models/candle_brain_JP225.pt"),
+    "DE40": _env_str("CANDLE_BRAIN_MODEL_DE40", "models/candle_brain_DE40.pt"),
     "US500": _env_str("CANDLE_BRAIN_MODEL_US500", "models/candle_brain_US500.pt"),
     "US30": _env_str("CANDLE_BRAIN_MODEL_US30", "models/candle_brain_US30.pt"),
 }
@@ -377,16 +422,24 @@ CANDLE_BRAIN_ENTRY_MIN_R = _env_float("CANDLE_BRAIN_ENTRY_MIN_R", 0.35)
 CANDLE_BRAIN_EDGE_MARGIN = _env_float("CANDLE_BRAIN_EDGE_MARGIN", 1.0)
 CANDLE_BRAIN_EXPECTANCY_MIN = _env_float("CANDLE_BRAIN_EXPECTANCY_MIN", 0.30)
 
-# ── Momentum-jump engine (US100) ──────────────────────────────────────
-# Validated OOS on M5 2025 (US100 only): a surge bar (momentum_z >= MZ_MIN,
-# body_ratio >= BODY_MIN, |trend_strength| >= TS_MIN) inside the long-term
-# EMA480 regime (long above / short below) is entered at the bar close with
-# SL = SL_R x ATR; exits on jump-target JUMP_TARGET_R + RETRACE_R retrace from
-# the peak, or after MAX_HOLD_BARS M5 bars. Lot sizing flows through the same
-# EquityScaler path as every other signal.
+# ── Momentum-jump engine (per-pair adapted) ──────────────────────────
+# Validated OOS on M5 2022-2025 with per-pair regime gates:
+#   US100: vol>=55 gate  -> +127.8R  (all 4 years positive)
+#   JP225: vol>=55 gate + mz2.5/jump1.0/hold18/retr0.5 -> +111.8R (all 4 years positive)
+#   DE40:  er>=0.35 gate + mz2.5/jump1.25/hold18 -> +6.2R (all years ~flat/+)
+# Signal (long example): surge bar (momentum_z >= MZ_MIN, body_ratio >= BODY_MIN,
+# |trend_strength| >= TS_MIN) inside the long-term EMA480 regime (long above /
+# short below) entered at bar close; SL = SL_R x ATR; exits on jump-target
+# JUMP_TARGET_R + RETRACE_R retrace from the peak, or after MAX_HOLD_BARS.
+# Regime gate (M5, forward-safe): only trade when the market's current ATR is
+# in the top (1-GATE_THRESHOLD) of the last GATE_WINDOW M5 bars ("vol", good for
+# US100/JP225) OR when the Kaufman efficiency ratio >= GATE_THRESHOLD over the
+# window ("er", trending-only, good for DE40). "none" disables the gate.
 MOMENTUM_ENGINE_ENABLED = {
     "XAUUSD": _env_bool("MOMENTUM_XAUUSD", False),
     "US100": _env_bool("MOMENTUM_US100", True),
+    "JP225": _env_bool("MOMENTUM_JP225", True),
+    "DE40": _env_bool("MOMENTUM_DE40", True),
     "US500": _env_bool("MOMENTUM_US500", False),
     "US30": _env_bool("MOMENTUM_US30", False),
 }
@@ -398,6 +451,30 @@ MOMENTUM_SL_R = _env_float("MOMENTUM_SL_R", 1.0)
 MOMENTUM_JUMP_TARGET_R = _env_float("MOMENTUM_JUMP_TARGET_R", 1.0)
 MOMENTUM_RETRACE_R = _env_float("MOMENTUM_RETRACE_R", 0.25)
 MOMENTUM_MAX_HOLD_BARS = _env_int("MOMENTUM_MAX_HOLD_BARS", 12)
+
+# Per-pair parameter overrides (backtest-adapted). Keys omitted from the dict
+# fall back to the global MOMENTUM_* values above.
+MOMENTUM_PAIR_PARAMS = {
+    "US100": {"mz_min": 2.0, "jump_target": 1.0, "retr_r": 0.25, "max_hold": 12},
+    "JP225": {"mz_min": 2.5, "jump_target": 1.0, "retr_r": 0.50, "max_hold": 18},
+    "DE40": {"mz_min": 2.5, "jump_target": 1.25, "retr_r": 0.25, "max_hold": 18},
+}
+
+# Per-pair regime gate ("none" | "vol" | "er").
+#   vol: ATR percentile >= threshold (fraction), window = MOMENTUM_GATE_WINDOW.
+#   er:  Kaufman efficiency ratio >= threshold (fraction), window = same.
+MOMENTUM_GATE = {
+    "US100": _env_str("MOMENTUM_GATE_US100", "vol"),
+    "JP225": _env_str("MOMENTUM_GATE_JP225", "vol"),
+    "DE40": _env_str("MOMENTUM_GATE_DE40", "er"),
+}
+MOMENTUM_GATE_THRESHOLD = {
+    "US100": _env_float("MOMENTUM_GATE_THRESHOLD_US100", 0.55),
+    "JP225": _env_float("MOMENTUM_GATE_THRESHOLD_JP225", 0.55),
+    "DE40": _env_float("MOMENTUM_GATE_THRESHOLD_DE40", 0.35),
+}
+# M5 bars in the regime window (96 M5 = 8 hours of market data).
+MOMENTUM_GATE_WINDOW = _env_int("MOMENTUM_GATE_WINDOW", 96)
 # How often the bot refetches M1 history for the EMA480 regime (seconds).
 MOMENTUM_REFRESH_SEC = _env_int("MOMENTUM_REFRESH_SEC", 60)
 # M1 bars fetched for the EMA480 regime. 485 M5 buckets are needed for the EMA480
@@ -479,6 +556,25 @@ def is_market_open_for_symbol(sym: str) -> bool:
             return open_t <= h < close_t
         return False
 
+    if sym in ("JP225", "NIKKEI", "N225", "JPN225"):
+        # JP225: Asia overnight session (Mon 23:00 UTC - Sat 06:00 UTC, with a
+        # daily break 06:00-23:00). Across midnight: active when h >= 23 OR h < 6.
+        open_t = JP225_OPEN_HOUR_UTC + JP225_OPEN_MINUTE_UTC / 60.0
+        close_t = JP225_CLOSE_HOUR_UTC
+        if 0 <= wd <= 4:
+            return h >= open_t or h < close_t
+        if wd == 6:  # Sunday night = start of Monday's Asia session
+            return h >= open_t
+        return False  # Saturday daytime closed
+
+    if sym in ("DE40", "GER40", "DAX", "GERMANY40"):
+        # DE40: Europe session (Mon-Fri 07:00-21:00 UTC).
+        if 0 <= wd <= 4:
+            open_t = DE40_OPEN_HOUR_UTC + DE40_OPEN_MINUTE_UTC / 60.0
+            close_t = DE40_CLOSE_HOUR_UTC
+            return open_t <= h < close_t
+        return False
+
     # XAUUSD: Sun 23:00 - Fri 21:00 UTC, closed 20:59-22:00 Mon-Thu
     if wd == 6:
         return h >= MARKET_OPEN_SUNDAY_UTC
@@ -505,6 +601,14 @@ def minutes_to_friday_close(sym: str):
     h = now.hour + now.minute / 60.0
     if sym in ("US100", "NASDAQ", "NAS100", "US500", "SP500", "US30", "DOW", "DJ30"):
         close_t = US100_CLOSE_HOUR_UTC
+    elif sym in ("JP225", "NIKKEI", "N225", "JPN225"):
+        # Nikkei's weekly close is Friday 06:00 UTC (end of the Asia session
+        # that started Thu 23:00). On Friday the session runs 00:00-06:00 UTC.
+        if h >= JP225_CLOSE_HOUR_UTC:
+            return None  # Friday session already closed this morning
+        close_t = JP225_CLOSE_HOUR_UTC
+    elif sym in ("DE40", "GER40", "DAX", "GERMANY40"):
+        close_t = DE40_CLOSE_HOUR_UTC
     else:
         close_t = MARKET_CLOSE_FRIDAY_UTC
     return (close_t - h) * 60.0

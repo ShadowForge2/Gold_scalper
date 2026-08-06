@@ -39,6 +39,15 @@ EPIC_MAP = {
     "DOW": "US30",
     "DJ30": "US30",
     "DJIA": "US30",
+    "JP225": "J225",
+    "JPN225": "J225",
+    "N225": "J225",
+    "J225": "J225",
+    "NIKKEI": "J225",
+    "DE40": "GER40",
+    "GER40": "GER40",
+    "GERMANY40": "GER40",
+    "DAX": "GER40",
 }
 
 

@@ -29,7 +29,9 @@ class MomentumEngine:
                  ts_min: float = 0.50, ema_span: int = 480,
                  sl_r: float = 1.0, jump_target: float = 1.0,
                  retr_r: float = 0.25, max_hold: int = 12,
-                 atr_period: int = 14, logger=None):
+                 atr_period: int = 14, logger=None,
+                 gate: str = "none", gate_threshold: float = 0.55,
+                 gate_window: int = 96):
         self.mz_min = mz_min
         self.body_min = body_min
         self.ts_min = ts_min
@@ -39,6 +41,9 @@ class MomentumEngine:
         self.retr_r = retr_r
         self.max_hold = max_hold
         self.atr_period = atr_period
+        self.gate = (gate or "none").lower()
+        self.gate_threshold = gate_threshold
+        self.gate_window = max(int(gate_window), 2)
         self._logger = logger
         self._last_warmup_log = 0.0
 
@@ -82,6 +87,40 @@ class MomentumEngine:
         ema50 = c.ewm(span=50).mean()
         df["trend_strength"] = ((ema20 - ema50) / atr.replace(0, 1e-10)).fillna(0).clip(-3, 3)
         return df
+
+    # ── regime gate (mirrors _mom_regime_scan.build_gates) ─────────────
+
+    def gate_allows(self, f: pd.DataFrame, i: int) -> bool:
+        """Forward-safe regime gate for the bar at index `i`.
+
+        "vol": current ATR is in the top (1 - threshold) of the previous
+               gate_window ATRs (high-volatility only). Percentile computed
+               over the prior window ONLY (current bar excluded), so a quiet
+               market can never satisfy it.
+        "er":  Kaufman efficiency ratio |Pn| / sum|P| over the last
+               gate_window bars >= threshold (trending only).
+        """
+        if self.gate == "none":
+            return True
+        w = self.gate_window
+        if i < w:
+            return False
+        if self.gate == "vol":
+            atr_vals = f["atr"].values
+            cur = atr_vals[i]
+            prior = atr_vals[i - w:i]
+            if len(prior) == 0 or cur <= 0:
+                return False
+            pct = float((prior <= cur).mean())
+            return pct >= self.gate_threshold
+        if self.gate == "er":
+            c = f["close"]
+            net = abs(c.iloc[i] - c.iloc[i - w])
+            gross = c.diff().abs().iloc[i - w + 1:i + 1].sum()
+            if gross <= 0:
+                return False
+            return (net / gross) >= self.gate_threshold
+        return True
 
     # ── signal detection ────────────────────────────────────────────────
 
@@ -138,6 +177,10 @@ class MomentumEngine:
               and mz[i] <= -self.mz_min and not regime_up[i]):
             direction = "SELL"
         else:
+            return None
+
+        # Regime gate — skip quiet/chop regimes (per-pair, validated per symbol).
+        if not self.gate_allows(f, i):
             return None
 
         atr_i = float(atr[i]) if atr[i] > 0 else 1e-10

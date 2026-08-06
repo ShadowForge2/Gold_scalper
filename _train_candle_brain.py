@@ -58,6 +58,8 @@ SYMBOL_MAP = {
     "US100": "data/dukascopy_us100",
     "US500": "data/dukascopy_us500",
     "US30": "data/dukascopy_us30",
+    "JP225": "data/dukascopy_jp225",
+    "DE40": "data/dukascopy_de40",
 }
 
 

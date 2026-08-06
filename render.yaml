@@ -77,6 +77,10 @@ services:
         value: "0.50"
       - key: MAX_DRIFT_US100
         value: "5.00"
+      - key: MAX_DRIFT_JP225
+        value: "10.00"
+      - key: MAX_DRIFT_DE40
+        value: "5.00"
       - key: MAX_DRIFT_US500
         value: "1.50"
       - key: MAX_DRIFT_US30
@@ -113,6 +117,10 @@ services:
         value: ASIA,LONDON,NEW_YORK
       - key: SESSIONS_US100
         value: LONDON,NEW_YORK
+      - key: SESSIONS_JP225
+        value: ASIA
+      - key: SESSIONS_DE40
+        value: LONDON
       - key: SESSIONS_US500
         value: LONDON,NEW_YORK
       - key: SESSIONS_US30
@@ -128,6 +136,10 @@ services:
       - key: PEAK_HARVEST_MAX_HOLD_BARS
         value: "48"
       - key: MOMENTUM_US100
+        value: "true"
+      - key: MOMENTUM_JP225
+        value: "true"
+      - key: MOMENTUM_DE40
         value: "true"
       - key: MOMENTUM_XAUUSD
         value: "false"
@@ -151,6 +163,20 @@ services:
         value: "0.25"
       - key: MOMENTUM_MAX_HOLD_BARS
         value: "12"
+      - key: MOMENTUM_GATE_US100
+        value: "vol"
+      - key: MOMENTUM_GATE_THRESHOLD_US100
+        value: "0.55"
+      - key: MOMENTUM_GATE_JP225
+        value: "vol"
+      - key: MOMENTUM_GATE_THRESHOLD_JP225
+        value: "0.55"
+      - key: MOMENTUM_GATE_DE40
+        value: "er"
+      - key: MOMENTUM_GATE_THRESHOLD_DE40
+        value: "0.35"
+      - key: MOMENTUM_GATE_WINDOW
+        value: "96"
       - key: MOMENTUM_REFRESH_SEC
         value: "60"
       - key: MOMENTUM_M1_HISTORY_BARS

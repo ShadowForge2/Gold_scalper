@@ -59,7 +59,7 @@ SYMBOL_SPECS = {
 # US100 momentum-jump engine
 # --------------------------------------------------------------------------
 def us100_jump_trades(m5, atr, jump_target=1.0, retr_dist=0.25, max_hold=12,
-                      sl_r=1.0, mz_min=2.0, ema=480):
+                      sl_r=1.0, mz_min=2.0, ema=480, gate=None):
     c = m5["close"].values
     h = m5["high"].values
     l = m5["low"].values
@@ -77,6 +77,9 @@ def us100_jump_trades(m5, atr, jump_target=1.0, retr_dist=0.25, max_hold=12,
     sig = np.zeros(n, dtype=np.int64)
     sig[(o < c) & (br >= 0.60) & (ts >= 0.50) & (mz >= mz_min) & regime] = 1
     sig[(o > c) & (br >= 0.60) & (ts <= -0.50) & (mz <= -mz_min) & short_ok] = -1
+
+    if gate is not None:
+        sig[~gate] = 0
 
     idx = np.where(sig != 0)[0]
     idx = idx[(idx > max(50, ema)) & (idx < n - 2)]

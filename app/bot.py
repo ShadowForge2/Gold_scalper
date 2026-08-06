@@ -95,9 +95,13 @@ class Bot:
         self._last_momentum_warn_ts: float = 0.0  # throttle for short-window warnings
 
         # Load per-symbol models and signal engines
+        # ML (CandleML/CandleBrain) models are skipped for momentum-engine pairs —
+        # momentum owns entry/exit for those symbols, so the models are never used.
         for sym in self.symbols:
             candle_pred = None
-            if _HAS_CANDLE and getattr(cfg, "CANDLE_ML_ENABLED", True):
+            momentum_owns = bool(getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False))
+            if (not momentum_owns
+                    and _HAS_CANDLE and getattr(cfg, "CANDLE_ML_ENABLED", True)):
                 candle_path = cfg.CANDLE_ML_MODEL_PATHS.get(sym, cfg.CANDLE_ML_MODEL_PATHS.get("XAUUSD"))
                 try:
                     candle_pred = CandleML(model_path=candle_path)
@@ -115,7 +119,8 @@ class Bot:
 
             # Load CandleBrain Transformer model
             brain_pred = None
-            if _HAS_CANDLE_BRAIN and getattr(cfg, "CANDLE_BRAIN_ENABLED", False):
+            if (not momentum_owns
+                    and _HAS_CANDLE_BRAIN and getattr(cfg, "CANDLE_BRAIN_ENABLED", False)):
                 brain_path = cfg.CANDLE_BRAIN_MODEL_PATHS.get(sym)
                 if brain_path:
                     try:
@@ -142,26 +147,30 @@ class Bot:
             self._symbol_last_rescan_ts[sym] = 0.0
             self._symbol_rescan_count[sym] = 0
 
-            # ── Momentum-jump engine (validated for US100) ──
+            # ── Momentum-jump engine (per-pair adapted params + regime gate) ──
             mom = None
             if _HAS_MOMENTUM and getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False):
                 try:
+                    pp = dict(getattr(cfg, "MOMENTUM_PAIR_PARAMS", {}).get(sym, {}) or {})
                     mom = MomentumEngine(
-                        mz_min=cfg.MOMENTUM_MZ_MIN,
-                        body_min=cfg.MOMENTUM_BODY_RATIO_MIN,
-                        ts_min=cfg.MOMENTUM_TS_MIN,
-                        ema_span=cfg.MOMENTUM_EMA_SPAN,
-                        sl_r=cfg.MOMENTUM_SL_R,
-                        jump_target=cfg.MOMENTUM_JUMP_TARGET_R,
-                        retr_r=cfg.MOMENTUM_RETRACE_R,
-                        max_hold=cfg.MOMENTUM_MAX_HOLD_BARS,
-                        atr_period=cfg.ATR_PERIOD,
+                        mz_min=pp.get("mz_min", cfg.MOMENTUM_MZ_MIN),
+                        body_min=pp.get("body_min", cfg.MOMENTUM_BODY_RATIO_MIN),
+                        ts_min=pp.get("ts_min", cfg.MOMENTUM_TS_MIN),
+                        ema_span=pp.get("ema_span", cfg.MOMENTUM_EMA_SPAN),
+                        sl_r=pp.get("sl_r", cfg.MOMENTUM_SL_R),
+                        jump_target=pp.get("jump_target", cfg.MOMENTUM_JUMP_TARGET_R),
+                        retr_r=pp.get("retr_r", cfg.MOMENTUM_RETRACE_R),
+                        max_hold=pp.get("max_hold", cfg.MOMENTUM_MAX_HOLD_BARS),
+                        atr_period=pp.get("atr_period", cfg.ATR_PERIOD),
                         logger=self.logger,
+                        gate=cfg.MOMENTUM_GATE.get(sym, "none"),
+                        gate_threshold=cfg.MOMENTUM_GATE_THRESHOLD.get(sym, 0.55),
+                        gate_window=getattr(cfg, "MOMENTUM_GATE_WINDOW", 96),
                     )
                     self.logger.info(
-                        f"[{sym}] Momentum engine enabled (jump {cfg.MOMENTUM_JUMP_TARGET_R}R "
-                        f"+ {cfg.MOMENTUM_RETRACE_R}R retrace, SL {cfg.MOMENTUM_SL_R}R, "
-                        f"max hold {cfg.MOMENTUM_MAX_HOLD_BARS} bars)"
+                        f"[{sym}] Momentum engine enabled (jump {mom.jump_target}R "
+                        f"+ {mom.retr_r}R retrace, SL {mom.sl_r}R, max hold {mom.max_hold} bars, "
+                        f"gate {mom.gate}>={mom.gate_threshold:.2f})"
                     )
                 except Exception as e:
                     self.logger.warning(f"[{sym}] Momentum engine init failed: {e}")
@@ -539,11 +548,12 @@ class Bot:
                     else:
                         sl = broker_sl if broker_sl > 0 else entry_price + sl_dist
                         tp = broker_tp if broker_tp > 0 else entry_price - tp_dist
-                    # Recovered momentum trades (US100) keep their momentum exit
-                    # path — SL 1R + jump target + retrace + max hold.
+                    # Recovered momentum trades keep their momentum exit path —
+                    # SL (per-pair) + jump target + retrace + max hold.
                     is_mom = bool(getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False))
                     if is_mom:
-                        sl_r = float(getattr(cfg, "MOMENTUM_SL_R", 1.0))
+                        mom_eng = self._symbol_momentum_engine.get(sym)
+                        sl_r = float(mom_eng.sl_r) if mom_eng is not None else float(getattr(cfg, "MOMENTUM_SL_R", 1.0))
                         sl = broker_sl if broker_sl > 0 else (entry_price - sl_r * atr_val if direction == "BUY" else entry_price + sl_r * atr_val)
                         tp = None
                     self._symbol_signals[sym] = {
@@ -1482,9 +1492,15 @@ class Bot:
             pos_signal = self._symbol_signals.get(sym) or {}
             atr_i = pos_signal.get("atr", 0) or (entry_price * 0.001)
             sl = pos_signal.get("sl", 0) or 0
-            jump_target = float(getattr(cfg, "MOMENTUM_JUMP_TARGET_R", 1.0))
-            retr_r = float(getattr(cfg, "MOMENTUM_RETRACE_R", 0.25))
-            max_hold = int(getattr(cfg, "MOMENTUM_MAX_HOLD_BARS", 12))
+            mom = self._symbol_momentum_engine.get(sym)
+            if mom is not None:
+                jump_target = float(mom.jump_target)
+                retr_r = float(mom.retr_r)
+                max_hold = int(mom.max_hold)
+            else:
+                jump_target = float(getattr(cfg, "MOMENTUM_JUMP_TARGET_R", 1.0))
+                retr_r = float(getattr(cfg, "MOMENTUM_RETRACE_R", 0.25))
+                max_hold = int(getattr(cfg, "MOMENTUM_MAX_HOLD_BARS", 12))
 
             peak = self._symbol_momentum_peak.get(sym, entry_price)
             exit_reason = ""
