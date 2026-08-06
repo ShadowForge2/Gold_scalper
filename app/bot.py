@@ -92,6 +92,7 @@ class Bot:
         self._symbol_momentum_eval_boundary: Dict[str, Optional[int]] = {}  # last M5 boundary scanned for entry
         self._symbol_momentum_m1_cache: Dict[str, Optional[pd.DataFrame]] = {}  # cached long M1 history
         self._symbol_momentum_m1_cache_ts: Dict[str, float] = {}  # cache fetch time
+        self._last_momentum_warn_ts: float = 0.0  # throttle for short-window warnings
 
         # Load per-symbol models and signal engines
         for sym in self.symbols:
@@ -741,17 +742,26 @@ class Bot:
         now = time.time()
         cache = self._symbol_momentum_m1_cache.get(sym)
         refresh = getattr(cfg, "MOMENTUM_REFRESH_SEC", 60)
+        need_bars = (mom.ema_span + 5) * 5  # >= ema_span+5 M5 buckets, in M1 bars
         if cache is None or now - self._symbol_momentum_m1_cache_ts.get(sym, 0.0) >= refresh:
             try:
                 from datetime import timedelta
-                hist = int(getattr(cfg, "MOMENTUM_M1_HISTORY_BARS", 2500))
+                hist = int(getattr(cfg, "MOMENTUM_M1_HISTORY_BARS", 8000))
                 to_dt = datetime.utcnow()
                 from_dt = to_dt - timedelta(seconds=hist * 60)
                 fetched = self.client.get_rates_range(sym, cfg.SIGNAL_TIMEFRAME, from_dt, to_dt)
                 self._symbol_momentum_m1_cache_ts[sym] = now
-                if fetched is not None and len(fetched) >= max(300, hist // 2):
+                if fetched is not None and len(fetched) >= need_bars:
                     self._symbol_momentum_m1_cache[sym] = fetched
                     cache = fetched
+                elif fetched is not None:
+                    # Too-short window is the #1 silent no-signal cause — make it visible.
+                    if now - self._last_momentum_warn_ts > 600:
+                        self._last_momentum_warn_ts = now
+                        self.logger.warning(
+                            f"[{sym}] Momentum M1 window short: {len(fetched)} bars, "
+                            f"need >= {need_bars} — no signals until history fills"
+                        )
             except Exception as e:
                 self.logger.warning(f"[{sym}] Momentum M1 fetch failed: {e}")
                 self._symbol_momentum_m1_cache_ts[sym] = now

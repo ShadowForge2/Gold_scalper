@@ -71,7 +71,7 @@
   "MOMENTUM_RETRACE_R": "0.25",
   "MOMENTUM_MAX_HOLD_BARS": "12",
   "MOMENTUM_REFRESH_SEC": "60",
-  "MOMENTUM_M1_HISTORY_BARS": "2500",
+  "MOMENTUM_M1_HISTORY_BARS": "8000",
   "DATABASE_URL": "postgresql://postgres:j5BkYfxHgy7sLBG2@db.tphxjgpnevienqkjbkdm.supabase.co:5432/postgres",
   "CORS_ORIGINS": "http://localhost:8080,http://localhost:8081,http://localhost:8082,http://localhost:9090,http://localhost:9091,http://localhost:9092,https://gold-scalper-qyhg.onrender.com,https://gold-scalper.onrender.com"
 }

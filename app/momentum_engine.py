@@ -40,6 +40,7 @@ class MomentumEngine:
         self.max_hold = max_hold
         self.atr_period = atr_period
         self._logger = logger
+        self._last_warmup_log = 0.0
 
     # ── helpers (formulas mirror _train_candle_brain.py) ────────────────
 
@@ -93,6 +94,17 @@ class MomentumEngine:
         """
         m5 = self.resample_m5(m1)
         if m5 is None or len(m5) < self.ema_span + 5:
+            # EMA480 warmup not satisfied — this is a *silent* no-signal unless
+            # we log it, and a too-short M1 window is the usual cause live.
+            if self._logger is not None:
+                now = time.time()
+                if now - self._last_warmup_log > 300:
+                    self._last_warmup_log = now
+                    have = len(m5) if m5 is not None else 0
+                    self._logger.info(
+                        f"Momentum warmup: {have}/{self.ema_span + 5} M5 bars "
+                        f"(need ~{(self.ema_span + 5) * 5} M1 bars of market data) — no signal"
+                    )
             return None
 
         f = self.compute_features(m5)

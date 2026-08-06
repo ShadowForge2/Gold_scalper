@@ -154,7 +154,7 @@ services:
       - key: MOMENTUM_REFRESH_SEC
         value: "60"
       - key: MOMENTUM_M1_HISTORY_BARS
-        value: "2500"
+        value: "8000"
       - key: USD_TO_NGN_RATE
         value: "1500"
       - key: PAYSTACK_SECRET_KEY

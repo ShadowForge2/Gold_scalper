@@ -400,8 +400,11 @@ MOMENTUM_RETRACE_R = _env_float("MOMENTUM_RETRACE_R", 0.25)
 MOMENTUM_MAX_HOLD_BARS = _env_int("MOMENTUM_MAX_HOLD_BARS", 12)
 # How often the bot refetches M1 history for the EMA480 regime (seconds).
 MOMENTUM_REFRESH_SEC = _env_int("MOMENTUM_REFRESH_SEC", 60)
-# M1 bars fetched for the EMA480 regime: 480 M5 bars = 2400 M1 bars (+ buffer).
-MOMENTUM_M1_HISTORY_BARS = _env_int("MOMENTUM_M1_HISTORY_BARS", 2500)
+# M1 bars fetched for the EMA480 regime. 485 M5 buckets are needed for the EMA480
+# warmup (480 + 5) = ~2425 M1 bars of market data; 8000 bars (~5.5 trading days)
+# guarantees that window even across market breaks/weekend gaps. 2500 was too
+# small (max 500 buckets, real windows averaged ~408 -> detect() never fired).
+MOMENTUM_M1_HISTORY_BARS = _env_int("MOMENTUM_M1_HISTORY_BARS", 8000)
 
 # MaxelPay
 MAXELPAY_API_KEY = _env_str("MAXELPAY_API_KEY", "")
