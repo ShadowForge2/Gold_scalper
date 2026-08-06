@@ -1,4 +1,5 @@
 import requests
+import math
 import pandas as pd
 import time
 import asyncio
@@ -44,10 +45,10 @@ EPIC_MAP = {
     "N225": "J225",
     "J225": "J225",
     "NIKKEI": "J225",
-    "DE40": "GER40",
-    "GER40": "GER40",
-    "GERMANY40": "GER40",
-    "DAX": "GER40",
+    "DE40": "DE40",
+    "GER40": "DE40",
+    "GERMANY40": "DE40",
+    "DAX": "DE40",
 }
 
 
@@ -412,46 +413,37 @@ class CapitalClient:
         if not self._ensure_session():
             return None
 
-        # Try range-based query first
-        try:
-            r = self._request("GET", f"{self.base_url}/api/v1/prices/{epic}",
-                                  params={"resolution": resolution,
-                                          "from": from_dt.strftime("%Y-%m-%dT%H:%M:%S"),
-                                          "to": to_dt.strftime("%Y-%m-%dT%H:%M:%S")},
-                                  headers=self._auth_headers())
-            if r is not None and r.ok:
-                prices = r.json().get("prices", [])
-                if prices:
-                    rows = self._parse_prices(prices)
-                    return pd.DataFrame(rows)
-        except Exception:
-            pass
+        # Always page BACKWARD from the most recent candle. Capital.com caps a
+        # single from/to range response (default/max candles per request), and a
+        # capped response is NOT guaranteed to end at the newest bar — if it is
+        # truncated to the OLDEST candles in range, the tail goes stale and any
+        # candle-window detection silently never fires. Paginating from the
+        # latest bar guarantees fresh data plus the requested history.
+        page_max = 1000
+        need = int((to_dt - from_dt).total_seconds() // 60) + 1
+        pages = max(1, min(int(math.ceil(need / page_max)), 20))
 
-        # Fallback: paginate count-based API (max=1000 per call)
-        # First call without `to` returns latest candles
         all_rows = []
-        target_from = from_dt.strftime("%Y-%m-%dT%H:%M:%S")
         cursor_to = None
-        for _ in range(20):
+        for _ in range(pages):
             try:
-                params = {"resolution": resolution, "max": 1000}
+                params = {"resolution": resolution, "max": page_max}
                 if cursor_to:
                     params["to"] = cursor_to
                 r = self._request("GET", f"{self.base_url}/api/v1/prices/{epic}",
-                                      params=params,
-                                      headers=self._auth_headers())
+                                  params=params,
+                                  headers=self._auth_headers())
                 if r is None or not r.ok:
                     break
                 prices = r.json().get("prices", [])
                 if not prices:
                     break
-                rows = self._parse_prices(prices)
-                all_rows.extend(rows)
+                all_rows.extend(self._parse_prices(prices))
                 cursor_to = prices[0].get("snapshotTime", "")
                 if not cursor_to:
-                    break  # no valid cursor, stop paginating
-                if prices[-1].get("snapshotTime", "") <= target_from:
                     break
+                if len(prices) < page_max:
+                    break  # reached the start of available history
             except Exception:
                 break
 

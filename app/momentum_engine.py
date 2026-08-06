@@ -46,6 +46,7 @@ class MomentumEngine:
         self.gate_window = max(int(gate_window), 2)
         self._logger = logger
         self._last_warmup_log = 0.0
+        self.last_reason: str = "init"
 
     # ── helpers (formulas mirror _train_candle_brain.py) ────────────────
 
@@ -133,6 +134,9 @@ class MomentumEngine:
         """
         m5 = self.resample_m5(m1)
         if m5 is None or len(m5) < self.ema_span + 5:
+            self.last_reason = (
+                f"warmup {len(m5) if m5 is not None else 0}/{self.ema_span + 5}"
+            )
             # EMA480 warmup not satisfied — this is a *silent* no-signal unless
             # we log it, and a too-short M1 window is the usual cause live.
             if self._logger is not None:
@@ -165,9 +169,11 @@ class MomentumEngine:
         ends = (f.index + pd.Timedelta(minutes=5)).values.astype("datetime64[s]").astype("int64")
         formed = np.where((ends <= now_floor) & (starts >= now_floor - 600))[0]
         if len(formed) == 0:
+            self.last_reason = f"no formed candle (latest bar start {int(starts[-1]) if len(starts) else 0} vs floor {now_floor})"
             return None
         i = int(formed[-1])
         if i <= self.ema_span:  # warmup — matches backtest idx > max(50, ema)
+            self.last_reason = f"warmup idx {i} <= {self.ema_span}"
             return None
 
         if (o[i] < c[i] and br[i] >= self.body_min and ts[i] >= self.ts_min
@@ -177,10 +183,17 @@ class MomentumEngine:
               and mz[i] <= -self.mz_min and not regime_up[i]):
             direction = "SELL"
         else:
+            self.last_reason = (
+                f"conditions (br={br[i]:.2f} ts={ts[i]:.2f} mz={mz[i]:.2f} "
+                f"o={o[i]:.2f} c={c[i]:.2f} dir_ok={regime_up[i]})"
+            )
             return None
 
         # Regime gate — skip quiet/chop regimes (per-pair, validated per symbol).
         if not self.gate_allows(f, i):
+            self.last_reason = (
+                f"gate {self.gate} denied (bar {i}, need >= {self.gate_threshold})"
+            )
             return None
 
         atr_i = float(atr[i]) if atr[i] > 0 else 1e-10
@@ -189,6 +202,6 @@ class MomentumEngine:
             "score": float(abs(mz[i]) / 2.0),
             "atr": atr_i,
             "close": float(c[i]),
-            "bar_time": float((f.index[i] - pd.Timestamp("1970-01-01")) / pd.Timedelta(seconds=1)),
+            "bar_time": float(f.index[i].value / 1e9),
             "signal_type": "momentum",
         }

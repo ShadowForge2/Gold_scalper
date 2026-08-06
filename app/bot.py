@@ -358,11 +358,13 @@ class Bot:
                     for sym in self.symbols:
                         self._symbol_states[sym] = self.STATES["IDLE"]
                 self._write_state()
+                self._verify_symbol_epics()
                 return True
             self.state = self.STATES["IDLE"]
             for sym in self.symbols:
                 self._symbol_states[sym] = self.STATES["IDLE"]
             self._write_state()
+            self._verify_symbol_epics()
             return True
         else:
             err = self.client.last_error()
@@ -371,6 +373,24 @@ class Bot:
             for sym in self.symbols:
                 self._symbol_states[sym] = self.STATES["STOPPED"]
             return False
+
+    def _verify_symbol_epics(self):
+        """Log the resolved epic + market status for every configured symbol."""
+        try:
+            for sym in self.symbols:
+                info = self.client.get_symbol_info(sym)
+                if info is None:
+                    self.logger.warning(
+                        f"[{sym}] Epic check: '{self.client._resolve_epic(sym)}' "
+                        f"NOT resolvable — market_status unknown, symbol cannot trade"
+                    )
+                else:
+                    self.logger.info(
+                        f"[{sym}] Epic check: '{self.client._resolve_epic(sym)}' -> "
+                        f"name={info.get('name')} status={info.get('market_status')}"
+                    )
+        except Exception as e:
+            self.logger.warning(f"Epic verification failed: {e}")
 
     async def shutdown(self, grace_period: float = 25.0, close_positions: bool = True):
         self._winding_down = True
@@ -752,18 +772,33 @@ class Bot:
         now = time.time()
         cache = self._symbol_momentum_m1_cache.get(sym)
         refresh = getattr(cfg, "MOMENTUM_REFRESH_SEC", 60)
+        # The engine is M1-contract (it resamples M1->M5 for detection), so we
+        # MUST fetch MINUTE candles here regardless of cfg.SIGNAL_TIMEFRAME.
+        # Rendering with SIGNAL_TIMEFRAME=5 (M5) makes the cache M5 bars, and
+        # then `need_bars` (2425 "M1" bars) can never be met by an 8000-minute
+        # window (~1600 M5 bars) — the cache never fills and no signal ever fires.
+        mom_timeframe = 1
         need_bars = (mom.ema_span + 5) * 5  # >= ema_span+5 M5 buckets, in M1 bars
         if cache is None or now - self._symbol_momentum_m1_cache_ts.get(sym, 0.0) >= refresh:
             try:
                 from datetime import timedelta
                 hist = int(getattr(cfg, "MOMENTUM_M1_HISTORY_BARS", 8000))
+                window_min = max(hist, need_bars + 600)
                 to_dt = datetime.utcnow()
-                from_dt = to_dt - timedelta(seconds=hist * 60)
-                fetched = self.client.get_rates_range(sym, cfg.SIGNAL_TIMEFRAME, from_dt, to_dt)
+                from_dt = to_dt - timedelta(seconds=window_min * 60)
+                fetched = self.client.get_rates_range(sym, mom_timeframe, from_dt, to_dt)
                 self._symbol_momentum_m1_cache_ts[sym] = now
                 if fetched is not None and len(fetched) >= need_bars:
                     self._symbol_momentum_m1_cache[sym] = fetched
                     cache = fetched
+                    if now - self._last_momentum_warn_ts > 600:
+                        self._last_momentum_warn_ts = now
+                        t0 = fetched["time"].iloc[0]
+                        t1 = fetched["time"].iloc[-1]
+                        self.logger.info(
+                            f"[{sym}] Momentum M1 history ready: {len(fetched)} bars "
+                            f"({t0} .. {t1})"
+                        )
                 elif fetched is not None:
                     # Too-short window is the #1 silent no-signal cause — make it visible.
                     if now - self._last_momentum_warn_ts > 600:
@@ -783,6 +818,10 @@ class Bot:
             self.logger.warning(f"[{sym}] Momentum eval failed: {e}")
             return None
         if sig is None:
+            reason = getattr(mom, "last_reason", "unknown")
+            if now - self._last_momentum_warn_ts > 300:
+                self._last_momentum_warn_ts = now
+                self.logger.debug(f"[{sym}] Momentum no signal: {reason}")
             return None
         if sig.get("bar_time", 0) <= self._symbol_momentum_last_signal_ts.get(sym, 0.0):
             return None  # never re-enter the same candle we already traded
@@ -799,32 +838,66 @@ class Bot:
         if engine is None:
             return
 
-        m1_bars = getattr(cfg, "CANDLE_ML_M1_HISTORY_BARS", 500)
-        m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, m1_bars)
-        if m1_data is None or len(m1_data) < 10:
-            return
-
-        self._feed_m5_volatility(m1_data)
-
-        symbol_info = self.client.get_symbol_info(sym)
-        if symbol_info is None:
-            return
-
-        current_price = symbol_info.get("ask", 0)
-
-        current_atr = engine._compute_atr_m5(m1_data, cfg.ATR_PERIOD)
-        high_vol = self._is_high_volatility(sym, current_atr)
-
-        if self._should_skip_regime(sym, high_vol):
-            return
-
-        if high_vol:
-            self.logger.debug(f"[{sym}] High volatility regime — tighter filters active")
-
-        signal = None
         momentum_enabled = bool(getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False))
 
-        # ── Momentum-jump engine (US100) — owns entry for its symbols ──
+        m1_data = None
+        current_atr = 0.0
+        high_vol = False
+        symbol_info = None
+        current_price = 0.0
+
+        if not momentum_enabled:
+            m1_bars = getattr(cfg, "CANDLE_ML_M1_HISTORY_BARS", 500)
+            m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, m1_bars)
+            if m1_data is None or len(m1_data) < 10:
+                return
+
+            self._feed_m5_volatility(m1_data)
+
+            symbol_info = self.client.get_symbol_info(sym)
+            if symbol_info is None:
+                return
+
+            current_price = symbol_info.get("ask", 0)
+
+            current_atr = engine._compute_atr_m5(m1_data, cfg.ATR_PERIOD)
+            high_vol = self._is_high_volatility(sym, current_atr)
+
+            if self._should_skip_regime(sym, high_vol):
+                return
+
+            if high_vol:
+                self.logger.debug(f"[{sym}] High volatility regime — tighter filters active")
+        else:
+            # Momentum symbols pull their own long M1 history inside
+            # _momentum_entry_signal, so a short M1 fetch failure must NOT
+            # block the momentum evaluation. Best-effort volatility regime only.
+            try:
+                m1_bars = getattr(cfg, "CANDLE_ML_M1_HISTORY_BARS", 500)
+                m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, m1_bars)
+                if m1_data is not None and len(m1_data) >= 10:
+                    self._feed_m5_volatility(m1_data)
+                    current_atr = engine._compute_atr_m5(m1_data, cfg.ATR_PERIOD)
+                    high_vol = self._is_high_volatility(sym, current_atr)
+                    if self._should_skip_regime(sym, high_vol):
+                        return
+            except Exception:
+                pass
+
+            symbol_info = self.client.get_symbol_info(sym)
+            if symbol_info is None:
+                if time.time() - self._last_momentum_warn_ts > 600:
+                    self._last_momentum_warn_ts = time.time()
+                    self.logger.warning(
+                        f"[{sym}] Momentum skipped: symbol_info=None "
+                        f"(epic={self.client._resolve_epic(sym)} unresolved or market closed)"
+                    )
+                return
+            current_price = symbol_info.get("ask", 0)
+
+        signal = None
+
+        # ── Momentum-jump engine — owns entry for its symbols ──
         if momentum_enabled:
             signal = self._momentum_entry_signal(sym, current_price, high_vol)
             if signal is not None:
