@@ -63,6 +63,9 @@ class CapitalClient:
         self._request_times: deque = deque(maxlen=20)
         self._max_requests_per_sec = 8
         self._timeout = 15
+        self._preferences_cache: Optional[Dict] = None
+        self._preferences_ts = 0.0
+        self._preferences_ttl = 300.0
 
     def initialize(self, api_key: Optional[str] = None,
                    identifier: Optional[str] = None,
@@ -215,6 +218,84 @@ class CapitalClient:
             return False
         return info.get("market_status") == "TRADEABLE"
 
+    def get_account_preferences(self) -> Optional[Dict]:
+        """Fetch leverage per asset class from /accounts/preferences.
+
+        Returns {"leverages": {"COMMODITIES": {"current": 5, ...}, ...}} or None.
+        Cached for _preferences_ttl seconds to avoid hammering the endpoint.
+        """
+        if not self._ensure_session():
+            return self._preferences_cache
+        now = time.time()
+        if self._preferences_cache is not None and now - self._preferences_ts < self._preferences_ttl:
+            return self._preferences_cache
+        try:
+            r = self._request("GET", f"{self.base_url}/api/v1/accounts/preferences",
+                              headers=self._auth_headers())
+            if r is not None and r.ok:
+                data = r.json() or {}
+                self._preferences_cache = data
+                self._preferences_ts = now
+                return data
+        except Exception:
+            pass
+        return self._preferences_cache
+
+    def get_leverage_for_class(self, asset_class: str) -> float:
+        """Current leverage for an asset class (e.g. COMMODITIES, INDICES).
+
+        Falls back to 1 / margin_factor style defaults if preferences are
+        unavailable. Capital.com caps commodities/indices leverage (<=20), so a
+        missing value defaults to 20 (the least-margin requirement) rather than
+        the old hardcoded 100.
+        """
+        pref = self.get_account_preferences()
+        if pref:
+            lev = (pref.get("leverages") or {}).get(asset_class, {})
+            current = lev.get("current") if isinstance(lev, dict) else None
+            if current:
+                try:
+                    return float(current)
+                except (TypeError, ValueError):
+                    pass
+        return 20.0
+
+    def _max_account_leverage(self) -> float:
+        """Largest current leverage across asset classes (for display only)."""
+        pref = self.get_account_preferences()
+        if pref:
+            levs = pref.get("leverages") or {}
+            values = []
+            for lev in levs.values():
+                if isinstance(lev, dict):
+                    try:
+                        values.append(float(lev.get("current") or 0))
+                    except (TypeError, ValueError):
+                        pass
+            if values:
+                return max(values)
+        return 20.0
+
+    def estimate_margin(self, symbol: str, lot: float, price: float) -> float:
+        """Estimate required margin for an order before submitting it.
+
+        margin = (lot * contract_size * price) / leverage
+
+        Uses the real per-asset-class leverage from /accounts/preferences and
+        the per-symbol contract size (config). This replaces the old formula
+        `lot * price * margin_rate * 1`, which (a) ignored contract size (the
+        `* 1`), (b) read marginFactor from the wrong location, and (c) treated
+        a PERCENTAGE value as a decimal fraction.
+        """
+        info = self.get_symbol_info(symbol) or {}
+        asset_class = info.get("asset_class") or getattr(cfg, "SYMBOL_ASSET_CLASS", {}).get(symbol, "COMMODITIES")
+        contract_size = info.get("contract_size") or float(getattr(cfg, "SYMBOL_CONTRACT_SIZE", {}).get(symbol, 1))
+        leverage = self.get_leverage_for_class(asset_class)
+        try:
+            return max(0.0, float(lot)) * max(0.0, float(contract_size)) * max(0.0, float(price)) / max(1.0, leverage)
+        except (TypeError, ValueError):
+            return 0.0
+
     def get_account_info(self) -> Optional[Dict]:
         if not self._ensure_session():
             self._last_order_error = "session_not_connected"
@@ -235,7 +316,8 @@ class CapitalClient:
                             "margin": 0,
                             "free_margin": float(bal.get("available", 0)),
                             "margin_level": 0,
-                            "leverage": 100,
+                            "leverage": self._max_account_leverage(),
+                            "leverages": (self.get_account_preferences() or {}).get("leverages", {}),
                             "currency": acct.get("currency", "USD"),
                             "profit": float(bal.get("profitLoss", 0)),
                             "server": "Capital.com Demo" if self.demo else "Capital.com Live",
@@ -260,6 +342,15 @@ class CapitalClient:
                 inst = data.get("instrument", {})
                 dr = data.get("dealingRules", {})
                 dpf = int(snap.get("decimalPlacesFactor", 2))
+                # Capital.com returns marginFactor under instrument (e.g. 10 =
+                # 10%), NOT under dealingRules. It is a PERCENTAGE, so convert to
+                # a decimal fraction of notional for the margin estimate.
+                mf_raw = float(inst.get("marginFactor", 0) or 0)
+                mf_unit = inst.get("marginFactorUnit", "PERCENTAGE")
+                if mf_raw > 0 and mf_unit == "PERCENTAGE":
+                    margin_rate = mf_raw / 100.0
+                else:
+                    margin_rate = float(getattr(cfg, "SYMBOL_MARGIN_FACTOR", {}).get(symbol, mf_raw or 0.01))
                 return {
                     "name": inst.get("name", symbol),
                     "epic": epic,
@@ -273,7 +364,11 @@ class CapitalClient:
                     "volume_min": float(dr.get("minDealSize", {}).get("value", 0.01)),
                     "volume_max": float(dr.get("maxDealSize", {}).get("value", 100)),
                     "volume_step": float(dr.get("minSizeIncrement", {}).get("value", 0.01)),
-                    "margin_rate": float(dr.get("marginFactor", {}).get("value", 0.05)),
+                    "margin_rate": margin_rate,
+                    "margin_factor_raw": mf_raw,
+                    "margin_factor_unit": mf_unit,
+                    "contract_size": float(getattr(cfg, "SYMBOL_CONTRACT_SIZE", {}).get(symbol, 1)),
+                    "asset_class": inst.get("type", getattr(cfg, "SYMBOL_ASSET_CLASS", {}).get(symbol, "COMMODITIES")),
                     "trade_mode": "ENABLED" if snap.get("marketStatus") == "TRADEABLE" else "DISABLED",
                     "market_status": snap.get("marketStatus", ""),
                     "filling_mode": 0,

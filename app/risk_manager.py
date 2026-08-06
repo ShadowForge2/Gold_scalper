@@ -46,7 +46,9 @@ class EquityScaler:
 
         sym_base = self._symbol_base_lots.get(symbol, self.base_lot) if symbol else self.base_lot
         reference = 20.0
-        lot = sym_base * (balance / reference) * float(getattr(cfg, 'LOT_MULTIPLIER', 1))
+        mult = min(float(getattr(cfg, 'LOT_MULTIPLIER', 1)),
+                   float(getattr(cfg, 'MAX_LOT_MULTIPLIER', 2.0)))
+        lot = sym_base * (balance / reference) * mult
 
         if self.in_drawdown(balance):
             lot *= 0.5

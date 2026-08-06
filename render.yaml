@@ -33,6 +33,8 @@ services:
         value: "0.01"
       - key: LOT_MULTIPLIER
         value: "2"
+      - key: MAX_LOT_MULTIPLIER
+        value: "2"
       - key: SIGNAL_TIMEFRAME
         value: "1"
       - key: MAX_DAILY_LOSS_USD
@@ -81,22 +83,6 @@ services:
         value: "10.00"
       - key: MAX_SLIPPAGE_PIPS
         value: "10"
-      - key: ASP_ENABLED
-        value: "true"
-      - key: ASP_TIMEOUT_BARS_XAUUSD
-        value: "10"
-      - key: ASP_TIMEOUT_BARS_US100
-        value: "10"
-      - key: ASP_TIMEOUT_BARS_US500
-        value: "10"
-      - key: ASP_TIMEOUT_BARS_US30
-        value: "10"
-      - key: ASP_SL_ATR_MULTIPLIER
-        value: "2.0"
-      - key: ASP_TP_ATR_MULTIPLIER
-        value: "1.0"
-      - key: ASP_MIN_ATR_DIST
-        value: "0.50"
       - key: CANDLE_ML_TRAILING_ENABLED
         value: "true"
       - key: CANDLE_ML_TRAIL_ATR
@@ -141,6 +127,34 @@ services:
         value: "0.90"
       - key: PEAK_HARVEST_MAX_HOLD_BARS
         value: "48"
+      - key: MOMENTUM_US100
+        value: "true"
+      - key: MOMENTUM_XAUUSD
+        value: "false"
+      - key: MOMENTUM_US500
+        value: "false"
+      - key: MOMENTUM_US30
+        value: "false"
+      - key: MOMENTUM_MZ_MIN
+        value: "2.0"
+      - key: MOMENTUM_BODY_RATIO_MIN
+        value: "0.60"
+      - key: MOMENTUM_TS_MIN
+        value: "0.50"
+      - key: MOMENTUM_EMA_SPAN
+        value: "480"
+      - key: MOMENTUM_SL_R
+        value: "1.0"
+      - key: MOMENTUM_JUMP_TARGET_R
+        value: "1.0"
+      - key: MOMENTUM_RETRACE_R
+        value: "0.25"
+      - key: MOMENTUM_MAX_HOLD_BARS
+        value: "12"
+      - key: MOMENTUM_REFRESH_SEC
+        value: "60"
+      - key: MOMENTUM_M1_HISTORY_BARS
+        value: "2500"
       - key: USD_TO_NGN_RATE
         value: "1500"
       - key: PAYSTACK_SECRET_KEY

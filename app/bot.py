@@ -20,32 +20,25 @@ from app.economic_calendar import EconomicCalendar
 from app.news_state_machine import NewsStateMachine
 
 try:
-    from app.asp_predictor import ASPPredictor
-    _HAS_ASP = True
-except ImportError:
-    ASPPredictor = None
-    _HAS_ASP = False
-
-try:
-    from app.swing_quality_predictor import SwingQualityPredictor
-    _HAS_SQ = True
-except ImportError:
-    SwingQualityPredictor = None
-    _HAS_SQ = False
-
-try:
-    from app.direction_predictor import DirectionPredictor
-    _HAS_DIR = True
-except ImportError:
-    DirectionPredictor = None
-    _HAS_DIR = False
-
-try:
     from app.candle_ml import CandleML
     _HAS_CANDLE = True
 except Exception:
     CandleML = None
     _HAS_CANDLE = False
+
+try:
+    from app.candle_brain import CandleBrainPredictor
+    _HAS_CANDLE_BRAIN = True
+except Exception:
+    CandleBrainPredictor = None
+    _HAS_CANDLE_BRAIN = False
+
+try:
+    from app.momentum_engine import MomentumEngine
+    _HAS_MOMENTUM = True
+except Exception:
+    MomentumEngine = None
+    _HAS_MOMENTUM = False
 
 try:
     from app.brain import BrainOrchestrator
@@ -81,6 +74,7 @@ class Bot:
         self._symbol_atr_history: Dict[str, list] = {}  # rolling ATR for vol detection
         self._symbol_vol_regime: Dict[str, bool] = {}  # track current vol regime per symbol
         self._symbol_candle_ml: Dict[str, Optional[CandleML]] = {}
+        self._symbol_candle_brain: Dict[str, Optional[object]] = {}  # CandleBrainPredictor per symbol
         self._symbol_last_rescan_ts: Dict[str, float] = {}
         self._symbol_rescan_count: Dict[str, int] = {}
         self._symbol_candle_entry: Dict[str, bool] = {}
@@ -89,17 +83,18 @@ class Bot:
         self._symbol_candle_entry_open: Dict[str, Optional[float]] = {}  # entry candle open (bt reference)
         self._symbol_candle_tp: Dict[str, Optional[float]] = {}          # TP price (bt: entry + 2*ATR)
         self._symbol_candle_last_boundary: Dict[str, Optional[int]] = {} # last M5 boundary evaluated
+        # Momentum-jump engine (US100) per-symbol state
+        self._symbol_momentum_engine: Dict[str, Optional[object]] = {}  # MomentumEngine instances
+        self._symbol_momentum_entry: Dict[str, bool] = {}   # current trade was a momentum entry
+        self._symbol_momentum_peak: Dict[str, Optional[float]] = {}  # best price since entry
+        self._symbol_momentum_last_boundary: Dict[str, Optional[int]] = {}  # last M5 boundary exit-checked
+        self._symbol_momentum_last_signal_ts: Dict[str, Optional[float]] = {}  # candle ts of last momentum entry
+        self._symbol_momentum_eval_boundary: Dict[str, Optional[int]] = {}  # last M5 boundary scanned for entry
+        self._symbol_momentum_m1_cache: Dict[str, Optional[pd.DataFrame]] = {}  # cached long M1 history
+        self._symbol_momentum_m1_cache_ts: Dict[str, float] = {}  # cache fetch time
 
         # Load per-symbol models and signal engines
         for sym in self.symbols:
-            asp_pred = None
-            sq_pred = None
-            dir_pred = None
-
-            candle_mode = cfg.CANDLE_ML_MODE.get(sym, "volatility")
-
-            # Candle ML model — loaded first so we know whether the old ASP/DP
-            # stack is needed at all.
             candle_pred = None
             if _HAS_CANDLE and getattr(cfg, "CANDLE_ML_ENABLED", True):
                 candle_path = cfg.CANDLE_ML_MODEL_PATHS.get(sym, cfg.CANDLE_ML_MODEL_PATHS.get("XAUUSD"))
@@ -113,60 +108,22 @@ class Bot:
                 except Exception as e:
                     self.logger.warning(f"[{sym}] Failed to load Candle ML: {e}")
 
-            # In "always" mode _search_symbol bypasses the ASP+DP stack entirely,
-            # so skip loading those models when Candle ML is actually active.
-            # They still load as fallback for "volatility" mode symbols or when
-            # the candle model failed to initialize.
-            candle_active = (candle_mode == "always"
-                             and candle_pred is not None and candle_pred.model is not None)
-
-            # ASP model
-            if not candle_active and _HAS_ASP and cfg.ASP_ENABLED:
-                asp_path = cfg.ASP_MODEL_PATHS.get(sym, cfg.ASP_MODEL_PATHS.get("XAUUSD"))
-                feat_path = cfg.ASP_FEATURE_PATHS.get(sym, cfg.ASP_FEATURE_PATHS.get("XAUUSD"))
-                try:
-                    asp_pred = ASPPredictor(model_path=asp_path, feature_path=feat_path)
-                    if asp_pred.ready:
-                        self.logger.info(f"[{sym}] ASP model loaded from {asp_path}")
-                    else:
-                        self.logger.warning(f"[{sym}] ASP model failed to initialize")
-                        asp_pred = None
-                except Exception as e:
-                    self.logger.warning(f"[{sym}] Failed to load ASP model: {e}")
-
-            # Swing quality model
-            if not candle_active and _HAS_SQ:
-                sq_path = cfg.SWING_QUALITY_MODEL_PATHS.get(sym, cfg.SWING_QUALITY_MODEL_PATHS.get("XAUUSD"))
-                try:
-                    sq_pred = SwingQualityPredictor(model_path=sq_path)
-                    if sq_pred.ready:
-                        self.logger.info(f"[{sym}] Swing quality model loaded")
-                    else:
-                        sq_pred = None
-                except Exception as e:
-                    self.logger.warning(f"[{sym}] Failed to load swing quality model: {e}")
-
-            # Direction predictor model
-            if not candle_active and _HAS_DIR and getattr(cfg, "DIRECTION_PREDICTOR_ENABLED", True):
-                dir_path = cfg.DIRECTION_MODEL_PATHS.get(sym, cfg.DIRECTION_MODEL_PATHS.get("XAUUSD"))
-                try:
-                    dir_pred = DirectionPredictor(model_path=dir_path)
-                    if dir_pred.model is not None:
-                        self.logger.info(f"[{sym}] Direction predictor loaded from {dir_path}")
-                    else:
-                        self.logger.warning(f"[{sym}] Direction predictor model not found at {dir_path}")
-                        dir_pred = None
-                except Exception as e:
-                    self.logger.warning(f"[{sym}] Failed to load direction predictor: {e}")
-
-            engine = SignalEngine(
-                asp_predictor=asp_pred,
-                swing_quality_predictor=sq_pred,
-                direction_predictor=dir_pred,
-                logger=self.logger,
-            )
+            engine = SignalEngine(logger=self.logger)
             self._symbol_engines[sym] = engine
             self._symbol_candle_ml[sym] = candle_pred
+
+            # Load CandleBrain Transformer model
+            brain_pred = None
+            if _HAS_CANDLE_BRAIN and getattr(cfg, "CANDLE_BRAIN_ENABLED", False):
+                brain_path = cfg.CANDLE_BRAIN_MODEL_PATHS.get(sym)
+                if brain_path:
+                    try:
+                        brain_pred = CandleBrainPredictor(model_path=brain_path)
+                        self.logger.info(f"[{sym}] CandleBrain loaded from {brain_path}")
+                    except Exception as e:
+                        self.logger.warning(f"[{sym}] CandleBrain load failed: {e}")
+                        brain_pred = None
+            self._symbol_candle_brain[sym] = brain_pred
             self._symbol_states[sym] = self.STATES["IDLE"]
             self._symbol_signals[sym] = None
             self._symbol_event_start_ts[sym] = None
@@ -183,6 +140,39 @@ class Bot:
             self._symbol_candle_last_boundary[sym] = 0
             self._symbol_last_rescan_ts[sym] = 0.0
             self._symbol_rescan_count[sym] = 0
+
+            # ── Momentum-jump engine (validated for US100) ──
+            mom = None
+            if _HAS_MOMENTUM and getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False):
+                try:
+                    mom = MomentumEngine(
+                        mz_min=cfg.MOMENTUM_MZ_MIN,
+                        body_min=cfg.MOMENTUM_BODY_RATIO_MIN,
+                        ts_min=cfg.MOMENTUM_TS_MIN,
+                        ema_span=cfg.MOMENTUM_EMA_SPAN,
+                        sl_r=cfg.MOMENTUM_SL_R,
+                        jump_target=cfg.MOMENTUM_JUMP_TARGET_R,
+                        retr_r=cfg.MOMENTUM_RETRACE_R,
+                        max_hold=cfg.MOMENTUM_MAX_HOLD_BARS,
+                        atr_period=cfg.ATR_PERIOD,
+                        logger=self.logger,
+                    )
+                    self.logger.info(
+                        f"[{sym}] Momentum engine enabled (jump {cfg.MOMENTUM_JUMP_TARGET_R}R "
+                        f"+ {cfg.MOMENTUM_RETRACE_R}R retrace, SL {cfg.MOMENTUM_SL_R}R, "
+                        f"max hold {cfg.MOMENTUM_MAX_HOLD_BARS} bars)"
+                    )
+                except Exception as e:
+                    self.logger.warning(f"[{sym}] Momentum engine init failed: {e}")
+                    mom = None
+            self._symbol_momentum_engine[sym] = mom
+            self._symbol_momentum_entry[sym] = False
+            self._symbol_momentum_peak[sym] = None
+            self._symbol_momentum_last_boundary[sym] = 0
+            self._symbol_momentum_last_signal_ts[sym] = 0.0
+            self._symbol_momentum_eval_boundary[sym] = 0
+            self._symbol_momentum_m1_cache[sym] = None
+            self._symbol_momentum_m1_cache_ts[sym] = 0.0
 
         # ── BRAIN — hierarchical trade decision intelligence ──
         self.brain = None
@@ -201,8 +191,6 @@ class Bot:
         # Legacy single-symbol references (use first symbol for backward compat)
         first_sym = self.symbols[0] if self.symbols else cfg.SYMBOL
         self.signal_engine = self._symbol_engines.get(first_sym, SignalEngine(logger=self.logger))
-        self._asp_predictor = getattr(self.signal_engine, '_asp_predictor', None)
-        self._swing_quality_predictor = getattr(self.signal_engine, '_swing_quality', None)
 
         self.risk_manager = RiskManager()
         self.scaler = EquityScaler()
@@ -284,8 +272,8 @@ class Bot:
             self.logger.warning(f"Notification failed ({ntype}): {e}")
 
     async def initialize(self) -> bool:
-        self.logger.info(f"Initializing {self.symbol} scalping bot (ASP-only mode)...")
-        self.logger.info(f"Config: ASP_TIMEOUT_BARS={cfg.SYMBOL_ASP_TIMEOUT_BARS} LOT_MULTIPLIER={cfg.LOT_MULTIPLIER}")
+        self.logger.info(f"Initializing {self.symbol} scalping bot (Candle ML mode)...")
+        self.logger.info(f"Config: LOT_MULTIPLIER={cfg.LOT_MULTIPLIER}")
 
         self.logger.info("Broker: Capital.com (REST API)")
         self.client = CapitalClient()
@@ -532,7 +520,7 @@ class Bot:
                     broker_tp = pos.get("tp", 0)
                     atr_val = 0.0
                     try:
-                        m1_bars = getattr(cfg, 'ASP_M1_HISTORY_BARS', 300)
+                        m1_bars = getattr(cfg, 'CANDLE_ML_M1_HISTORY_BARS', 500)
                         m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, m1_bars)
                         if m1_data is not None and len(m1_data) >= 20:
                             engine = self._symbol_engines.get(sym)
@@ -542,26 +530,38 @@ class Bot:
                         pass
                     if atr_val <= 0:
                         atr_val = entry_price * 0.001
-                    sl_dist = atr_val * cfg.ASP_SL_ATR_MULTIPLIER
-                    tp_dist = atr_val * cfg.ASP_TP_ATR_MULTIPLIER
+                    sl_dist = atr_val * getattr(cfg, "SL_ATR_MULTIPLIER", 1.0)
+                    tp_dist = atr_val * getattr(cfg, "TP1_MULTIPLIER", 2.0)
                     if direction == "BUY":
                         sl = broker_sl if broker_sl > 0 else entry_price - sl_dist
                         tp = broker_tp if broker_tp > 0 else entry_price + tp_dist
                     else:
                         sl = broker_sl if broker_sl > 0 else entry_price + sl_dist
                         tp = broker_tp if broker_tp > 0 else entry_price - tp_dist
+                    # Recovered momentum trades (US100) keep their momentum exit
+                    # path — SL 1R + jump target + retrace + max hold.
+                    is_mom = bool(getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False))
+                    if is_mom:
+                        sl_r = float(getattr(cfg, "MOMENTUM_SL_R", 1.0))
+                        sl = broker_sl if broker_sl > 0 else (entry_price - sl_r * atr_val if direction == "BUY" else entry_price + sl_r * atr_val)
+                        tp = None
                     self._symbol_signals[sym] = {
-                        "asp_model": True,
+                        "signal_type": "momentum" if is_mom else "candle_ml",
                         "direction": direction,
                         "sl": sl,
                         "tp1": tp,
-                        "atr_value": atr_val,
+                        "atr": atr_val,
                         "score": 0.5,
                         "recovered": True,
                     }
+                    self._symbol_momentum_entry[sym] = is_mom
+                    self._symbol_momentum_peak[sym] = entry_price if is_mom else None
+                    self._symbol_momentum_last_boundary[sym] = 0
+                    self._symbol_momentum_last_signal_ts[sym] = time.time()
                     self.logger.info(
                         f"[{sym}] Reconstructed signal: {direction} entry={entry_price:.2f} "
-                        f"sl={sl:.2f} tp={tp:.2f} atr={atr_val:.2f}"
+                        f"sl={sl:.2f} tp={tp if tp else 'n/a'} atr={atr_val:.2f} "
+                        f"type={'momentum' if is_mom else 'candle_ml'}"
                     )
 
         info = self.client.get_symbol_info(sym)
@@ -728,16 +728,58 @@ class Bot:
             self.logger.debug(f"[NEWS] M5 feed failed: {e}")
 
 
+    def _momentum_entry_signal(self, sym: str, current_price: float, high_vol: bool) -> Optional[Dict]:
+        """US100 momentum-jump entry on the last completed M5 candle.
+
+        The long M1 history (EMA480 warmup) is refetched at most once per
+        MOMENTUM_REFRESH_SEC and re-evaluated every tick, so a signal fires as
+        soon as its candle data is available. Mirrors _two_engine.us100_jump_trades.
+        """
+        mom = self._symbol_momentum_engine.get(sym)
+        if mom is None:
+            return None
+        now = time.time()
+        cache = self._symbol_momentum_m1_cache.get(sym)
+        refresh = getattr(cfg, "MOMENTUM_REFRESH_SEC", 60)
+        if cache is None or now - self._symbol_momentum_m1_cache_ts.get(sym, 0.0) >= refresh:
+            try:
+                from datetime import timedelta
+                hist = int(getattr(cfg, "MOMENTUM_M1_HISTORY_BARS", 2500))
+                to_dt = datetime.utcnow()
+                from_dt = to_dt - timedelta(seconds=hist * 60)
+                fetched = self.client.get_rates_range(sym, cfg.SIGNAL_TIMEFRAME, from_dt, to_dt)
+                self._symbol_momentum_m1_cache_ts[sym] = now
+                if fetched is not None and len(fetched) >= max(300, hist // 2):
+                    self._symbol_momentum_m1_cache[sym] = fetched
+                    cache = fetched
+            except Exception as e:
+                self.logger.warning(f"[{sym}] Momentum M1 fetch failed: {e}")
+                self._symbol_momentum_m1_cache_ts[sym] = now
+        if cache is None or len(cache) == 0:
+            return None
+        try:
+            sig = mom.detect(cache, now_ts=now)
+        except Exception as e:
+            self.logger.warning(f"[{sym}] Momentum eval failed: {e}")
+            return None
+        if sig is None:
+            return None
+        if sig.get("bar_time", 0) <= self._symbol_momentum_last_signal_ts.get(sym, 0.0):
+            return None  # never re-enter the same candle we already traded
+        sig["price"] = current_price
+        sig["high_volatility"] = high_vol if high_vol else False
+        sig["sl"] = None       # anchored to the actual fill in _execute_entry
+        sig["tp1"] = None      # dynamic exit (jump target + retrace)
+        sig["candle_open"] = sig.get("close", current_price)
+        return sig
+
     async def _search_symbol(self, sym: str, pnl_data: Dict):
         """Search for entry signal on a single symbol."""
         engine = self._symbol_engines.get(sym)
         if engine is None:
             return
 
-        m1_bars = max(
-            getattr(cfg, "ASP_M1_HISTORY_BARS", 300),
-            getattr(cfg, "CANDLE_ML_M1_HISTORY_BARS", 500),
-        )
+        m1_bars = getattr(cfg, "CANDLE_ML_M1_HISTORY_BARS", 500)
         m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, m1_bars)
         if m1_data is None or len(m1_data) < 10:
             return
@@ -760,9 +802,71 @@ class Bot:
             self.logger.debug(f"[{sym}] High volatility regime — tighter filters active")
 
         signal = None
-        candle_ml = self._symbol_candle_ml.get(sym)
+        momentum_enabled = bool(getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False))
 
-        # Decide whether to use Candle ML (replaces ASP+DP entirely)
+        # ── Momentum-jump engine (US100) — owns entry for its symbols ──
+        if momentum_enabled:
+            signal = self._momentum_entry_signal(sym, current_price, high_vol)
+            if signal is not None:
+                self.logger.signal(
+                    f"[{sym}] Momentum jump: {signal['direction']} score={signal['score']:.2f} "
+                    f"px={current_price:.2f} atr={signal.get('atr', 0):.4f}"
+                )
+
+        candle_ml = self._symbol_candle_ml.get(sym)
+        candle_brain = self._symbol_candle_brain.get(sym)
+
+        # ── CandleBrain Transformer entry (priority over CandleML) ──
+        if not momentum_enabled and candle_brain is not None and getattr(cfg, "CANDLE_BRAIN_ENABLED", False) and signal is None:
+            try:
+                brain_result = candle_brain.predict(m1_data)
+                if brain_result is not None:
+                    action = brain_result.get("action")  # BUY / SELL / NONE
+                    confidence = brain_result.get("confidence", 0)
+                    expectancy = brain_result.get("expectancy", 0.0)
+                    entry_thresh = getattr(cfg, "CANDLE_BRAIN_ENTRY_THRESHOLD", 0.60)
+                    exp_min = getattr(cfg, "CANDLE_BRAIN_EXPECTANCY_MIN", 0.30)
+                    if (
+                        action in ("BUY", "SELL")
+                        and confidence >= entry_thresh
+                        and expectancy >= exp_min
+                    ):
+                        _atr = current_atr if current_atr and current_atr > 0 else 0.5
+                        sl_dist = _atr * getattr(cfg, "SL_ATR_MULTIPLIER", 1.0)
+                        tp_dist = _atr * getattr(cfg, "TP1_MULTIPLIER", 2.0)
+                        try:
+                            _co = m1_data.set_index("time").resample("5min")["open"].first().dropna() if "time" in m1_data.columns else m1_data.resample("5min")["open"].first().dropna()
+                            candle_open = float(_co.iloc[-1]) if len(_co) else current_price
+                        except Exception:
+                            candle_open = current_price
+                        direction = action
+                        signal = {
+                            "direction": direction,
+                            "score": confidence,
+                            "ml_confidence": confidence,
+                            "price": current_price,
+                            "candle_open": candle_open,
+                            "sl": candle_open - sl_dist if direction == "BUY" else candle_open + sl_dist,
+                            "tp1": candle_open + tp_dist if direction == "BUY" else candle_open - tp_dist,
+                            "signal_type": "candle_brain",
+                            "atr": _atr,
+                            "high_volatility": high_vol if high_vol else False,
+                        }
+                        self.logger.info(
+                            f"[{sym}] CandleBrain: {direction} conf={confidence:.3f} "
+                            f"exp={expectancy:.3f} px={current_price:.2f} atr={_atr:.4f}"
+                        )
+                    elif time.time() - getattr(self, '_last_brain_log_ts', 0) > 30:
+                        self._last_brain_log_ts = time.time()
+                        self.logger.info(
+                            f"[{sym}] CandleBrain: no entry (action={action} "
+                            f"conf={confidence:.3f} exp={expectancy:.3f} "
+                            f"thresh={entry_thresh} exp_min={exp_min})"
+                        )
+            except Exception as e:
+                self.logger.warning(f"[{sym}] CandleBrain eval failed: {e}")
+
+        # ── CandleML XGBoost fallback entry ──
         def _use_candle_ml():
             if candle_ml is None or candle_ml.model is None:
                 return False
@@ -773,8 +877,7 @@ class Bot:
                 return high_vol
             return False
 
-        if _use_candle_ml():
-            # Candle ML path — bypasses ASP+DP entirely
+        if not momentum_enabled and _use_candle_ml():
             try:
                 from app.candle_ml import compute_candle_features
                 m1_idx = m1_data.set_index("time") if "time" in m1_data.columns else m1_data
@@ -848,37 +951,9 @@ class Bot:
                         )
             except Exception as e:
                 self.logger.warning(f"[{sym}] Candle ML eval failed: {e}")
-        else:
-            # ASP+DP path (original)
-            asp_pred = getattr(engine, '_asp_predictor', None)
-            if asp_pred and asp_pred.ready and cfg.ASP_ENABLED:
-                h1_for_asp = None
-                try:
-                    h1_for_asp = self.client.get_rates(sym, cfg.BIAS_TIMEFRAME, 96)
-                except Exception:
-                    pass
-                signal = engine.evaluate_asp_entry(
-                    m1_data, current_price,
-                    h1_data=h1_for_asp,
-                )
 
         if signal:
-            sig_type = signal.get("signal_type", "ASP")
             if high_vol:
-                vol_sq_thresh = getattr(cfg, "VOLATILITY_SQ_THRESHOLD", 0.50)
-                sq_p = signal.get("sq_prob")
-                if sq_p is not None and sq_p < vol_sq_thresh:
-                    self.logger.info(
-                        f"[{sym}] High vol: sq_prob {sq_p:.3f} < {vol_sq_thresh} — blocked"
-                    )
-                    return
-                if sig_type != "candle_ml":
-                    min_conf = getattr(cfg, "VOLATILITY_ASP_CONFIDENCE", 0.75)
-                    if signal.get("score", 0) < min_conf:
-                        self.logger.info(
-                            f"[{sym}] High vol: ASP conf {signal['score']:.3f} < {min_conf} — blocked"
-                        )
-                        return
                 signal["high_volatility"] = True
 
         if signal and m1_data is not None and len(m1_data) >= 15:
@@ -893,9 +968,11 @@ class Bot:
             if sf_key != self._last_signal_found_key or sf_now - self._last_signal_found_time >= 30:
                 self._last_signal_found_key = sf_key
                 self._last_signal_found_time = sf_now
-                sig_type = signal.get("signal_type", "ASP").upper()
+                sig_type = signal.get("signal_type", "CANDLE_ML").upper()
                 if sig_type == "candle_ml":
                     sig_type = "CNDL"
+                elif sig_type == "candle_brain":
+                    sig_type = "BRAIN"
                 self.logger.signal(
                     f"[{sym}] Signal found: [{sig_type}] {sig_dir} | "
                     f"{sig_type} prediction at ${current_price:.2f} "
@@ -923,7 +1000,7 @@ class Bot:
             self._current_signal = signal
             self._symbol_signals[sym] = signal
             self.logger.signal(
-                f"[{sym}] Signal triggered: [ASP] {signal.get('direction', 'UNKNOWN')} "
+                f"[{sym}] Signal triggered: [{signal.get('signal_type', 'CANDLE_ML').upper()}] {signal.get('direction', 'UNKNOWN')} "
                 f"score={signal['score']:.2f}"
             )
             await self._execute_entry(signal, symbol_info, symbol=sym)
@@ -1032,6 +1109,9 @@ class Bot:
             self._symbol_candle_entry[sym] = False
             self._symbol_exit_confirms[sym] = 0
             self._symbol_reversal_confirms[sym] = 0
+            self._symbol_momentum_entry[sym] = False
+            self._symbol_momentum_peak[sym] = None
+            self._symbol_momentum_last_boundary[sym] = 0
             return
 
         acct = self.client.get_account_info()
@@ -1075,6 +1155,9 @@ class Bot:
                         self._symbol_reversal_confirms[g_sym] = 0
                         self._symbol_last_rescan_ts[g_sym] = 0.0
                         self._symbol_rescan_count[g_sym] = 0
+                        self._symbol_momentum_entry[g_sym] = False
+                        self._symbol_momentum_peak[g_sym] = None
+                        self._symbol_momentum_last_boundary[g_sym] = 0
                     await self._notify(
                         "trade_close",
                         f"Trade Closed — {sym}",
@@ -1094,7 +1177,6 @@ class Bot:
         bars_held = max(0, int((time.time() - event_start) / exit_interval)) if event_start else 0
 
         pos_signal = self._symbol_signals.get(sym)
-        is_asp = pos_signal and pos_signal.get("asp_model")
         minutes_held = (time.time() - event_start) / 60.0 if event_start else 0.0
 
         if is_candle:
@@ -1205,6 +1287,33 @@ class Bot:
                         f"[{sym}] Candle ML max-loss time: {direction} px={current_px:.2f} "
                         f"entry={entry_price:.2f} held={minutes_held:.1f}m (limit={max_loss_min:.0f}m)"
                     )
+
+            # ── CandleBrain model re-eval at M5 boundary ──
+            # For CandleBrain trades, re-run the Transformer each boundary.
+            # If it says CLOSE with enough confidence → exit.
+            if not exit_reason and pos_signal and pos_signal.get("signal_type") == "candle_brain":
+                cb = self._symbol_candle_brain.get(sym)
+                if cb is not None and atr_val > 0:
+                    try:
+                        exit_bars = self.client.get_rates(
+                            sym, cfg.SIGNAL_TIMEFRAME,
+                            getattr(cfg, "CANDLE_BRAIN_M1_HISTORY", 500))
+                        if exit_bars is not None and len(exit_bars) > 0:
+                            brain_exit = cb.predict(exit_bars)
+                            if brain_exit is not None:
+                                mgmt_action = brain_exit.get("mgmt_action", "HOLD")
+                                mgmt_conf = brain_exit.get("mgmt_confidence", 0)
+                                exit_thresh = getattr(cfg, "CANDLE_BRAIN_EXIT_THRESHOLD", 0.60)
+                                if mgmt_action == "CLOSE" and mgmt_conf >= exit_thresh:
+                                    exit_reason = "candle_brain_exit"
+                                    self.logger.signal(
+                                        f"[{sym}] CandleBrain EXIT: mgmt={mgmt_action} "
+                                        f"conf={mgmt_conf:.3f} dir={direction} "
+                                        f"px={current_px:.2f} entry={entry_price:.2f} "
+                                        f"held={minutes_held:.1f}m"
+                                    )
+                    except Exception as e:
+                        self.logger.warning(f"[{sym}] CandleBrain mgmt eval failed: {e}")
 
             if not exit_reason and getattr(cfg, "CANDLE_ML_FLIP_EXIT_ENABLED", True):
                 cm = self._symbol_candle_ml.get(sym)
@@ -1322,276 +1431,119 @@ class Bot:
                 self.logger.warning(f"[{sym}] Candle exit close failed, retrying next tick")
             return
 
-        if is_asp:
-            asp_sl = pos_signal.get("sl")
-            asp_tp = pos_signal.get("tp1")
-            atr_val = pos_signal.get("atr_value", 0)
-
-            adx_at_entry = pos_signal.get("adx_at_entry", 50.0)
-            adx_ok = adx_at_entry >= getattr(cfg, "ASP_TRAIL_ADX_MIN", 0.0)
-            bars_ok = minutes_held >= getattr(cfg, "ASP_TRAIL_MIN_BARS", 0)
-            trail_gating_ok = adx_ok and bars_ok
-
-            should_exit = False
-            exit_reason = ""
-            trail_activated = False
-
-            if getattr(cfg, "ASP_TRAILING_ENABLED", False) and atr_val > 0:
-                best_key = f"_best_price_{sym}"
-                if not hasattr(self, best_key):
-                    setattr(self, best_key, entry_price)
-                best = getattr(self, best_key)
-
-                if trail_gating_ok:
-                    if direction == "BUY":
-                        best = max(best, current_px)
-                        trigger = entry_price + atr_val * cfg.ASP_TRAILING_TRIGGER_ATR
-                        if best >= trigger:
-                            trail_sl = best - atr_val * cfg.ASP_TRAILING_RETRACE_ATR
-                            if trail_sl > asp_sl:
-                                asp_sl = trail_sl
-                                pos_signal["sl"] = asp_sl
-                                trail_activated = True
-                    else:
-                        best = min(best, current_px)
-                        trigger = entry_price - atr_val * cfg.ASP_TRAILING_TRIGGER_ATR
-                        if best <= trigger:
-                            trail_sl = best + atr_val * cfg.ASP_TRAILING_RETRACE_ATR
-                            if trail_sl < asp_sl:
-                                asp_sl = trail_sl
-                                pos_signal["sl"] = asp_sl
-                                trail_activated = True
-                elif int(minutes_held) % 2 == 0:
-                    self.logger.debug(
-                        f"[{sym}] Trail blocked: adx={adx_at_entry:.1f} (need>={getattr(cfg, 'ASP_TRAIL_ADX_MIN', 0)}) "
-                        f"held={minutes_held:.1f}m (need>={getattr(cfg, 'ASP_TRAIL_MIN_BARS', 0)}m)"
-                    )
-                setattr(self, best_key, best)
-
-            # Break-even SL — move SL to entry when profit exceeds threshold
-            be_trigger = cfg.SYMBOL_BREAK_EVEN_TRIGGER.get(sym, getattr(cfg, "ASP_BREAK_EVEN_TRIGGER_ATR", 0.30))
-            if atr_val > 0 and be_trigger > 0:
-                if direction == "BUY":
-                    profit_px = current_px - entry_price
-                    if profit_px >= atr_val * be_trigger and asp_sl < entry_price:
-                        asp_sl = entry_price
-                        pos_signal["sl"] = asp_sl
-                        self.logger.debug(f"[{sym}] Break-even SL activated (profit={profit_px:.2f})")
-                else:
-                    profit_px = entry_price - current_px
-                    if profit_px >= atr_val * be_trigger and asp_sl > entry_price:
-                        asp_sl = entry_price
-                        pos_signal["sl"] = asp_sl
-                        self.logger.debug(f"[{sym}] Break-even SL activated (profit={profit_px:.2f})")
-
-            if direction == "BUY":
-                if asp_sl and current_px <= asp_sl:
-                    should_exit = True
-                    exit_reason = "asp_trail_sl" if trail_activated else "asp_sl_hit"
-                elif asp_tp and current_px >= asp_tp:
-                    should_exit = True
-                    exit_reason = "asp_tp_hit"
-            else:
-                if asp_sl and current_px >= asp_sl:
-                    should_exit = True
-                    exit_reason = "asp_trail_sl" if trail_activated else "asp_sl_hit"
-                elif asp_tp and current_px <= asp_tp:
-                    should_exit = True
-                    exit_reason = "asp_tp_hit"
-
-            if should_exit:
-                _sl_str = f"{asp_sl:.2f}" if asp_sl else "n/a"
-                _adx_str = f"{adx_at_entry:.1f}"
-                self.logger.signal(
-                    f"[{sym}] ASP exit: {exit_reason} | dir={direction} entry={entry_price:.2f} "
-                    f"px={current_px:.2f} sl={_sl_str} adx={_adx_str} held={minutes_held:.1f}m"
-                )
-                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
-                for pos_data in closed:
-                    self.position_manager.note_closed(pos_data, exit_reason=exit_reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
-                if closed:
-                    pnl = sum(p.get("profit", 0) for p in closed)
-                    self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
-                    self._symbol_states[sym] = self.STATES["IDLE"]
-                    self._symbol_event_start_ts[sym] = None
-                    self._symbol_candle_entry[sym] = False
-                    self._symbol_exit_confirms[sym] = 0
-                    self._symbol_reversal_confirms[sym] = 0
-                    if hasattr(self, f"_best_price_{sym}"):
-                        delattr(self, f"_best_price_{sym}")
-                    await self._notify(
-                        "trade_close",
-                        f"Trade Closed — {sym}",
-                        f"{direction} {sym} closed ({exit_reason}) | PnL: ${pnl:+.2f} | held {minutes_held:.0f}m",
-                        {"symbol": sym, "direction": direction, "exit_reason": exit_reason, "pnl": pnl, "held_minutes": minutes_held},
-                    )
-                else:
-                    self.logger.warning(f"[{sym}] Exit close failed, retrying next tick")
-                return
-
-        dir_timeout_min = getattr(cfg, "SMART_TIMEOUT_DIR_MIN", 15)
-        asp_timeout_min = getattr(cfg, "SMART_TIMEOUT_ASP_MIN", 45)
-        rescan_interval = getattr(cfg, "SMART_TIMEOUT_RESCAN_SEC", 30)
-
-        if minutes_held >= dir_timeout_min:
+        # ── Momentum-jump exit — SL 1R / jump-target 1R + 0.25R retrace / max hold ──
+        # Mirrors _two_engine.us100_jump_trades: evaluated only on completed M5
+        # candles; the SL check runs BEFORE the retrace check on the same bar.
+        if self._symbol_momentum_entry.get(sym, False):
             now = time.time()
-            last_scan = self._symbol_last_rescan_ts.get(sym, 0.0)
-            if now - last_scan < rescan_interval:
+            cur_boundary = int(now) - (int(now) % 300)
+            last_boundary = self._symbol_momentum_last_boundary.get(sym, 0)
+            if last_boundary == 0:
+                self._symbol_momentum_last_boundary[sym] = cur_boundary
                 return
-            self._symbol_last_rescan_ts[sym] = now
+            if cur_boundary <= last_boundary:
+                return  # still inside the same M5 candle
+            self._symbol_momentum_last_boundary[sym] = cur_boundary
 
-            engine = self._symbol_engines.get(sym)
-            m1_bars = getattr(cfg, 'ASP_M1_HISTORY_BARS', 300)
-            m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, m1_bars)
-            if m1_data is None or len(m1_data) < 96:
-                self.logger.debug(f"[{sym}] Timeout skipped: data fetch failed, holding")
+            # Skip the ENTRY candle — matches backtest (exits start at bar i+1).
+            if event_start is not None:
+                entry_boundary = int(event_start) - (int(event_start) % 300)
+                if entry_boundary == last_boundary:
+                    return
+
+            m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, 12)
+            if m1_data is None or len(m1_data) == 0:
+                self._symbol_momentum_last_boundary[sym] = last_boundary
                 return
+            m1_idx = m1_data.set_index("time") if "time" in m1_data.columns else m1_data
+            try:
+                lo_ts = pd.Timestamp(last_boundary, unit="s")
+                hi_ts = pd.Timestamp(cur_boundary, unit="s")
+                cb = m1_idx[(m1_idx.index >= lo_ts) & (m1_idx.index < hi_ts)]
+            except Exception:
+                cb = pd.DataFrame()
+            if len(cb) == 0:
+                self._symbol_momentum_last_boundary[sym] = last_boundary
+                return
+            c_high = float(cb["high"].max())
+            c_low = float(cb["low"].min())
+            c_close = float(cb["close"].iloc[-1])
 
-            fresh_signal = None
-            dir_flip = False
-            h1_for_asp = None
-            if engine:
-                h1_for_asp = self.client.get_rates(sym, cfg.BIAS_TIMEFRAME, 48)
-                fresh_signal = engine.evaluate_asp_entry(m1_data, current_px, h1_data=h1_for_asp)
-                dir_pred = getattr(engine, '_direction_predictor', None)
-                if dir_pred is not None and h1_for_asp is not None and len(h1_for_asp) > 0:
-                    try:
-                        from app.direction_predictor import compute_features as _compute_dir_feats
-                        m1_idx = m1_data.set_index("time") if "time" in m1_data.columns else m1_data
-                        m5 = m1_idx.resample("5min").agg({
-                            "open": "first", "high": "max", "low": "min", "close": "last",
-                            "tick_volume": "sum",
-                        }).dropna()
-                        if len(m5) >= 20:
-                            dir_feats = _compute_dir_feats(m5, h1_for_asp)
-                            if dir_feats is not None and len(dir_feats) > 0:
-                                dir_threshold = getattr(cfg, "DIRECTION_CONFIDENCE_THRESHOLD", 0.60)
-                                dir_prediction = dir_pred.predict(dir_feats, confidence_threshold=dir_threshold)
-                                if dir_prediction is not None and dir_prediction != direction:
-                                    dir_flip = True
-                    except Exception as e:
-                        self.logger.debug(f"[{sym}] Dir predictor timeout check failed: {e}")
+            pos_signal = self._symbol_signals.get(sym) or {}
+            atr_i = pos_signal.get("atr", 0) or (entry_price * 0.001)
+            sl = pos_signal.get("sl", 0) or 0
+            jump_target = float(getattr(cfg, "MOMENTUM_JUMP_TARGET_R", 1.0))
+            retr_r = float(getattr(cfg, "MOMENTUM_RETRACE_R", 0.25))
+            max_hold = int(getattr(cfg, "MOMENTUM_MAX_HOLD_BARS", 12))
 
-            fresh_dir = fresh_signal.get("direction") if fresh_signal else None
-            asp_flip = fresh_dir is not None and fresh_dir != direction
-            event_pnl = sum(p.get("profit", 0) for p in sym_positions)
-
-            if dir_flip:
-                reason = f"dir_timeout_{int(minutes_held)}min_flip"
-                self.logger.signal(
-                    f"[{sym}] Timeout exit: direction predictor flipped at {int(minutes_held)}m | "
-                    f"dir={direction} pnl=${event_pnl:+.2f} entry={entry_price:.2f} px={current_px:.2f}"
-                )
-                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
-                for pos_data in closed:
-                    self.position_manager.note_closed(pos_data, exit_reason=reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
-                if closed:
-                    pnl = sum(p.get("profit", 0) for p in closed)
-                    self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
-                    self._symbol_states[sym] = self.STATES["IDLE"]
-                    self._symbol_event_start_ts[sym] = None
-                    self._symbol_last_rescan_ts[sym] = 0.0
-                    self._symbol_rescan_count[sym] = 0
-                    if hasattr(self, f"_best_price_{sym}"):
-                        delattr(self, f"_best_price_{sym}")
-                    await self._notify(
-                        "trade_close",
-                        f"Trade Closed — {sym}",
-                        f"{direction} {sym} closed ({reason}) | PnL: ${pnl:+.2f} | held {int(minutes_held)}m",
-                        {"symbol": sym, "direction": direction, "exit_reason": reason, "pnl": pnl, "held_minutes": minutes_held},
-                    )
+            peak = self._symbol_momentum_peak.get(sym, entry_price)
+            exit_reason = ""
+            if direction == "BUY":
+                if sl > 0 and c_low <= sl:
+                    exit_reason = "momentum_sl"
                 else:
-                    self.logger.warning(f"[{sym}] Timeout exit close failed, retrying next tick")
-                return
-
-            if minutes_held >= asp_timeout_min and asp_flip:
-                reason = f"asp_timeout_{int(minutes_held)}min_flip"
-                self.logger.signal(
-                    f"[{sym}] Timeout exit: ASP flipped at {int(minutes_held)}m | "
-                    f"dir={direction} pnl=${event_pnl:+.2f} entry={entry_price:.2f} px={current_px:.2f}"
-                )
-                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
-                for pos_data in closed:
-                    self.position_manager.note_closed(pos_data, exit_reason=reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
-                if closed:
-                    pnl = sum(p.get("profit", 0) for p in closed)
-                    self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
-                    self._symbol_states[sym] = self.STATES["IDLE"]
-                    self._symbol_event_start_ts[sym] = None
-                    self._symbol_last_rescan_ts[sym] = 0.0
-                    self._symbol_rescan_count[sym] = 0
-                    if hasattr(self, f"_best_price_{sym}"):
-                        delattr(self, f"_best_price_{sym}")
-                    await self._notify(
-                        "trade_close",
-                        f"Trade Closed — {sym}",
-                        f"{direction} {sym} closed ({reason}) | PnL: ${pnl:+.2f} | held {int(minutes_held)}m",
-                        {"symbol": sym, "direction": direction, "exit_reason": reason, "pnl": pnl, "held_minutes": minutes_held},
-                    )
+                    if c_high > peak:
+                        peak = c_high
+                    bfe = (peak - entry_price) / atr_i
+                    if bfe >= jump_target and c_close <= peak - retr_r * atr_i:
+                        exit_reason = "momentum_retrace"
+            else:
+                if sl > 0 and c_high >= sl:
+                    exit_reason = "momentum_sl"
                 else:
-                    self.logger.warning(f"[{sym}] Timeout exit close failed, retrying next tick")
+                    if c_low < peak:
+                        peak = c_low
+                    bfe = (entry_price - peak) / atr_i
+                    if bfe >= jump_target and c_close >= peak + retr_r * atr_i:
+                        exit_reason = "momentum_retrace"
+            self._symbol_momentum_peak[sym] = peak
+
+            if not exit_reason and event_start is not None:
+                entry_boundary = int(event_start) - (int(event_start) % 300)
+                # Candle j ends at entry_boundary + (j - i + 1)*300 and is evaluated
+                # during candle j+1's window, so subtract 1: bars_held = j - i.
+                bars_held = int((cur_boundary - entry_boundary) / 300) - 1
+                if bars_held >= max_hold:
+                    exit_reason = "momentum_timeout"
+                    self.logger.signal(
+                        f"[{sym}] Momentum max hold: {direction} held={bars_held} bars "
+                        f"(limit={max_hold}) px={current_px:.2f} entry={entry_price:.2f}"
+                    )
+
+            if not exit_reason:
                 return
 
-            status = "DP=FLIP(wait_asp)" if dir_flip else "ASP=FLIP(wait_dir)" if asp_flip else "both_agree"
             self.logger.signal(
-                f"[{sym}] Timeout hold ({int(minutes_held)}m): {status} pnl=${event_pnl:+.2f}"
+                f"[{sym}] Momentum exit: {exit_reason} | dir={direction} entry={entry_price:.2f} "
+                f"px={current_px:.2f} peak={peak:.2f} sl={sl:.2f} atr={atr_i:.4f} "
+                f"held={minutes_held:.0f}m"
             )
-
-            # ── BRAIN EVALUATION for ASP trades ──
-            # After smart timeout says "hold", let the Brain do a final check.
-            if self.brain is not None and minutes_held >= asp_timeout_min:
-                try:
-                    atr_val = pos_signal.get("atr_value", 0) if pos_signal else 0
-                    if atr_val <= 0:
-                        atr_val = current_px * 0.001
-                    brain_decision = self.brain.evaluate(
-                        symbol=sym,
-                        current_pnl=(current_px - entry_price) / atr_val if direction == "BUY" and atr_val > 0 else (entry_price - current_px) / atr_val if atr_val > 0 else 0,
-                        current_price=current_px,
-                        entry_price=entry_price,
-                        direction=direction,
-                        atr=atr_val,
-                        minutes_held=minutes_held,
-                        pending_signals=self._symbol_signals,
-                    )
-                    if brain_decision.get("action") == "EXIT" and brain_decision.get("confidence", 0) > 0.5:
-                        reason = f"brain_exit({brain_decision.get('reason', 'cascade')})"
-                        self.logger.signal(
-                            f"[{sym}] Brain EXIT: {brain_decision.get('reason', '')} | "
-                            f"conf={brain_decision['confidence']:.2f} method={brain_decision.get('method', '?')} | "
-                            f"dir={direction} entry={entry_price:.2f} px={current_px:.2f} "
-                            f"held={minutes_held:.1f}m cascade={brain_decision.get('cascade_path', '?')} "
-                            f"layers={brain_decision.get('layers_evaluated', 0)} "
-                            f"timing={brain_decision.get('timing_ms', 0):.1f}ms"
-                        )
-                        closed = self.trade_executor.close_all_bot_positions(symbol=sym)
-                        for pos_data in closed:
-                            self.position_manager.note_closed(pos_data, exit_reason=reason, score=pos_signal.get("score", 0) if pos_signal else 0, balance=balance)
-                        if closed:
-                            pnl = sum(p.get("profit", 0) for p in closed)
-                            self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False) if pos_signal else False)
-                            self._symbol_states[sym] = self.STATES["IDLE"]
-                            self._symbol_event_start_ts[sym] = None
-                            self._symbol_last_rescan_ts[sym] = 0.0
-                            self._symbol_rescan_count[sym] = 0
-                            if hasattr(self, f"_best_price_{sym}"):
-                                delattr(self, f"_best_price_{sym}")
-                            if self.brain:
-                                self.brain.record_exit(sym, {
-                                    "exit_reason": reason, "pnl": pnl,
-                                    "exit_price": current_px, "atr": atr_val,
-                                })
-                            await self._notify(
-                                "trade_close",
-                                f"Trade Closed — {sym}",
-                                f"{direction} {sym} closed ({reason}) | PnL: ${pnl:+.2f} | held {int(minutes_held)}m",
-                                {"symbol": sym, "direction": direction, "exit_reason": reason, "pnl": pnl, "held_minutes": minutes_held},
-                            )
-                        else:
-                            self.logger.warning(f"[{sym}] Brain exit close failed")
-                        return
-                except Exception as e:
-                    self.logger.warning(f"[{sym}] Brain evaluation failed: {e}")
+            closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+            for pos_data in closed:
+                self.position_manager.note_closed(pos_data, exit_reason=exit_reason, score=pos_signal.get("score", 0), balance=balance)
+            if closed:
+                pnl = sum(p.get("profit", 0) for p in closed)
+                self._record_trade_result(sym, pnl, pos_signal.get("high_volatility", False))
+                self._symbol_states[sym] = self.STATES["IDLE"]
+                self._symbol_event_start_ts[sym] = None
+                self._symbol_candle_entry[sym] = False
+                self._symbol_momentum_entry[sym] = False
+                self._symbol_momentum_peak[sym] = None
+                self._symbol_momentum_last_boundary[sym] = 0
+                if self.brain:
+                    self.brain.record_exit(sym, {
+                        "exit_reason": exit_reason, "pnl": pnl,
+                        "exit_price": current_px, "atr": atr_i,
+                    })
+                await self._notify(
+                    "trade_close",
+                    f"Trade Closed — {sym}",
+                    f"{direction} {sym} closed ({exit_reason}) | PnL: ${pnl:+.2f} | held {int(minutes_held)}m",
+                    {"symbol": sym, "direction": direction, "exit_reason": exit_reason, "pnl": pnl, "held_minutes": minutes_held},
+                )
+            else:
+                self.logger.warning(f"[{sym}] Momentum exit close failed, retrying next tick")
+            return
 
     async def _handle_waiting_for_funds(self, sym: str = None):
         info = self.client.get_account_info()
@@ -1691,22 +1643,24 @@ class Bot:
             self._symbol_states[sym] = self.STATES["IDLE"]
             return
 
-        margin_rate = fresh_info.get("margin_rate", 0.05)
         free_margin = account.get("free_margin", 0)
-        single_margin = lot * current_price * margin_rate * 1
+        single_margin = self.client.estimate_margin(sym, lot, current_price)
         if free_margin < single_margin:
-            max_lot_by_margin = free_margin * 0.9 / (current_price * margin_rate * 1)
+            contract_size = fresh_info.get("contract_size", 1)
+            leverage = self.client.get_leverage_for_class(fresh_info.get("asset_class", "COMMODITIES"))
+            notional_per_lot = contract_size * current_price
+            max_lot_by_margin = free_margin * 0.9 / (notional_per_lot / max(1.0, leverage))
             vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
             max_lot_by_margin = round(max_lot_by_margin / vol_step) * vol_step
             max_lot_by_margin = max(fresh_info.get("volume_min", cfg.MIN_LOT), max_lot_by_margin)
             if max_lot_by_margin < lot:
                 self.logger.info(
-                    f"[{sym}] Reducing lot from {lot:.2f} to {max_lot_by_margin:.2f} "
+                    f"[{sym}] Reducing lot from {lot:.4f} to {max_lot_by_margin:.4f} "
                     f"(margin: ${free_margin:.2f} available, "
                     f"${single_margin:.2f} needed)"
                 )
                 lot = max_lot_by_margin
-                single_margin = lot * current_price * margin_rate * 1
+                single_margin = self.client.estimate_margin(sym, lot, current_price)
             if free_margin < single_margin:
                 self.logger.warning(
                     f"[{sym}] Entry blocked: insufficient margin "
@@ -1719,7 +1673,6 @@ class Bot:
 
         self.logger.info(
             f"[{sym}] Entry: {direction} | score={score:.2f} | "
-            f"ASP={signal.get('asp_model', False)} | "
             f"balance=${balance:.2f} | lot={lot:.2f} | "
             f"max_trades={max_trades} | drift={drift_pct:.3f}% | "
             f"margin=${free_margin:.2f} | "
@@ -1768,8 +1721,24 @@ class Bot:
         if any_opened:
             self._symbol_states[sym] = self.STATES["IN_TRADE"]
             self._symbol_event_start_ts[sym] = time.time()
-            self._symbol_candle_entry[sym] = (signal.get("signal_type") == "candle_ml")
+            self._symbol_candle_entry[sym] = signal.get("signal_type") in ("candle_ml", "candle_brain")
             self._symbol_flip_streak[sym] = 0  # fresh trade — no stale flip streak
+            if signal.get("signal_type") == "momentum":
+                # Momentum-jump trade: SL anchored at the ACTUAL fill (like the
+                # candle TP anchor), peak starts at the fill, exits evaluated on
+                # M5 boundaries from the next candle.
+                self._symbol_momentum_entry[sym] = True
+                self._symbol_momentum_peak[sym] = current_price
+                self._symbol_momentum_last_boundary[sym] = int(time.time()) - (int(time.time()) % 300)
+                self._symbol_momentum_last_signal_ts[sym] = signal.get("bar_time", time.time())
+                atr_i = signal.get("atr", 0) or (current_price * 0.001)
+                sl_r = float(getattr(cfg, "MOMENTUM_SL_R", 1.0))
+                signal["atr"] = atr_i
+                signal["sl"] = current_price - sl_r * atr_i if direction == "BUY" else current_price + sl_r * atr_i
+                signal["tp1"] = None
+            else:
+                self._symbol_momentum_entry[sym] = False
+                self._symbol_momentum_peak[sym] = None
             # Backtest-parity candle state: reference open, TP, and entry M5 boundary.
             # Anchor at the ACTUAL fill (break-even), not the candle open — matches
             # _bt_live_sim ANCHOR="fill". TP shifted by the same delta so it is
@@ -1878,6 +1847,9 @@ class Bot:
             self._symbol_candle_last_boundary[sym] = 0
             self._symbol_last_rescan_ts[sym] = 0.0
             self._symbol_rescan_count[sym] = 0
+            self._symbol_momentum_entry[sym] = False
+            self._symbol_momentum_peak[sym] = None
+            self._symbol_momentum_last_boundary[sym] = 0
             if hasattr(self, f"_best_price_{sym}"):
                 delattr(self, f"_best_price_{sym}")
         self.logger.info("Bot manually started")
@@ -1890,6 +1862,9 @@ class Bot:
             self._symbol_candle_entry_open[sym] = None
             self._symbol_candle_tp[sym] = None
             self._symbol_candle_last_boundary[sym] = 0
+            self._symbol_momentum_entry[sym] = False
+            self._symbol_momentum_peak[sym] = None
+            self._symbol_momentum_last_boundary[sym] = 0
         self.logger.warning("Bot manually stopped")
 
     async def emergency_close(self):
@@ -1913,6 +1888,9 @@ class Bot:
                 self._symbol_candle_last_boundary[sym] = 0
                 self._symbol_last_rescan_ts[sym] = 0.0
                 self._symbol_rescan_count[sym] = 0
+                self._symbol_momentum_entry[sym] = False
+                self._symbol_momentum_peak[sym] = None
+                self._symbol_momentum_last_boundary[sym] = 0
                 if hasattr(self, f"_best_price_{sym}"):
                     delattr(self, f"_best_price_{sym}")
         self.position_manager.refresh(symbols=self.symbols)
