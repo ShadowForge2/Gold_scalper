@@ -125,6 +125,8 @@ class WaveScalper:
             idx[col] = pd.to_numeric(idx[col], errors="coerce")
         if "tick_volume" not in idx.columns:
             idx["tick_volume"] = 0
+        if getattr(idx.index, "tz", None) is not None:
+            idx.index = idx.index.tz_convert("UTC").tz_localize(None)
         idx = idx[~idx.index.duplicated(keep="last")].sort_index()
         return idx
 
