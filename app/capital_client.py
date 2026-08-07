@@ -439,13 +439,33 @@ class CapitalClient:
                 if not prices:
                     break
                 all_rows.extend(self._parse_prices(prices))
-                cursor_to = prices[0].get("snapshotTime", "")
-                if not cursor_to:
+                snap_times = [p.get("snapshotTime", "") for p in prices if p.get("snapshotTime")]
+                if not snap_times:
                     break
-                if len(prices) < page_max:
-                    break  # reached the start of available history
+                # Order-independent cursor: the oldest candle in this page is
+                # the `to` bound for the next (older) page. Using min() rather
+                # than prices[0] handles either ascending or descending order.
+                oldest = min(snap_times)
+                if oldest == cursor_to:
+                    break  # no older data — start of available history reached
+                cursor_to = oldest
             except Exception:
                 break
+
+        if not all_rows:
+            # `to`-cursor pagination failed entirely (e.g. bad cursor rejected).
+            # Fall back to the plain most-recent-N fetch used everywhere else —
+            # returns the latest candles only, but at least we return data.
+            try:
+                r = self._request("GET", f"{self.base_url}/api/v1/prices/{epic}",
+                                  params={"resolution": resolution, "max": page_max},
+                                  headers=self._auth_headers())
+                if r is not None and r.ok:
+                    prices = r.json().get("prices", [])
+                    if prices:
+                        all_rows = self._parse_prices(prices)
+            except Exception:
+                pass
 
         if not all_rows:
             return None

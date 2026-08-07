@@ -807,6 +807,15 @@ class Bot:
                             f"[{sym}] Momentum M1 window short: {len(fetched)} bars, "
                             f"need >= {need_bars} — no signals until history fills"
                         )
+                else:
+                    # get_rates_range returned None (fetch/parse failure) — this
+                    # used to be a fully silent no-signal path.
+                    if now - self._last_momentum_warn_ts > 600:
+                        self._last_momentum_warn_ts = now
+                        self.logger.warning(
+                            f"[{sym}] Momentum M1 fetch returned no data "
+                            f"(epic={self.client._resolve_epic(sym)}), retrying in {refresh}s"
+                        )
             except Exception as e:
                 self.logger.warning(f"[{sym}] Momentum M1 fetch failed: {e}")
                 self._symbol_momentum_m1_cache_ts[sym] = now
@@ -1911,6 +1920,35 @@ class Bot:
 
         signal = self._current_signal or {}
         news = self.news_state.get_state_info() if self.news_state else {"state": "DISABLED"}
+
+        momentum = {}
+        for sym in self.symbols:
+            mom = self._symbol_momentum_engine.get(sym)
+            if mom is None:
+                continue
+            cache = self._symbol_momentum_m1_cache.get(sym)
+            last_reason = getattr(mom, "last_reason", "unknown")
+            if cache is not None and len(cache) > 0:
+                try:
+                    t0 = str(cache["time"].iloc[0])
+                    t1 = str(cache["time"].iloc[-1])
+                except Exception:
+                    t0 = t1 = "?"
+                bars = len(cache)
+            else:
+                bars, t0, t1 = 0, "-", "-"
+            refresh_age = int(time.time() - self._symbol_momentum_m1_cache_ts.get(sym, 0.0))
+            momentum[sym] = {
+                "enabled": True,
+                "gate": mom.gate,
+                "gate_threshold": mom.gate_threshold,
+                "cache_bars": bars,
+                "cache_from": t0,
+                "cache_to": t1,
+                "refresh_age_sec": refresh_age,
+                "last_reason": last_reason,
+            }
+
         return {
             "state": self.state,
             "symbol": self.symbol,
@@ -1918,6 +1956,7 @@ class Bot:
             "magic": self.magic,
             "signal": signal,
             "news": news,
+            "momentum": momentum,
             "positions": self.position_manager.summary(),
             "risk": {},
             "scaler": self.scaler.summary(current_balance) if self.scaler.starting_balance else None,
