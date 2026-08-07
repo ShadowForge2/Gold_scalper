@@ -422,6 +422,86 @@ CANDLE_BRAIN_ENTRY_MIN_R = _env_float("CANDLE_BRAIN_ENTRY_MIN_R", 0.35)
 CANDLE_BRAIN_EDGE_MARGIN = _env_float("CANDLE_BRAIN_EDGE_MARGIN", 1.0)
 CANDLE_BRAIN_EXPECTANCY_MIN = _env_float("CANDLE_BRAIN_EXPECTANCY_MIN", 0.30)
 
+# ── H1 Candle Engine (candle-following, XGBoost per-pair) ────────────
+# Follows the H1 candle instead of predicting it (see CANDLE_STRATEGY.md).
+# Enter at candle commit, ride the full move, trail once past open into
+# profit, close on reversal/confusion and wait for a fresh candle. Small
+# fixed bleeds are covered by the rare full move (+3.00$). Each enabled pair
+# gets its own model + dynamic threshold; a pair-selection layer only lets
+# the currently-best-moving pairs fire (jump away from idle symbols).
+CANDLE_ENGINE_ENABLED = _env_bool("CANDLE_ENGINE_ENABLED", True)
+CANDLE_ENGINE_PAIRS = [s.strip() for s in _env_str("CANDLE_ENGINE_PAIRS", "XAUUSD,US100,JP225,DE40,US500,US30").split(",")]
+CANDLE_ENGINE_TF = _env_int("CANDLE_ENGINE_TF", 60)  # minutes: 60 = H1, 30 = 30m
+CANDLE_ENGINE_MODEL_DIR = _env_str("CANDLE_ENGINE_MODEL_DIR", "models/candle_h1")
+# Profit-based labels: simulate the candle-following trade per bar (enter at
+# commit, SL = SL_ATR*ATR, ride until reversal/trail, cap at MAX_HOLD, cost
+# COST_R). A bar is BUY/SELL only if its realized R beats the other side by
+# EDGE_MARGIN (chop => NONE => no trade => no bleed).
+CANDLE_ENGINE_SL_ATR = _env_float("CANDLE_ENGINE_SL_ATR", 1.5)
+CANDLE_ENGINE_REVERSAL_ATR = _env_float("CANDLE_ENGINE_REVERSAL_ATR", 0.5)
+CANDLE_ENGINE_TRAIL_ATR = _env_float("CANDLE_ENGINE_TRAIL_ATR", 0.5)
+CANDLE_ENGINE_MAX_HOLD_BARS = _env_int("CANDLE_ENGINE_MAX_HOLD_BARS", 24)
+CANDLE_ENGINE_COST_R = _env_float("CANDLE_ENGINE_COST_R", 0.05)
+# Label stop for TRAINING (decoupled from the live exit SL): labels are
+# simulated with a TIGHT 1.0R stop so the model learns early-strength candles,
+# while the live engine rides with a WIDER 1.5R stop. Coupling them (labels
+# @ 1.5R) dropped OOS PF 1.67 -> 1.07, so keep them separate.
+CANDLE_ENGINE_LABEL_SL_ATR = _env_float("CANDLE_ENGINE_LABEL_SL_ATR", 1.0)
+# Label strictness (the model only fires on the strong, clearly-directional
+# moves): a bar is BUY/SELL only if the winning side realizes >= ENTRY_MIN_R
+# AND beats the losing side by >= EDGE_MARGIN. Sweep on H1 OOS 2023-25:
+#   (0.35, 1.0) -> PF 1.18   (0.60, 1.0) -> PF 1.31
+#   (0.90, 1.75) -> PF 1.67  (broad plateau, WR ~69%, dd ~7R)
+# Looser labels teach the model to chase weak-move noise; the tight labels
+# confine trades to the ~15% of bars with a real directional edge.
+CANDLE_ENGINE_ENTRY_MIN_R = _env_float("CANDLE_ENGINE_ENTRY_MIN_R", 0.90)
+CANDLE_ENGINE_EDGE_MARGIN = _env_float("CANDLE_ENGINE_EDGE_MARGIN", 1.75)
+CANDLE_ENGINE_MIN_CONF = _env_float("CANDLE_ENGINE_MIN_CONF", 0.60)
+CANDLE_ENGINE_TRAIN_PER_CLASS = _env_int("CANDLE_ENGINE_TRAIN_PER_CLASS", 15000)
+# Jump-candle scan (add-on): a candle that leaves its starting point and jumps
+# in its full direction gets a higher-conviction entry. Detected when close has
+# moved JUMP_BREAK_R*ATR past the open AND the body covers >= JUMP_BODY_R of
+# the H1 range.
+CANDLE_ENGINE_JUMP_ENABLED = _env_bool("CANDLE_ENGINE_JUMP_ENABLED", True)
+CANDLE_ENGINE_JUMP_BREAK_R = _env_float("CANDLE_ENGINE_JUMP_BREAK_R", 1.5)
+CANDLE_ENGINE_JUMP_BODY_R = _env_float("CANDLE_ENGINE_JUMP_BODY_R", 0.70)
+# ── Wave scalper (intra-candle M1 micro-waves) — LOCKED ────────────────
+# Trades the micro-waves INSIDE the forming H1 candle on M1 bars instead of
+# predicting the whole candle. Validated on 12 pairs, H1 OOS 2023-2025 with
+# the strict engine (entry bar skipped for exits, peak updated only after
+# exit checks — a bar can never sell its own high/low). All pairs positive;
+# PF 3.16 (XAGUSD) .. 5.59 (GAS) (corrected 2026-08-07 after the long-cut sign fix); best combo shown below.
+# NOTE: the ML model is ONLY a chop gate. It never vetoes direction and has
+# no confidence floor. A NONE-leaning PREVIOUS H1 candle that is not a jump
+# means "sit out this candle" — everything else is tradable.
+CANDLE_ENGINE_WAVE_ENTRY_R = _env_float("CANDLE_ENGINE_WAVE_ENTRY_R", 0.50)    # enter past wave base
+CANDLE_ENGINE_WAVE_CUT_R = _env_float("CANDLE_ENGINE_WAVE_CUT_R", 0.03)        # stop = ~zero
+CANDLE_ENGINE_WAVE_PROFIT_R = _env_float("CANDLE_ENGINE_WAVE_PROFIT_R", 0.05)  # lock profit at wave peak - this pullback
+CANDLE_ENGINE_WAVE_TRAIL_R = _env_float("CANDLE_ENGINE_WAVE_TRAIL_R", 0.5)     # jump-rider trail
+CANDLE_ENGINE_WAVE_REVERSAL_R = _env_float("CANDLE_ENGINE_WAVE_REVERSAL_R", 0.5)  # close on reversal
+# LOT EXP = 0 IS LOCKED. The cut/profit ATR-distances do NOT grow with lot.
+# Dollar risk per wave is already a constant fraction of equity because the
+# equity scaler makes lot ~ equity: widening the cut with lot makes dollar
+# risk grow as equity^1.5 (superlinear) and runs every combo to negative
+# equity in the compounding backtest. Keep this at 0.
+CANDLE_ENGINE_WAVE_LOT_EXP = _env_float("CANDLE_ENGINE_WAVE_LOT_EXP", 0.0)
+# ── Wave scalper — LIVE execution ─────────────────────────────────────
+# When enabled for a symbol, the WaveScalper engine owns entry/exit for that
+# symbol (the old momentum/candle engines are not built for it). Enabled by
+# default for every configured symbol that has a saved H1 model; the model is
+# only used as the chop gate. Set WAVE_US100=false etc. to disable a symbol.
+WAVE_ENGINE_ENABLED = {sym: _env_bool(f"WAVE_{sym}", True) for sym in SYMBOLS}
+# Long M1 history kept for the H1 chop-gate features (~133 hours -> ~133 H1
+# candles, enough for the 96-bar rolling windows). Refetched per WAVE_REFRESH_SEC.
+WAVE_M1_HISTORY_BARS = _env_int("WAVE_M1_HISTORY_BARS", 8000)
+WAVE_REFRESH_SEC = _env_int("WAVE_REFRESH_SEC", 60)
+# Pair-selection layer: only the top-K pairs by live candle momentum score may
+# fire at any time. Each pair's own threshold adapts to its 30-60d score
+# percentile (dynamic per-pair), so idle pairs are automatically muted.
+CANDLE_ENGINE_PAIR_TOP_K = _env_int("CANDLE_ENGINE_PAIR_TOP_K", 2)
+CANDLE_ENGINE_PAIR_SCORE_WINDOW = _env_int("CANDLE_ENGINE_PAIR_SCORE_WINDOW", 720)  # ~30d H1 bars
+CANDLE_ENGINE_PAIR_PCT_MIN = _env_float("CANDLE_ENGINE_PAIR_PCT_MIN", 0.70)
+
 # ── Momentum-jump engine (per-pair adapted) ──────────────────────────
 # Validated OOS on M5 2022-2025 with per-pair regime gates:
 #   US100: vol>=55 gate  -> +127.8R  (all 4 years positive)

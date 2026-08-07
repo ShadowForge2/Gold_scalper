@@ -3,6 +3,15 @@
 ## Project
 Gold scalping bot trading XAUUSD on Capital.com (MT5 removed). Built with Python, deployed on Render.
 
+## Current Strategy (LOCKED 2026-08-07): Wave Scalper
+The strategy that replaced all prior H1-breakout / candle-following work is the **intra-candle M1 wave scalper**.
+- **Full spec, locked config table, strict-engine mechanics, and 12-pair validation live in `WAVE_STRATEGY.md`** — read it first.
+- Locked params in `config.py`: `CANDLE_ENGINE_WAVE_ENTRY_R=0.50`, `CUT_R=0.03`, `PROFIT_R=0.05`, `TRAIL_R=0.5`, `REVERSAL_R=0.5`, `COST_R=0.05`, jump 1.5/0.70.
+- `CANDLE_ENGINE_WAVE_LOT_EXP=0.0` is **LOCKED — do not change**. Widening the cut with lot makes dollar risk grow as equity^1.5 and runs every combo to negative equity (tested). Dollar risk is already a constant fraction of equity via `EquityScaler`.
+- `_sweep_candle_wave.py` now defaults to the locked combo; `--sweep` restores the grid; `--compound` runs the equity-accounted sim.
+- XAUUSD OOS 2023-25: **PF 4.17**, +927R, dd 2.8R, 5202 trades, WR 29.6%. All 12 pairs PF 3.16–5.59 (corrected after the long-cut sign fix, see WAVE_STRATEGY.md §6).
+- Model is ONLY a chop gate (previous-candle NONE + not a jump → sit out). No confidence floor, no direction veto.
+
 ## Bugs Found & Fixed
 
 ### Initial Deep Audit (12 bugs + MT5 purge)
@@ -293,3 +302,41 @@ Trade enters (BUY XAUUSD, ASP signal)
 **Fix** (`capital_client.py:571,590`): Both `get_positions()` calls in `open_position()` now pass `symbol=symbol` so they filter for the correct instrument.
 
 **Relevant files**: `app/capital_client.py`
+
+### Session 2026-08-07: Wave Engine Live Verification + Cut-R Sign Bug
+
+**Discovered while wiring the live `WaveScalper` engine** (which replicates
+`_sweep_candle_wave.run_candle_wave` trade-for-trade):
+
+**5 live-engine bugs fixed in `app/wave_scalper.py`** (verified via a synthetic
+backtest-vs-live equality harness, `_wave_engine_test.py`, ALL MATCH on 5 seeds):
+1. `_start_candle` used `prev_idx=-2`, always rejected by `_compute_gate` → ATR
+   never set (live produced 0 trades); now `prev_idx = len(h1)-2`.
+2. Rollover force-close used a per-feed local `prev_close` reset each call →
+   closed at the new candle's open instead of the old candle's final close;
+   added persistent `_last_close`/`_last_ts`.
+3. `_start_candle` anchored the forming candle positionally (`prev_idx+1`),
+   wrong when the M1 cache holds future bars (warm-up backfill); now time-based
+   via `h1.index.get_loc(ts)`.
+4. The rollover bar was consumed by exit detection; it is now held back —
+   `candle_end` pending is returned and the bar trades under the new candle
+   after `confirm_exit`.
+5. `confirm_exit` cleared `_rider` on cut/lock, allowing re-entry after a
+   jump-rider exit (contradicts the sweep); only `rider_trail` clears rider.
+
+**CRITICAL — cut-R sign bug in the reference sweep** (`_sweep_candle_wave.py`
+~line 146, and mirrored in `_wave_strict_compare.py`): long cuts computed R as
+`(entry − stop)/ATR − cost` = `+cut − cost` (−0.02R) instead of the true
+`−cut − cost` (−0.08R). Masked because cost (0.05) > cut (0.03). Fixed the sign
+in both scripts. **Corrected XAUUSD OOS: PF 6.61 → 4.17, +1035 → +927R, dd
+1.4 → 2.8R; all 12 pairs re-run, still strongly positive (PF 3.16–5.59).** The
+live engine prices exits from actual fills, so its PnL was honest either way.
+
+**Live-equivalence verified on real data** (`_wave_real_compare.py`): replay of
+real XAUUSD M1 through the engine (gate open) matches `run_candle_wave`
+trade-for-trade, R-for-R across three 3-month OOS windows (2023, 2024, 2025) —
+7316 trades, zero differences.
+
+**Relevant files**: `app/wave_scalper.py`, `_sweep_candle_wave.py`,
+`_wave_strict_compare.py`, `_wave_engine_test.py`, `_wave_real_compare.py`,
+`WAVE_STRATEGY.md` (§6 updated), `AGENTS.md`.

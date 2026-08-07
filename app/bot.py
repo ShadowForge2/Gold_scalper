@@ -41,6 +41,13 @@ except Exception:
     _HAS_MOMENTUM = False
 
 try:
+    from app.wave_scalper import WaveScalper
+    _HAS_WAVE = True
+except Exception:
+    WaveScalper = None
+    _HAS_WAVE = False
+
+try:
     from app.brain import BrainOrchestrator
     _HAS_BRAIN = True
 except Exception:
@@ -93,14 +100,21 @@ class Bot:
         self._symbol_momentum_m1_cache: Dict[str, Optional[pd.DataFrame]] = {}  # cached long M1 history
         self._symbol_momentum_m1_cache_ts: Dict[str, float] = {}  # cache fetch time
         self._last_momentum_warn_ts: float = 0.0  # throttle for short-window warnings
+        # Wave-scalper per-symbol state
+        self._symbol_wave_engine: Dict[str, Optional[object]] = {}  # WaveScalper instances
+        self._symbol_wave_entry: Dict[str, bool] = {}   # current trade is a wave entry
+        self._symbol_wave_cache_ts: Dict[str, float] = {}  # M1 history fetch time
+        self._last_wave_warn_ts: float = 0.0  # throttle for wave history warnings
 
         # Load per-symbol models and signal engines
-        # ML (CandleML/CandleBrain) models are skipped for momentum-engine pairs —
-        # momentum owns entry/exit for those symbols, so the models are never used.
+        # ML (CandleML/CandleBrain) models are skipped for momentum/wave-owned
+        # pairs — those engines own entry/exit, so the models are never used.
         for sym in self.symbols:
             candle_pred = None
-            momentum_owns = bool(getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False))
-            if (not momentum_owns
+            wave_owns = bool(getattr(cfg, "WAVE_ENGINE_ENABLED", {}).get(sym, False)) and _HAS_WAVE
+            momentum_owns = (not wave_owns
+                             and bool(getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False)))
+            if (not wave_owns and not momentum_owns
                     and _HAS_CANDLE and getattr(cfg, "CANDLE_ML_ENABLED", True)):
                 candle_path = cfg.CANDLE_ML_MODEL_PATHS.get(sym, cfg.CANDLE_ML_MODEL_PATHS.get("XAUUSD"))
                 try:
@@ -119,7 +133,7 @@ class Bot:
 
             # Load CandleBrain Transformer model
             brain_pred = None
-            if (not momentum_owns
+            if (not wave_owns and not momentum_owns
                     and _HAS_CANDLE_BRAIN and getattr(cfg, "CANDLE_BRAIN_ENABLED", False)):
                 brain_path = cfg.CANDLE_BRAIN_MODEL_PATHS.get(sym)
                 if brain_path:
@@ -183,6 +197,47 @@ class Bot:
             self._symbol_momentum_eval_boundary[sym] = 0
             self._symbol_momentum_m1_cache[sym] = None
             self._symbol_momentum_m1_cache_ts[sym] = 0.0
+
+            # ── Wave scalper engine (owns entry/exit when enabled) ──
+            wave_eng = None
+            if wave_owns:
+                try:
+                    import joblib
+                    model_dir = getattr(cfg, "CANDLE_ENGINE_MODEL_DIR", "models/candle_h1")
+                    model_path = os.path.join(model_dir, f"{sym}.joblib")
+                    loaded = None
+                    if os.path.exists(model_path):
+                        loaded = joblib.load(model_path)
+                    model = loaded.get("model") if isinstance(loaded, dict) else loaded
+                    feature_cols = loaded.get("feature_cols") if isinstance(loaded, dict) else None
+                    if model is None:
+                        self.logger.warning(f"[{sym}] Wave scalper: no model at {model_path} — chop gate disabled")
+                    wave_eng = WaveScalper(
+                        symbol=sym,
+                        model=model,
+                        feature_cols=feature_cols,
+                        logger=self.logger,
+                        entry_r=float(getattr(cfg, "CANDLE_ENGINE_WAVE_ENTRY_R", 0.50)),
+                        cut_r=float(getattr(cfg, "CANDLE_ENGINE_WAVE_CUT_R", 0.03)),
+                        profit_r=float(getattr(cfg, "CANDLE_ENGINE_WAVE_PROFIT_R", 0.05)),
+                        cost_r=float(getattr(cfg, "CANDLE_ENGINE_COST_R", 0.05)),
+                        jump_break_r=float(getattr(cfg, "CANDLE_ENGINE_WAVE_JUMP_BREAK_R", getattr(cfg, "CANDLE_ENGINE_JUMP_BREAK_R", 1.5))),
+                        jump_body_r=float(getattr(cfg, "CANDLE_ENGINE_WAVE_JUMP_BODY_R", getattr(cfg, "CANDLE_ENGINE_JUMP_BODY_R", 0.70))),
+                        trail_r=float(getattr(cfg, "CANDLE_ENGINE_WAVE_TRAIL_R", 0.5)),
+                        reversal_r=float(getattr(cfg, "CANDLE_ENGINE_WAVE_REVERSAL_R", 0.5)),
+                        rider_enabled=not bool(getattr(cfg, "CANDLE_ENGINE_WAVE_NO_RIDER", False)),
+                    )
+                    self.logger.info(
+                        f"[{sym}] Wave scalper enabled (entry {wave_eng.entry_r}R cut "
+                        f"{wave_eng.cut_r}R profit {wave_eng.profit_r}R rider "
+                        f"{wave_eng.jump_break_r}R/{wave_eng.jump_body_r:.2f})"
+                    )
+                except Exception as e:
+                    self.logger.warning(f"[{sym}] Wave scalper init failed: {e}")
+                    wave_eng = None
+            self._symbol_wave_engine[sym] = wave_eng
+            self._symbol_wave_entry[sym] = False
+            self._symbol_wave_cache_ts[sym] = 0.0
 
         # ── BRAIN — hierarchical trade decision intelligence ──
         self.brain = None
@@ -571,13 +626,14 @@ class Bot:
                     # Recovered momentum trades keep their momentum exit path —
                     # SL (per-pair) + jump target + retrace + max hold.
                     is_mom = bool(getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False))
+                    wave_owns_rec = bool(getattr(cfg, "WAVE_ENGINE_ENABLED", {}).get(sym, False))
                     if is_mom:
                         mom_eng = self._symbol_momentum_engine.get(sym)
                         sl_r = float(mom_eng.sl_r) if mom_eng is not None else float(getattr(cfg, "MOMENTUM_SL_R", 1.0))
                         sl = broker_sl if broker_sl > 0 else (entry_price - sl_r * atr_val if direction == "BUY" else entry_price + sl_r * atr_val)
                         tp = None
                     self._symbol_signals[sym] = {
-                        "signal_type": "momentum" if is_mom else "candle_ml",
+                        "signal_type": "wave" if wave_owns_rec else ("momentum" if is_mom else "candle_ml"),
                         "direction": direction,
                         "sl": sl,
                         "tp1": tp,
@@ -585,14 +641,19 @@ class Bot:
                         "score": 0.5,
                         "recovered": True,
                     }
-                    self._symbol_momentum_entry[sym] = is_mom
-                    self._symbol_momentum_peak[sym] = entry_price if is_mom else None
+                    if wave_owns_rec:
+                        wave_eng = self._symbol_wave_engine.get(sym)
+                        if wave_eng is not None:
+                            wave_eng.adopt_position(direction, entry_price, atr=atr_val)
+                            self._symbol_wave_entry[sym] = True
+                    self._symbol_momentum_entry[sym] = is_mom and not wave_owns_rec
+                    self._symbol_momentum_peak[sym] = entry_price if (is_mom and not wave_owns_rec) else None
                     self._symbol_momentum_last_boundary[sym] = 0
                     self._symbol_momentum_last_signal_ts[sym] = time.time()
                     self.logger.info(
                         f"[{sym}] Reconstructed signal: {direction} entry={entry_price:.2f} "
                         f"sl={sl:.2f} tp={tp if tp else 'n/a'} atr={atr_val:.2f} "
-                        f"type={'momentum' if is_mom else 'candle_ml'}"
+                        f"type={'wave' if wave_owns_rec else ('momentum' if is_mom else 'candle_ml')}"
                     )
 
         info = self.client.get_symbol_info(sym)
@@ -841,13 +902,76 @@ class Bot:
         sig["candle_open"] = sig.get("close", current_price)
         return sig
 
+    def _wave_refresh(self, sym: str, wave_eng) -> Optional[pd.DataFrame]:
+        """Fetch fresh M1 bars for the wave engine (long history on a refresh
+        timer, short tail every tick). Returns the recent frame or None."""
+        now = time.time()
+        refresh = getattr(cfg, "WAVE_REFRESH_SEC", 60)
+        try:
+            if now - self._symbol_wave_cache_ts.get(sym, 0.0) >= refresh:
+                from datetime import timedelta
+                hist = int(getattr(cfg, "WAVE_M1_HISTORY_BARS", 8000))
+                window_min = hist + 600
+                to_dt = datetime.utcnow()
+                from_dt = to_dt - timedelta(seconds=window_min * 60)
+                fetched = self.client.get_rates_range(sym, 1, from_dt, to_dt)
+                self._symbol_wave_cache_ts[sym] = now
+                if fetched is not None and len(fetched) > 0:
+                    wave_eng.set_history(fetched)
+        except Exception as e:
+            self.logger.warning(f"[{sym}] Wave M1 history refresh failed: {e}")
+        try:
+            recent = self.client.get_rates(sym, 1, 30)
+            if recent is not None and len(recent) > 0:
+                return recent
+        except Exception as e:
+            if time.time() - self._last_wave_warn_ts > 600:
+                self._last_wave_warn_ts = time.time()
+                self.logger.warning(f"[{sym}] Wave M1 fetch failed: {e}")
+        return None
+
+    def _wave_entry_signal(self, sym: str, current_price: float, symbol_info: Dict) -> Optional[Dict]:
+        """Wave-scalper entry: feed fresh M1 bars; return a signal dict when the
+        engine fires a wave/jump entry trigger (order still needs confirmation)."""
+        eng = self._symbol_wave_engine.get(sym)
+        if eng is None:
+            return None
+        recent = self._wave_refresh(sym, eng)
+        now = time.time()
+        if recent is None:
+            return None
+        try:
+            action = eng.feed(recent, now_ts=now)
+        except Exception as e:
+            self.logger.warning(f"[{sym}] Wave eval failed: {e}")
+            return None
+        if action is None or action.get("type") != "enter":
+            return None
+        atr = eng.atr if eng.atr > 0 else (current_price * 0.001)
+        return {
+            "direction": action["direction"],
+            "score": 0.5,
+            "price": current_price,
+            "candle_open": eng.state_dict().get("candle_open", 0) or current_price,
+            "sl": None,
+            "tp1": None,
+            "signal_type": "wave",
+            "atr": atr,
+            "high_volatility": False,
+            "bar_time": now,
+            "gate_ok": eng.gate_ok,
+        }
+
     async def _search_symbol(self, sym: str, pnl_data: Dict):
         """Search for entry signal on a single symbol."""
         engine = self._symbol_engines.get(sym)
         if engine is None:
             return
 
-        momentum_enabled = bool(getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False))
+        momentum_enabled = (not bool(getattr(cfg, "WAVE_ENGINE_ENABLED", {}).get(sym, False))
+                            and bool(getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False)))
+        wave_owns = (bool(getattr(cfg, "WAVE_ENGINE_ENABLED", {}).get(sym, False))
+                     and self._symbol_wave_engine.get(sym) is not None)
 
         m1_data = None
         current_atr = 0.0
@@ -906,8 +1030,18 @@ class Bot:
 
         signal = None
 
+        # ── Wave scalper — owns entry for its symbols ──
+        if wave_owns:
+            signal = self._wave_entry_signal(sym, current_price, symbol_info)
+            if signal is not None:
+                self.logger.signal(
+                    f"[{sym}] Wave: {signal['direction']} score={signal['score']:.2f} "
+                    f"px={current_price:.2f} atr={signal.get('atr', 0):.4f} "
+                    f"gate={signal.get('gate_ok', True)}"
+                )
+
         # ── Momentum-jump engine — owns entry for its symbols ──
-        if momentum_enabled:
+        elif momentum_enabled:
             signal = self._momentum_entry_signal(sym, current_price, high_vol)
             if signal is not None:
                 self.logger.signal(
@@ -919,7 +1053,7 @@ class Bot:
         candle_brain = self._symbol_candle_brain.get(sym)
 
         # ── CandleBrain Transformer entry (priority over CandleML) ──
-        if not momentum_enabled and candle_brain is not None and getattr(cfg, "CANDLE_BRAIN_ENABLED", False) and signal is None:
+        if not wave_owns and not momentum_enabled and candle_brain is not None and getattr(cfg, "CANDLE_BRAIN_ENABLED", False) and signal is None:
             try:
                 brain_result = candle_brain.predict(m1_data)
                 if brain_result is not None:
@@ -979,7 +1113,7 @@ class Bot:
                 return high_vol
             return False
 
-        if not momentum_enabled and _use_candle_ml():
+        if not wave_owns and not momentum_enabled and _use_candle_ml():
             try:
                 from app.candle_ml import compute_candle_features
                 m1_idx = m1_data.set_index("time") if "time" in m1_data.columns else m1_data
@@ -1214,6 +1348,7 @@ class Bot:
             self._symbol_momentum_entry[sym] = False
             self._symbol_momentum_peak[sym] = None
             self._symbol_momentum_last_boundary[sym] = 0
+            self._symbol_wave_entry[sym] = False
             return
 
         acct = self.client.get_account_info()
@@ -1221,8 +1356,9 @@ class Bot:
 
         direction = sym_positions[0].get("type", "BUY") if sym_positions else "BUY"
 
-        # Candle ML trades skip event loss — the candle backtest has no event-loss stop.
-        is_candle = self._symbol_candle_entry.get(sym, False)
+        # Candle ML / wave trades skip event loss — those backtests have no event-loss stop.
+        is_candle = (self._symbol_candle_entry.get(sym, False)
+                     or self._symbol_wave_entry.get(sym, False))
         if not is_candle:
             # Correlated symbols (EVENT_LOSS_GROUP) share ONE combined event-loss
             # budget. US100 + US500 move ~95% together, so pool their PnL so a
@@ -1260,6 +1396,7 @@ class Bot:
                         self._symbol_momentum_entry[g_sym] = False
                         self._symbol_momentum_peak[g_sym] = None
                         self._symbol_momentum_last_boundary[g_sym] = 0
+                        self._symbol_wave_entry[g_sym] = False
                     await self._notify(
                         "trade_close",
                         f"Trade Closed — {sym}",
@@ -1280,6 +1417,53 @@ class Bot:
 
         pos_signal = self._symbol_signals.get(sym)
         minutes_held = (time.time() - event_start) / 60.0 if event_start else 0.0
+
+        # ── Wave scalper exit — engine-driven (cut / lock / rider trail / candle end) ──
+        # No timeout, no event loss. The engine emits a pending exit action on a
+        # completed M1 bar; we close at market and confirm_exit() so it can
+        # re-enter the next wave from the exit price.
+        if self._symbol_wave_entry.get(sym, False):
+            eng = self._symbol_wave_engine.get(sym)
+            if eng is None:
+                self.logger.warning(f"[{sym}] Wave engine missing for open wave trade")
+                self._symbol_wave_entry[sym] = False
+            else:
+                recent = self._wave_refresh(sym, eng)
+                action = None
+                if recent is not None:
+                    try:
+                        action = eng.feed(recent, now_ts=time.time())
+                    except Exception as e:
+                        self.logger.warning(f"[{sym}] Wave exit eval failed: {e}")
+                if action is None or action.get("type") != "exit":
+                    return
+                exit_reason = action.get("reason", "wave_exit")
+                self.logger.signal(
+                    f"[{sym}] Wave exit: {exit_reason} | dir={direction} entry={entry_price:.2f} "
+                    f"px={current_px:.2f} atr={eng.atr:.4f} held={minutes_held:.1f}m"
+                )
+                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                for pos_data in closed:
+                    self.position_manager.note_closed(
+                        pos_data, exit_reason=exit_reason,
+                        score=pos_signal.get("score", 0) if pos_signal else 0,
+                        balance=balance)
+                if closed:
+                    pnl = sum(p.get("profit", 0) for p in closed)
+                    self._record_trade_result(sym, pnl, False)
+                    eng.confirm_exit()
+                    self._symbol_states[sym] = self.STATES["IDLE"]
+                    self._symbol_event_start_ts[sym] = None
+                    self._symbol_wave_entry[sym] = False
+                    await self._notify(
+                        "trade_close",
+                        f"Trade Closed — {sym}",
+                        f"{direction} {sym} closed ({exit_reason}) | PnL: ${pnl:+.2f} | held {int(minutes_held)}m",
+                        {"symbol": sym, "direction": direction, "exit_reason": exit_reason, "pnl": pnl, "held_minutes": minutes_held},
+                    )
+                else:
+                    self.logger.warning(f"[{sym}] Wave exit close failed, retrying next tick")
+                return
 
         if is_candle:
             # ── Candle ML exit — trailing reversal line + TP only ──
@@ -1831,6 +2015,15 @@ class Bot:
             self._symbol_event_start_ts[sym] = time.time()
             self._symbol_candle_entry[sym] = signal.get("signal_type") in ("candle_ml", "candle_brain")
             self._symbol_flip_streak[sym] = 0  # fresh trade — no stale flip streak
+            if signal.get("signal_type") == "wave":
+                # Wave trade: anchor cut/lock/trail at the ACTUAL fill (the
+                # engine state machine owns all exits from here).
+                wave_eng = self._symbol_wave_engine.get(sym)
+                if wave_eng is not None:
+                    wave_eng.confirm_entry(current_price)
+                    self._symbol_wave_entry[sym] = True
+                else:
+                    self._symbol_wave_entry[sym] = False
             if signal.get("signal_type") == "momentum":
                 # Momentum-jump trade: SL anchored at the ACTUAL fill (like the
                 # candle TP anchor), peak starts at the fill, exits evaluated on
@@ -1886,6 +2079,10 @@ class Bot:
                     pass
         else:
             self._symbol_states[sym] = self.STATES["IDLE"]
+            if signal.get("signal_type") == "wave":
+                wave_eng = self._symbol_wave_engine.get(sym)
+                if wave_eng is not None:
+                    wave_eng.cancel_entry()
 
     def _write_state(self):
         if not self._state_file:
