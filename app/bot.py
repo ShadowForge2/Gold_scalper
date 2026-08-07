@@ -496,7 +496,7 @@ class Bot:
 
     async def _tick(self):
         failover = getattr(self, '_failover', None)
-        if failover and not await failover.can_trade():
+        if failover and not await failover.can_manage():
             await asyncio.sleep(5)
             return
 
@@ -730,6 +730,9 @@ class Bot:
         elif state == self.STATES["WAITING_FOR_FUNDS"]:
             await self._handle_waiting_for_funds(sym)
         else:
+            failover = getattr(self, '_failover', None)
+            if failover and not await failover.can_trade():
+                return
             await self._search_symbol(sym, pnl_data)
 
     async def _update_news_state(self):

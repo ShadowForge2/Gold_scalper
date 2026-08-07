@@ -10,6 +10,55 @@ if _env_url.startswith("postgresql://") and "+" not in _env_url:
 
 database = Database(SQLITE_URL)
 
+# ---------------------------------------------------------------------------
+# Serialized access layer.
+#
+# The `databases` library wraps every asyncio task in a per-task connection
+# wrapper whose acquire assertion ("Connection is already acquired") is
+# fragile under concurrency/cancellation; SQLite additionally rejects
+# concurrent writers ("database is locked").  Routing EVERY operation through
+# a single lock serializes all access, which deterministically prevents both
+# failure modes.  Transient errors are retried once with a short backoff so a
+# single hiccup can never propagate to callers.
+# ---------------------------------------------------------------------------
+_db_lock = asyncio.Lock()
+
+_LOCKED_MARKERS = (
+    "already acquired",
+    "database is locked",
+    "database is busy",
+    "busy",
+    "deadlock",
+)
+
+
+async def _serialized(coro_factory):
+    for attempt in (1, 2):
+        async with _db_lock:
+            try:
+                return await coro_factory()
+            except Exception as e:
+                if attempt == 2 or not any(m in str(e).lower() for m in _LOCKED_MARKERS):
+                    raise
+                await asyncio.sleep(0.2)
+
+
+async def execute(sql, values=None):
+    return await _serialized(lambda: database.execute(sql, values or {}))
+
+
+async def fetch_one(sql, values=None):
+    return await _serialized(lambda: database.fetch_one(sql, values or {}))
+
+
+async def fetch_all(sql, values=None):
+    return await _serialized(lambda: database.fetch_all(sql, values or {}))
+
+
+async def fetch_val(sql, values=None, column=0):
+    return await _serialized(lambda: database.fetch_val(sql, values or {}, column=column))
+
+
 CREATE_DEVICES = """
 CREATE TABLE IF NOT EXISTS devices (
     device_id TEXT PRIMARY KEY,

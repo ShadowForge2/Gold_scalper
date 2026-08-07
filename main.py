@@ -156,7 +156,10 @@ async def startup():
     set_main_loop(_aio.get_running_loop())
     await startup_db()
     if _db_connected:
-        await failover.init_db(db_mod.database)
+        await failover.init_db(
+            db_url=str(db_mod.database.url),
+            database=db_mod.database,
+        )
     await bot.initialize()
     bot._account_id = cfg.CAPITAL_IDENTIFIER
     bot._failover = failover

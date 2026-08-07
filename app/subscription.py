@@ -60,7 +60,7 @@ async def _send_fcm_push(identifier: str, title: str, body: str, data: Optional[
         if app is None:
             return
         from firebase_admin import messaging as fcm
-        rows = await db_mod.database.fetch_all(
+        rows = await db_mod.fetch_all(
             """SELECT f.fcm_token FROM fcm_tokens f
                JOIN accounts a ON a.device_id = f.device_id
                WHERE a.identifier = :ident""",
@@ -97,14 +97,14 @@ async def _cached_device(device_id: str, force: bool = False) -> Optional[Dict]:
         ts = _device_cache_ts.get(device_id, 0)
         if cached is not None and now - ts < _DEVICE_CACHE_TTL:
             return cached
-    row = await db_mod.database.fetch_one(
+    row = await db_mod.fetch_one(
         "SELECT * FROM devices WHERE device_id = :did", {"did": device_id}
     )
     if row is None:
         _device_cache[device_id] = None
         _device_cache_ts[device_id] = now
         return None
-    rows = await db_mod.database.fetch_all(
+    rows = await db_mod.fetch_all(
         "SELECT * FROM accounts WHERE device_id = :did", {"did": device_id}
     )
     data = dict(row) | {"accounts": [dict(a) for a in rows]}
@@ -114,17 +114,17 @@ async def _cached_device(device_id: str, force: bool = False) -> Optional[Dict]:
 
 
 async def ensure_device(device_id: str) -> Dict:
-    row = await db_mod.database.fetch_one(
+    row = await db_mod.fetch_one(
         "SELECT * FROM devices WHERE device_id = :did", {"did": device_id}
     )
     if row:
-        account_rows = await db_mod.database.fetch_all(
+        account_rows = await db_mod.fetch_all(
             "SELECT * FROM accounts WHERE device_id = :did", {"did": device_id}
         )
         return dict(row) | {"accounts": [dict(a) for a in account_rows]}
 
     now = datetime.utcnow().isoformat()
-    await db_mod.database.execute(
+    await db_mod.execute(
         "INSERT INTO devices (device_id, first_seen) VALUES (:did, :fs)",
         {"did": device_id, "fs": now},
     )
@@ -136,7 +136,7 @@ async def get_device(device_id: str, force: bool = False) -> Optional[Dict]:
 
 
 async def get_accounts(device_id: str) -> List[Dict]:
-    rows = await db_mod.database.fetch_all(
+    rows = await db_mod.fetch_all(
         "SELECT * FROM accounts WHERE device_id = :did", {"did": device_id}
     )
     return [dict(r) for r in rows]
@@ -145,7 +145,7 @@ async def get_accounts(device_id: str) -> List[Dict]:
 async def add_account(device_id: str, api_key: str, identifier: str, password: str, demo: bool = True) -> bool:
     _device_cache.pop(device_id, None)
     await ensure_device(device_id)
-    await db_mod.database.execute(
+    await db_mod.execute(
         """INSERT INTO accounts (device_id, api_key, identifier, password, demo)
            VALUES (:did, :ak, :id, :pw, :dm)
            ON CONFLICT (device_id, identifier)
@@ -158,7 +158,7 @@ async def add_account(device_id: str, api_key: str, identifier: str, password: s
 
 async def remove_account(device_id: str, identifier: str) -> bool:
     _device_cache.pop(device_id, None)
-    result = await db_mod.database.execute(
+    result = await db_mod.execute(
         "DELETE FROM accounts WHERE device_id = :did AND identifier = :id",
         {"did": device_id, "id": identifier},
     )
@@ -173,14 +173,14 @@ async def remove_account(device_id: str, identifier: str) -> bool:
 
 
 async def set_account_active(identifier: str, active: bool):
-    await db_mod.database.execute(
+    await db_mod.execute(
         "UPDATE accounts SET active = :act WHERE identifier = :id",
         {"act": int(active), "id": identifier},
     )
 
 
 async def get_account_by_identifier(identifier: str) -> Optional[Dict]:
-    row = await db_mod.database.fetch_one(
+    row = await db_mod.fetch_one(
         "SELECT api_key, identifier, password, demo, active FROM accounts WHERE identifier = :id LIMIT 1",
         {"id": identifier},
     )
@@ -188,7 +188,7 @@ async def get_account_by_identifier(identifier: str) -> Optional[Dict]:
 
 
 async def get_active_accounts() -> List[Dict]:
-    rows = await db_mod.database.fetch_all(
+    rows = await db_mod.fetch_all(
         """SELECT DISTINCT identifier, api_key, password, demo
            FROM accounts WHERE active = 1"""
     )
@@ -197,7 +197,7 @@ async def get_active_accounts() -> List[Dict]:
 
 async def restore_device_by_capital_id(identifier: str, new_device_id: str) -> Optional[Dict]:
     _device_cache.pop(new_device_id, None)
-    old_device = await db_mod.database.fetch_one(
+    old_device = await db_mod.fetch_one(
         """SELECT DISTINCT a.device_id FROM accounts a
            WHERE a.identifier = :id AND a.device_id != :ndid""",
         {"id": identifier, "ndid": new_device_id},
@@ -208,22 +208,22 @@ async def restore_device_by_capital_id(identifier: str, new_device_id: str) -> O
     old_did = old_device["device_id"]
     _device_cache.pop(old_did, None)
 
-    existing = await db_mod.database.fetch_one(
+    existing = await db_mod.fetch_one(
         "SELECT 1 FROM devices WHERE device_id = :did", {"did": new_device_id}
     )
 
     if existing is None:
         now = datetime.utcnow().isoformat()
-        await db_mod.database.execute(
+        await db_mod.execute(
             "UPDATE devices SET device_id = :ndid, restored_from = :old WHERE device_id = :odid",
             {"ndid": new_device_id, "old": old_did, "odid": old_did},
         )
-        await db_mod.database.execute(
+        await db_mod.execute(
             "UPDATE accounts SET device_id = :ndid WHERE device_id = :odid",
             {"ndid": new_device_id, "odid": old_did},
         )
     else:
-        await db_mod.database.execute(
+        await db_mod.execute(
             """INSERT INTO accounts (device_id, api_key, identifier, password, demo, active)
                SELECT :ndid, api_key, identifier, password, demo, active FROM accounts
                WHERE device_id = :odid AND identifier NOT IN (
@@ -231,8 +231,8 @@ async def restore_device_by_capital_id(identifier: str, new_device_id: str) -> O
                )""",
             {"ndid": new_device_id, "odid": old_did, "ndid2": new_device_id},
         )
-        await db_mod.database.execute("DELETE FROM devices WHERE device_id = :odid", {"odid": old_did})
-        await db_mod.database.execute("DELETE FROM accounts WHERE device_id = :odid", {"odid": old_did})
+        await db_mod.execute("DELETE FROM devices WHERE device_id = :odid", {"odid": old_did})
+        await db_mod.execute("DELETE FROM accounts WHERE device_id = :odid", {"odid": old_did})
 
     return await get_device(new_device_id)
 
@@ -243,13 +243,13 @@ PERIOD_DAYS = 30
 
 
 async def _get_sub_record(identifier: str) -> Optional[Dict]:
-    row = await db_mod.database.fetch_one(
+    row = await db_mod.fetch_one(
         "SELECT * FROM subscriptions WHERE identifier = :id", {"id": identifier}
     )
     if row is None:
         return None
     record = dict(row)
-    period_rows = await db_mod.database.fetch_all(
+    period_rows = await db_mod.fetch_all(
         "SELECT * FROM monthly_periods WHERE identifier = :id ORDER BY period_start",
         {"id": identifier},
     )
@@ -259,7 +259,7 @@ async def _get_sub_record(identifier: str) -> Optional[Dict]:
 
 async def _save_sub_record(record: Dict):
     ident = record["identifier"]
-    await db_mod.database.execute(
+    await db_mod.execute(
         """INSERT INTO subscriptions (identifier, first_connected_at, trial_end, subscribed, subscription_end, paid_amount)
            VALUES (:id, :fca, :te, :sub, :se, :pa)
            ON CONFLICT (identifier)
@@ -274,7 +274,7 @@ async def _save_sub_record(record: Dict):
     )
 
     for p in record.get("monthly_periods", []):
-        await db_mod.database.execute(
+        await db_mod.execute(
             """INSERT INTO monthly_periods (identifier, period_start, period_end, starting_balance,
                ending_balance, cumulative_profit, fee_15pct, fee_paid, paid_at)
                VALUES (:id, :ps, :pe, :sb, :eb, :cp, :fp, :fpd, :pa)
@@ -569,7 +569,7 @@ _maxelpay_orders: dict = {}
 async def _maxelpay_register_order(order_id: str, identifier: str):
     _maxelpay_orders[order_id] = identifier
     try:
-        await db_mod.database.execute(
+        await db_mod.execute(
             "INSERT INTO pending_orders (order_id, identifier, gateway, created_at) "
             "VALUES (:oid, :ident, 'maxelpay', :ca) "
             "ON CONFLICT (order_id) DO NOTHING",
@@ -583,7 +583,7 @@ async def _maxelpay_get_identifier(order_id: str) -> str:
     ident = _maxelpay_orders.get(order_id, "")
     if not ident:
         try:
-            row = await db_mod.database.fetch_one(
+            row = await db_mod.fetch_one(
                 "SELECT identifier FROM pending_orders WHERE order_id = :oid",
                 {"oid": order_id},
             )
@@ -596,7 +596,7 @@ async def _maxelpay_get_identifier(order_id: str) -> str:
 
 async def _is_payment_processed(ref_key: str) -> bool:
     try:
-        row = await db_mod.database.fetch_one(
+        row = await db_mod.fetch_one(
             "SELECT 1 FROM processed_payments WHERE ref_key = :rk", {"rk": ref_key}
         )
         return row is not None
@@ -606,7 +606,7 @@ async def _is_payment_processed(ref_key: str) -> bool:
 
 async def _mark_payment_processed(ref_key: str, identifier: str, gateway: str, amount: float):
     try:
-        await db_mod.database.execute(
+        await db_mod.execute(
             "INSERT INTO processed_payments (ref_key, identifier, gateway, amount, processed_at) "
             "VALUES (:rk, :ident, :gw, :amt, :pa) "
             "ON CONFLICT (ref_key) DO NOTHING",
@@ -743,11 +743,11 @@ async def create_notification(identifier: str, ntype: str, title: str, message: 
     sql = """INSERT INTO notifications (id, identifier, type, title, message, data, created_at)
              VALUES (:nid, :ident, :type, :title, :msg, :data, :ca)"""
     try:
-        future = _schedule_on_main(db_mod.database.execute(sql, values))
+        future = _schedule_on_main(db_mod.execute(sql, values))
         if future is not None:
             await asyncio.wrap_future(future)
         else:
-            await db_mod.database.execute(sql, values)
+            await db_mod.execute(sql, values)
     except Exception as e:
         logger.warning("DB notification insert failed: %s", e)
     try:
@@ -759,7 +759,7 @@ async def create_notification(identifier: str, ntype: str, title: str, message: 
 
 
 async def get_notifications(identifier: str, limit: int = 50) -> List[Dict]:
-    rows = await db_mod.database.fetch_all(
+    rows = await db_mod.fetch_all(
         """SELECT id, type, title, message, data, is_read, created_at
            FROM notifications WHERE identifier = :ident
            ORDER BY created_at DESC LIMIT :lim""",
@@ -769,21 +769,21 @@ async def get_notifications(identifier: str, limit: int = 50) -> List[Dict]:
 
 
 async def mark_notification_read(notification_id: str):
-    await db_mod.database.execute(
+    await db_mod.execute(
         "UPDATE notifications SET is_read = 1 WHERE id = :id",
         {"id": notification_id},
     )
 
 
 async def mark_all_notifications_read(identifier: str):
-    await db_mod.database.execute(
+    await db_mod.execute(
         "UPDATE notifications SET is_read = 1 WHERE identifier = :ident AND is_read = 0",
         {"ident": identifier},
     )
 
 
 async def get_unread_notification_count(identifier: str) -> int:
-    row = await db_mod.database.fetch_one(
+    row = await db_mod.fetch_one(
         "SELECT COUNT(*) as cnt FROM notifications WHERE identifier = :ident AND is_read = 0",
         {"ident": identifier},
     )
