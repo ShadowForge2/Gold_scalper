@@ -27,13 +27,6 @@ except Exception:
     _HAS_CANDLE = False
 
 try:
-    from app.candle_brain import CandleBrainPredictor
-    _HAS_CANDLE_BRAIN = True
-except Exception:
-    CandleBrainPredictor = None
-    _HAS_CANDLE_BRAIN = False
-
-try:
     from app.momentum_engine import MomentumEngine
     _HAS_MOMENTUM = True
 except Exception:
@@ -46,13 +39,6 @@ try:
 except Exception:
     WaveScalper = None
     _HAS_WAVE = False
-
-try:
-    from app.brain import BrainOrchestrator
-    _HAS_BRAIN = True
-except Exception:
-    BrainOrchestrator = None
-    _HAS_BRAIN = False
 
 
 class Bot:
@@ -81,7 +67,6 @@ class Bot:
         self._symbol_atr_history: Dict[str, list] = {}  # rolling ATR for vol detection
         self._symbol_vol_regime: Dict[str, bool] = {}  # track current vol regime per symbol
         self._symbol_candle_ml: Dict[str, Optional[CandleML]] = {}
-        self._symbol_candle_brain: Dict[str, Optional[object]] = {}  # CandleBrainPredictor per symbol
         self._symbol_last_rescan_ts: Dict[str, float] = {}
         self._symbol_rescan_count: Dict[str, int] = {}
         self._symbol_candle_entry: Dict[str, bool] = {}
@@ -131,19 +116,6 @@ class Bot:
             self._symbol_engines[sym] = engine
             self._symbol_candle_ml[sym] = candle_pred
 
-            # Load CandleBrain Transformer model
-            brain_pred = None
-            if (not wave_owns and not momentum_owns
-                    and _HAS_CANDLE_BRAIN and getattr(cfg, "CANDLE_BRAIN_ENABLED", False)):
-                brain_path = cfg.CANDLE_BRAIN_MODEL_PATHS.get(sym)
-                if brain_path:
-                    try:
-                        brain_pred = CandleBrainPredictor(model_path=brain_path)
-                        self.logger.info(f"[{sym}] CandleBrain loaded from {brain_path}")
-                    except Exception as e:
-                        self.logger.warning(f"[{sym}] CandleBrain load failed: {e}")
-                        brain_pred = None
-            self._symbol_candle_brain[sym] = brain_pred
             self._symbol_states[sym] = self.STATES["IDLE"]
             self._symbol_signals[sym] = None
             self._symbol_event_start_ts[sym] = None
@@ -238,20 +210,6 @@ class Bot:
             self._symbol_wave_engine[sym] = wave_eng
             self._symbol_wave_entry[sym] = False
             self._symbol_wave_cache_ts[sym] = 0.0
-
-        # ── BRAIN — hierarchical trade decision intelligence ──
-        self.brain = None
-        if _HAS_BRAIN and getattr(cfg, "BRAIN_ENABLED", True):
-            try:
-                self.brain = BrainOrchestrator(
-                    symbols=self.symbols,
-                    model_dir=getattr(cfg, "BRAIN_MODEL_DIR", "models/brain"),
-                    candle_models=self._symbol_candle_ml,
-                )
-                self.logger.info(f"Brain initialized: {len(self.symbols)} symbols")
-            except Exception as e:
-                self.logger.warning(f"Brain init failed: {e}")
-                self.brain = None
 
         # Legacy single-symbol references (use first symbol for backward compat)
         first_sym = self.symbols[0] if self.symbols else cfg.SYMBOL
@@ -698,33 +656,6 @@ class Bot:
 
         state = self._symbol_states[sym]
 
-        # ── BRAIN: update feature cache every tick ──
-        if self.brain is not None and state == self.STATES["IN_TRADE"]:
-            try:
-                m1_bars_brain = getattr(cfg, "CANDLE_ML_M1_HISTORY_BARS", 500)
-                m1_brain = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, m1_bars_brain)
-                if m1_brain is not None and len(m1_brain) > 10:
-                    sym_positions_brain = [p for p in pnl_data.get("positions", []) if p.get("_symbol_code") == sym]
-                    entry_info = None
-                    if sym_positions_brain:
-                        pos_b = sym_positions_brain[0]
-                        entry_info = {
-                            "direction": pos_b.get("type", "BUY"),
-                            "entry_price": pos_b.get("price_open", 0),
-                            "sl": pos_b.get("sl", 0),
-                            "tp1": pos_b.get("tp", 0),
-                            "atr": self._symbol_signals.get(sym, {}).get("atr_value", 0),
-                            "ml_confidence": self._symbol_signals.get(sym, {}).get("score", 0.5),
-                            "adx_at_entry": self._symbol_signals.get(sym, {}).get("adx_at_entry", 0),
-                            "regime_at_entry": self._symbol_signals.get(sym, {}).get("regime_at_entry", "UNKNOWN"),
-                            "event_start": self._symbol_event_start_ts.get(sym),
-                        }
-                    symbol_info_b = self.client.get_symbol_info(sym)
-                    price_b = symbol_info_b.get("ask", 0) if symbol_info_b else 0
-                    self.brain.update_features(sym, m1_brain, price_b, entry_info)
-            except Exception as e:
-                self.logger.debug(f"[{sym}] Brain feature update failed: {e}")
-
         if state == self.STATES["IN_TRADE"]:
             await self._handle_in_trade(sym, pnl_data)
         elif state == self.STATES["WAITING_FOR_FUNDS"]:
@@ -1053,57 +984,6 @@ class Bot:
                 )
 
         candle_ml = self._symbol_candle_ml.get(sym)
-        candle_brain = self._symbol_candle_brain.get(sym)
-
-        # ── CandleBrain Transformer entry (priority over CandleML) ──
-        if not wave_owns and not momentum_enabled and candle_brain is not None and getattr(cfg, "CANDLE_BRAIN_ENABLED", False) and signal is None:
-            try:
-                brain_result = candle_brain.predict(m1_data)
-                if brain_result is not None:
-                    action = brain_result.get("action")  # BUY / SELL / NONE
-                    confidence = brain_result.get("confidence", 0)
-                    expectancy = brain_result.get("expectancy", 0.0)
-                    entry_thresh = getattr(cfg, "CANDLE_BRAIN_ENTRY_THRESHOLD", 0.60)
-                    exp_min = getattr(cfg, "CANDLE_BRAIN_EXPECTANCY_MIN", 0.30)
-                    if (
-                        action in ("BUY", "SELL")
-                        and confidence >= entry_thresh
-                        and expectancy >= exp_min
-                    ):
-                        _atr = current_atr if current_atr and current_atr > 0 else 0.5
-                        sl_dist = _atr * getattr(cfg, "SL_ATR_MULTIPLIER", 1.0)
-                        tp_dist = _atr * getattr(cfg, "TP1_MULTIPLIER", 2.0)
-                        try:
-                            _co = m1_data.set_index("time").resample("5min")["open"].first().dropna() if "time" in m1_data.columns else m1_data.resample("5min")["open"].first().dropna()
-                            candle_open = float(_co.iloc[-1]) if len(_co) else current_price
-                        except Exception:
-                            candle_open = current_price
-                        direction = action
-                        signal = {
-                            "direction": direction,
-                            "score": confidence,
-                            "ml_confidence": confidence,
-                            "price": current_price,
-                            "candle_open": candle_open,
-                            "sl": candle_open - sl_dist if direction == "BUY" else candle_open + sl_dist,
-                            "tp1": candle_open + tp_dist if direction == "BUY" else candle_open - tp_dist,
-                            "signal_type": "candle_brain",
-                            "atr": _atr,
-                            "high_volatility": high_vol if high_vol else False,
-                        }
-                        self.logger.info(
-                            f"[{sym}] CandleBrain: {direction} conf={confidence:.3f} "
-                            f"exp={expectancy:.3f} px={current_price:.2f} atr={_atr:.4f}"
-                        )
-                    elif time.time() - getattr(self, '_last_brain_log_ts', 0) > 30:
-                        self._last_brain_log_ts = time.time()
-                        self.logger.info(
-                            f"[{sym}] CandleBrain: no entry (action={action} "
-                            f"conf={confidence:.3f} exp={expectancy:.3f} "
-                            f"thresh={entry_thresh} exp_min={exp_min})"
-                        )
-            except Exception as e:
-                self.logger.warning(f"[{sym}] CandleBrain eval failed: {e}")
 
         # ── CandleML XGBoost fallback entry ──
         def _use_candle_ml():
@@ -1210,8 +1090,6 @@ class Bot:
                 sig_type = signal.get("signal_type", "CANDLE_ML").upper()
                 if sig_type == "candle_ml":
                     sig_type = "CNDL"
-                elif sig_type == "candle_brain":
-                    sig_type = "BRAIN"
                 self.logger.signal(
                     f"[{sym}] Signal found: [{sig_type}] {sig_dir} | "
                     f"{sig_type} prediction at ${current_price:.2f} "
@@ -1577,33 +1455,6 @@ class Bot:
                         f"entry={entry_price:.2f} held={minutes_held:.1f}m (limit={max_loss_min:.0f}m)"
                     )
 
-            # ── CandleBrain model re-eval at M5 boundary ──
-            # For CandleBrain trades, re-run the Transformer each boundary.
-            # If it says CLOSE with enough confidence → exit.
-            if not exit_reason and pos_signal and pos_signal.get("signal_type") == "candle_brain":
-                cb = self._symbol_candle_brain.get(sym)
-                if cb is not None and atr_val > 0:
-                    try:
-                        exit_bars = self.client.get_rates(
-                            sym, cfg.SIGNAL_TIMEFRAME,
-                            getattr(cfg, "CANDLE_BRAIN_M1_HISTORY", 500))
-                        if exit_bars is not None and len(exit_bars) > 0:
-                            brain_exit = cb.predict(exit_bars)
-                            if brain_exit is not None:
-                                mgmt_action = brain_exit.get("mgmt_action", "HOLD")
-                                mgmt_conf = brain_exit.get("mgmt_confidence", 0)
-                                exit_thresh = getattr(cfg, "CANDLE_BRAIN_EXIT_THRESHOLD", 0.60)
-                                if mgmt_action == "CLOSE" and mgmt_conf >= exit_thresh:
-                                    exit_reason = "candle_brain_exit"
-                                    self.logger.signal(
-                                        f"[{sym}] CandleBrain EXIT: mgmt={mgmt_action} "
-                                        f"conf={mgmt_conf:.3f} dir={direction} "
-                                        f"px={current_px:.2f} entry={entry_price:.2f} "
-                                        f"held={minutes_held:.1f}m"
-                                    )
-                    except Exception as e:
-                        self.logger.warning(f"[{sym}] CandleBrain mgmt eval failed: {e}")
-
             if not exit_reason and getattr(cfg, "CANDLE_ML_FLIP_EXIT_ENABLED", True):
                 cm = self._symbol_candle_ml.get(sym)
                 if cm is not None and cm.model is not None and atr_val > 0 and entry_price > 0:
@@ -1655,33 +1506,6 @@ class Bot:
                     except Exception as e:
                         self.logger.warning(f"[{sym}] Candle ML flip-check failed: {e}")
 
-            # ── BRAIN EVALUATION for Candle ML trades ──
-            # If no Candle ML exit triggered, let the Brain decide.
-            if not exit_reason and self.brain is not None:
-                try:
-                    brain_decision = self.brain.evaluate(
-                        symbol=sym,
-                        current_pnl=(current_px - entry_price) / atr_val if direction == "BUY" and atr_val > 0 else (entry_price - current_px) / atr_val if atr_val > 0 else 0,
-                        current_price=current_px,
-                        entry_price=entry_price,
-                        direction=direction,
-                        atr=atr_val,
-                        minutes_held=minutes_held,
-                        pending_signals=self._symbol_signals,
-                    )
-                    if brain_decision.get("action") == "EXIT" and brain_decision.get("confidence", 0) > 0.4:
-                        exit_reason = f"brain_exit({brain_decision.get('reason', 'cascade')})"
-                        self.logger.signal(
-                            f"[{sym}] Brain EXIT: {brain_decision.get('reason', '')} | "
-                            f"conf={brain_decision['confidence']:.2f} method={brain_decision.get('method', '?')} | "
-                            f"dir={direction} entry={entry_price:.2f} px={current_px:.2f} "
-                            f"held={minutes_held:.1f}m cascade={brain_decision.get('cascade_path', '?')} "
-                            f"layers={brain_decision.get('layers_evaluated', 0)} "
-                            f"timing={brain_decision.get('timing_ms', 0):.1f}ms"
-                        )
-                except Exception as e:
-                    self.logger.warning(f"[{sym}] Brain evaluation failed: {e}")
-
             if not exit_reason:
                 return  # candle trades use backtest logic only — no other exits
 
@@ -1703,11 +1527,6 @@ class Bot:
                 self._symbol_candle_tp[sym] = None
                 self._symbol_candle_last_boundary[sym] = 0
                 self._symbol_flip_streak[sym] = 0
-                if self.brain:
-                    self.brain.record_exit(sym, {
-                        "exit_reason": exit_reason, "pnl": pnl,
-                        "exit_price": current_px, "atr": atr_val,
-                    })
                 if hasattr(self, f"_best_price_{sym}"):
                     delattr(self, f"_best_price_{sym}")
                 await self._notify(
@@ -1825,11 +1644,6 @@ class Bot:
                 self._symbol_momentum_entry[sym] = False
                 self._symbol_momentum_peak[sym] = None
                 self._symbol_momentum_last_boundary[sym] = 0
-                if self.brain:
-                    self.brain.record_exit(sym, {
-                        "exit_reason": exit_reason, "pnl": pnl,
-                        "exit_price": current_px, "atr": atr_i,
-                    })
                 await self._notify(
                     "trade_close",
                     f"Trade Closed — {sym}",
@@ -2016,7 +1830,7 @@ class Bot:
         if any_opened:
             self._symbol_states[sym] = self.STATES["IN_TRADE"]
             self._symbol_event_start_ts[sym] = time.time()
-            self._symbol_candle_entry[sym] = signal.get("signal_type") in ("candle_ml", "candle_brain")
+            self._symbol_candle_entry[sym] = signal.get("signal_type") == "candle_ml"
             self._symbol_flip_streak[sym] = 0  # fresh trade — no stale flip streak
             if signal.get("signal_type") == "wave":
                 # Wave trade: anchor cut/lock/trail at the ACTUAL fill (the
@@ -2062,24 +1876,6 @@ class Bot:
                 f"{direction} {lot:.2f} lot {sym} @ ${current_price:.2f} | score={score:.2f}",
                 {"symbol": sym, "direction": direction, "lot": lot, "price": current_price, "score": score},
             )
-            # ── BRAIN: record entry for thesis tracking ──
-            if self.brain is not None:
-                try:
-                    self.brain.record_entry(sym, {
-                        "direction": direction,
-                        "price": current_price,
-                        "sl": signal.get("sl", 0),
-                        "tp1": signal.get("tp1", 0),
-                        "atr": signal.get("atr", signal.get("atr_value", 0)),
-                        "score": score,
-                        "ml_confidence": ml_conf,
-                        "adx_at_entry": signal.get("adx_at_entry", 0),
-                        "regime_at_entry": self.brain.cache.get_regime(sym) if self.brain else "UNKNOWN",
-                        "signal_type": signal.get("signal_type", ""),
-                        "bias_agreement": signal.get("bias_agreement", 0.5),
-                    })
-                except Exception:
-                    pass
         else:
             self._symbol_states[sym] = self.STATES["IDLE"]
             if signal.get("signal_type") == "wave":
@@ -2162,7 +1958,6 @@ class Bot:
             "scaler": self.scaler.summary(current_balance) if self.scaler.starting_balance else None,
             "last_logs": self.logger.logs[-50:],
             "closed_trades": self.position_manager.closed_history[-100:],
-            "brain": self.brain.get_stats() if self.brain else None,
         }
 
     def start(self):

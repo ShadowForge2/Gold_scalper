@@ -390,38 +390,6 @@ CANDLE_ML_FLIP_CONFS = {
 # Prevents losing positions from blocking better opportunities indefinitely.
 CANDLE_ML_MAX_LOSS_MINUTES = _env_float("CANDLE_ML_MAX_LOSS_MINUTES", 120.0)
 
-# ── CandleBrain Transformer ──────────────────────────────────────────
-# Replaces CandleML XGBoost with a Transformer that processes 40 M5 bars
-# through self-attention to make context-aware trading decisions.
-CANDLE_BRAIN_ENABLED = _env_bool("CANDLE_BRAIN_ENABLED", True)
-CANDLE_BRAIN_MODEL_PATHS = {
-    "XAUUSD": _env_str("CANDLE_BRAIN_MODEL_XAUUSD", "models/candle_brain_XAUUSD.pt"),
-    "US100": _env_str("CANDLE_BRAIN_MODEL_US100", "models/candle_brain_US100.pt"),
-    "JP225": _env_str("CANDLE_BRAIN_MODEL_JP225", "models/candle_brain_JP225.pt"),
-    "DE40": _env_str("CANDLE_BRAIN_MODEL_DE40", "models/candle_brain_DE40.pt"),
-    "US500": _env_str("CANDLE_BRAIN_MODEL_US500", "models/candle_brain_US500.pt"),
-    "US30": _env_str("CANDLE_BRAIN_MODEL_US30", "models/candle_brain_US30.pt"),
-}
-CANDLE_BRAIN_ENTRY_THRESHOLD = _env_float("CANDLE_BRAIN_ENTRY_THRESHOLD", 0.60)
-CANDLE_BRAIN_EXIT_THRESHOLD = _env_float("CANDLE_BRAIN_EXIT_THRESHOLD", 0.60)
-CANDLE_BRAIN_M1_HISTORY = _env_int("CANDLE_BRAIN_M1_HISTORY", 500)
-# Regime-Aware Asymmetric Edge strategy (consistent profit, not high win rate).
-# Each M5 bar gets a "realized R" by simulating: SL = SL_ATR*ATR, TP = TP_ATR*ATR,
-# exit at market after MAX_HOLD_BARS if neither hits. Cost (spread+slippage) is
-# subtracted in R units so the edge is realistic. Model only enters when expected
-# edge >= ENTRY_MIN_R (chop => NONE => no losses). In live trading the bot skips
-# any call whose predicted expectancy < EXPECTANCY_MIN.
-CANDLE_BRAIN_SL_ATR = _env_float("CANDLE_BRAIN_SL_ATR", 1.0)
-CANDLE_BRAIN_TP_ATR = _env_float("CANDLE_BRAIN_TP_ATR", 2.0)
-CANDLE_BRAIN_MAX_HOLD_BARS = _env_int("CANDLE_BRAIN_MAX_HOLD_BARS", 24)
-CANDLE_BRAIN_COST_R = _env_float("CANDLE_BRAIN_COST_R", 0.05)
-CANDLE_BRAIN_ENTRY_MIN_R = _env_float("CANDLE_BRAIN_ENTRY_MIN_R", 0.35)
-# A bar only becomes a BUY/SELL if the winning side's realized R beats the
-# losing side by at least this margin (excludes bars where both sides would
-# hit TP — genuinely unpredictable chop).
-CANDLE_BRAIN_EDGE_MARGIN = _env_float("CANDLE_BRAIN_EDGE_MARGIN", 1.0)
-CANDLE_BRAIN_EXPECTANCY_MIN = _env_float("CANDLE_BRAIN_EXPECTANCY_MIN", 0.30)
-
 # ── H1 Candle Engine (candle-following, XGBoost per-pair) ────────────
 # Follows the H1 candle instead of predicting it (see CANDLE_STRATEGY.md).
 # Enter at candle commit, ride the full move, trail once past open into
@@ -585,25 +553,6 @@ FINNHUB_API_KEY = _env_str("FINNHUB_API_KEY", "")
 # Failover
 FAILOVER_ENABLED = _env_bool("FAILOVER_ENABLED", False)
 FAILOVER_ROLE = _env_str("FAILOVER_ROLE", "primary")
-
-# ══════════════════════════════════════════════════════════════════════════════
-# BRAIN — Hierarchical Trade Decision Intelligence
-# ══════════════════════════════════════════════════════════════════════════════
-BRAIN_ENABLED = _env_bool("BRAIN_ENABLED", True)
-BRAIN_MODEL_DIR = _env_str("BRAIN_MODEL_DIR", "models/brain")
-BRAIN_SIM_COUNT = _env_int("BRAIN_SIM_COUNT", 800)  # Monte Carlo sims (Option B)
-
-# Cascade thresholds — controls when expensive layers are skipped
-BRAIN_THESIS_HOLD_THRESHOLD = _env_float("BRAIN_THESIS_HOLD_THRESHOLD", 75.0)  # >75% → fast HOLD
-BRAIN_THESIS_EXIT_THRESHOLD = _env_float("BRAIN_THESIS_EXIT_THRESHOLD", 25.0)  # <25% → fast EXIT
-BRAIN_THESIS_CONFIDENCE_MIN = _env_float("BRAIN_THESIS_CONFIDENCE_MIN", 0.6)
-
-# Meta-Fusion ensemble weights
-BRAIN_FUSION_WEIGHT_XGB = _env_float("BRAIN_FUSION_WEIGHT_XGB", 0.25)
-BRAIN_FUSION_WEIGHT_LGB = _env_float("BRAIN_FUSION_WEIGHT_LGB", 0.25)
-BRAIN_FUSION_WEIGHT_CAT = _env_float("BRAIN_FUSION_WEIGHT_CAT", 0.20)
-BRAIN_FUSION_WEIGHT_NN = _env_float("BRAIN_FUSION_WEIGHT_NN", 0.20)
-BRAIN_FUSION_WEIGHT_RF = _env_float("BRAIN_FUSION_WEIGHT_RF", 0.10)
 
 def is_market_open() -> bool:
     from datetime import datetime as _dt

@@ -193,18 +193,6 @@ services:
         value: "primary"
       - key: FIREBASE_CREDENTIALS_JSON
         sync: false
-      - key: BRAIN_ENABLED
-        value: "true"
-      - key: BRAIN_MODEL_DIR
-        value: "models/brain"
-      - key: BRAIN_SIM_COUNT
-        value: "200"
-      - key: BRAIN_THESIS_HOLD_THRESHOLD
-        value: "80"
-      - key: BRAIN_THESIS_EXIT_THRESHOLD
-        value: "20"
-      - key: BRAIN_THESIS_CONFIDENCE_MIN
-        value: "0.7"
       - key: PYTHONMALLOC
         value: "malloc"
       - key: PYTHONDONTWRITEBYTECODE

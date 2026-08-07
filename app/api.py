@@ -116,15 +116,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             "broker": cfg.BROKER,
             "symbol": bot.symbol,
             "failover": failover_info,
-            "brain": _brain_health(),
         }
-
-    def _brain_health():
-        try:
-            from app.brain_health import get_brain_health
-            return get_brain_health().get("brain", {})
-        except Exception as e:
-            return {"status": "unavailable", "error": str(e)}
 
     @app.get("/api/account")
     async def get_account():
