@@ -132,7 +132,8 @@ AGGRESSIVE_STRONG_LOT_MULT = _env_float("AGGRESSIVE_STRONG_LOT_MULT", 1.5)
 ML_OVERRIDE_MAX_PER_SESSION = _env_int("ML_OVERRIDE_MAX_PER_SESSION", 3)
 
 # Multi-symbol: bot trades XAUUSD, US100, US500, and US30 automatically.
-# US500/US30 only trade once balance reaches SYMBOL_MIN_BALANCE (default $30).
+# All pairs trade from MIN_BALANCE ($10) — the $30 gate was for the old
+# single-pair strategy; we now poll all pairs and trade the best one.
 # JP225/DE40 are momentum-engine pairs (per-pair adapted params + regime gate).
 SYMBOLS = [s.strip() for s in _env_str("SYMBOLS", "XAUUSD,US100,JP225,DE40,US500,US30").split(",")]
 
@@ -142,8 +143,8 @@ SYMBOL_MIN_BALANCE = {
     "US100": _env_float("MIN_BALANCE_US100", MIN_BALANCE),
     "JP225": _env_float("MIN_BALANCE_JP225", MIN_BALANCE),
     "DE40": _env_float("MIN_BALANCE_DE40", MIN_BALANCE),
-    "US500": _env_float("MIN_BALANCE_US500", 30.0),
-    "US30": _env_float("MIN_BALANCE_US30", 30.0),
+    "US500": _env_float("MIN_BALANCE_US500", MIN_BALANCE),
+    "US30": _env_float("MIN_BALANCE_US30", MIN_BALANCE),
 }
 
 # Per-symbol lot sizes
