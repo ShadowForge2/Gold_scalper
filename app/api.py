@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import re
+import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
@@ -8,7 +10,7 @@ from typing import Dict, List, Optional
 from fastapi import FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 import uvicorn
 
 from app.bot import Bot
@@ -41,6 +43,34 @@ class AddAccountRequest(BaseModel):
     password: str
     demo: bool = True
 
+    @field_validator("api_key", "identifier", "password")
+    @classmethod
+    def _strip_whitespace(cls, v: str) -> str:
+        return (v or "").strip()
+
+    @field_validator("api_key")
+    @classmethod
+    def _validate_api_key(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("API key is too short — it looks incomplete.")
+        if any(ch.isspace() for ch in v):
+            raise ValueError("API key must not contain spaces.")
+        return v
+
+    @field_validator("identifier")
+    @classmethod
+    def _validate_identifier(cls, v: str) -> str:
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+            raise ValueError("Identifier must be a valid email address.")
+        return v.lower()
+
+    @field_validator("password")
+    @classmethod
+    def _validate_password(cls, v: str) -> str:
+        if len(v) < 4:
+            raise ValueError("Password is too short.")
+        return v
+
 class VerifyCredentialsRequest(BaseModel):
     api_key: str
     identifier: str
@@ -57,6 +87,63 @@ def sanitize_account(acct: Dict) -> Dict:
     clean["api_key"] = "****"
     clean["password"] = "****"
     return clean
+
+
+# ── Credential validation guard ──────────────────────────────────────
+# In-memory failed-attempt tracking keyed by "device_id|ip". Protects the
+# /api/device/accounts endpoint from credential stuffing / brute forcing.
+_AUTH_MAX_ATTEMPTS = int(os.environ.get("AUTH_MAX_ATTEMPTS", "5"))
+_AUTH_LOCKOUT_SECONDS = int(os.environ.get("AUTH_LOCKOUT_SECONDS", "300"))
+_AUTH_ATTEMPTS: Dict[str, Dict] = {}
+_AUTH_LOCK = asyncio.Lock()
+
+
+def _auth_key(request: Request, device_id: str) -> str:
+    ip = request.client.host if request.client else "unknown"
+    return f"{device_id or 'unknown'}|{ip}"
+
+
+async def _auth_locked(key: str) -> Optional[int]:
+    """Return seconds remaining on lockout, or None if not locked."""
+    async with _AUTH_LOCK:
+        entry = _AUTH_ATTEMPTS.get(key)
+        if not entry:
+            return None
+        if entry.get("locked_until", 0) > time.time():
+            return int(entry["locked_until"] - time.time()) + 1
+        return None
+
+
+async def _auth_record_failure(key: str) -> Optional[int]:
+    """Record a failed attempt; returns lockout seconds if now locked out."""
+    async with _AUTH_LOCK:
+        now = time.time()
+        _prune_auth_entries(now)
+        entry = _AUTH_ATTEMPTS.setdefault(key, {"count": 0, "first": now, "locked_until": 0})
+        if entry["locked_until"] > now:
+            return int(entry["locked_until"] - now) + 1
+        if now - entry["first"] > 3600:
+            entry["count"] = 0
+            entry["first"] = now
+        entry["count"] += 1
+        if entry["count"] >= _AUTH_MAX_ATTEMPTS:
+            entry["locked_until"] = now + _AUTH_LOCKOUT_SECONDS
+            entry["count"] = 0
+            return _AUTH_LOCKOUT_SECONDS
+        return None
+
+
+def _prune_auth_entries(now: float) -> None:
+    """Drop tracking entries idle for over an hour to bound memory."""
+    stale = [k for k, v in _AUTH_ATTEMPTS.items()
+             if now - max(v.get("first", 0), v.get("locked_until", 0)) > 3600]
+    for k in stale:
+        _AUTH_ATTEMPTS.pop(k, None)
+
+
+async def _auth_clear(key: str) -> None:
+    async with _AUTH_LOCK:
+        _AUTH_ATTEMPTS.pop(key, None)
 
 
 def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> FastAPI:
@@ -216,15 +303,27 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         return {"accounts": [sanitize_account(a) for a in dev.get("accounts", [])]}
 
     @app.post("/api/device/accounts")
-    async def device_add_account(data: AddAccountRequest, device_id: str = Header(None, alias="X-Device-Id")):
+    async def device_add_account(data: AddAccountRequest, request: Request, device_id: str = Header(None, alias="X-Device-Id")):
         if not _db_ok():
             return _no_db()
         did = device_id or "unknown"
         ident = data.identifier
+        key = _auth_key(request, did)
+
+        remaining = await _auth_locked(key)
+        if remaining:
+            logger.warning("Auth attempts throttled for %s (%ss remaining)", did, remaining)
+            return JSONResponse(status_code=429, content={
+                "error": f"Too many failed attempts. Try again in {remaining} seconds.",
+                "retry_after": remaining,
+                "action_required": "wait",
+            })
+
         dev = await get_device(did)
         existing = None
         if dev:
-            existing = next((a for a in dev.get("accounts", []) if a["identifier"] == ident), None)
+            existing = next((a for a in dev.get("accounts", [])
+                             if a["identifier"].strip().lower() == ident), None)
             if existing:
                 type_changed = bool(existing.get("demo", True)) != data.demo
                 creds_changed = existing.get("api_key") != data.api_key or existing.get("password") != data.password
@@ -236,12 +335,14 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
 
         temp = CapitalClient()
         ok = temp.initialize(api_key=data.api_key, identifier=ident, password=data.password, demo=data.demo)
+        hint = temp.last_error_hint()
         last_err = temp.last_error()
         err_msg = str(last_err[1]) if last_err and len(last_err) > 1 else str(last_err or "")
         temp.shutdown()
         if not ok:
             logger.warning("Capital.com auth failed for %s with demo=%s: %s", ident, data.demo, err_msg)
-            # Diagnostic: try the opposite mode
+            # Diagnostic: try the opposite mode (same credentials often work on
+            # both demo and live). If it succeeds, the user picked the wrong toggle.
             temp2 = CapitalClient()
             ok2 = temp2.initialize(api_key=data.api_key, identifier=ident, password=data.password, demo=not data.demo)
             last_err2 = temp2.last_error()
@@ -249,13 +350,26 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             temp2.shutdown()
             if ok2:
                 logger.warning("DIAG: %s works with demo=%s (opposite of what user selected)", ident, not data.demo)
+                hint = (
+                    f"Your credentials are valid for the "
+                    f"{'LIVE' if not data.demo else 'DEMO'} account, but you selected "
+                    f"{'DEMO' if data.demo else 'LIVE'}. Switch the account type toggle."
+                )
             else:
                 logger.warning("DIAG: %s also fails with demo=%s: %s", ident, not data.demo, err2)
-            return JSONResponse(status_code=401, content={
-                "error": f"Broker authentication failed: {err_msg}",
-                "action_required": "check_credentials",
-            })
 
+            lockout = await _auth_record_failure(key)
+            content = {
+                "error": hint or f"Broker authentication failed: {err_msg}",
+                "action_required": "check_credentials",
+            }
+            if lockout:
+                content["error"] = f"Too many failed attempts. Try again in {lockout} seconds."
+                content["retry_after"] = lockout
+                content["action_required"] = "wait"
+            return JSONResponse(status_code=401, content=content)
+
+        await _auth_clear(key)
         await restore_device_by_capital_id(ident, did)
         await ensure_device(did)
         await add_account(did, data.api_key, ident, data.password, data.demo)
@@ -267,7 +381,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         dev = await get_device(did)
         # auto-start if previously active
         for acct in dev.get("accounts", []):
-            if acct["identifier"] == ident and acct.get("active") and bot_pool and not bot_pool.is_running(ident):
+            if acct["identifier"].strip().lower() == ident and acct.get("active") and bot_pool and not bot_pool.is_running(ident):
                 bot_pool.add_log(ident, "Account was previously active — auto-starting...", "INFO")
                 bot_pool.start(identifier=ident, api_key=data.api_key, password=data.password, demo=data.demo)
                 await set_account_active(ident, True)

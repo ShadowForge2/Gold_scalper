@@ -1,5 +1,6 @@
 import requests
 import math
+import json
 import pandas as pd
 import time
 import asyncio
@@ -70,6 +71,8 @@ class CapitalClient:
         self._realized_daily_pnl = 0.0
         self._last_position_pnl: Dict[str, float] = {}
         self._last_order_error = ""
+        self._last_error_code = ""
+        self._last_error_hint = ""
         self._request_times: deque = deque(maxlen=20)
         self._max_requests_per_sec = 8
         self._timeout = 15
@@ -113,8 +116,10 @@ class CapitalClient:
                     data = r.json()
                     self._prev_balance = data.get("accountInfo", {}).get("balance", 0)
                     self._last_order_error = ""
+                    self._last_error_code = ""
+                    self._last_error_hint = ""
                     return True
-                self._last_order_error = f"HTTP {r.status_code}: {r.text[:500]}"
+                self._record_login_error(r.status_code, r.text)
                 if r.status_code not in (429, 502, 503, 504):
                     break
             except Exception as exc:
@@ -124,6 +129,55 @@ class CapitalClient:
                 time.sleep(backoff)
         self.connected = False
         return False
+
+    def _record_login_error(self, status: int, text: str) -> None:
+        """Parse a Capital.com login failure into a stable code + friendly hint.
+
+        Capital returns e.g. {'errorCode': 'error.invalid.details', ...} or a
+        bare string body. Keep the raw HTTP text too so callers can fall back.
+        """
+        code = ""
+        message = ""
+        if text:
+            try:
+                data = json.loads(text)
+                if isinstance(data, dict):
+                    code = str(data.get("errorCode") or "")
+                    message = str(data.get("errorMessage") or data.get("message") or "")
+            except (ValueError, TypeError):
+                pass
+        if not message:
+            message = text[:500]
+        self._last_error_code = code
+        self._last_error_hint = self._friendly_auth_error(code, message, status)
+        self._last_order_error = f"HTTP {status}: {message}"
+
+    @staticmethod
+    def _friendly_auth_error(code: str, message: str, status: int) -> str:
+        """Map Capital login errors to actionable, human-readable messages."""
+        known = {
+            "error.invalid.api-key": "The API key is invalid or was revoked. Generate a new key in Capital.com → Settings → API integrations.",
+            "error.invalid.details": "The identifier or password is incorrect. Double-check them, and verify the account type (Demo/Live) is right.",
+            "error.invalid.identifier": "No Capital.com account matches this identifier/email.",
+            "error.invalid.password": "The password is incorrect.",
+            "error.account.disabled": "This Capital.com account is disabled. Contact Capital.com support.",
+            "error.too.many.requests": "Capital.com is rate-limiting login attempts. Wait a few minutes and try again.",
+            "error.invalid.session": "Session rejected. Try again.",
+        }
+        lowered = code.lower()
+        if lowered in known:
+            return known[lowered]
+        if "api" in lowered and "key" in lowered:
+            return known["error.invalid.api-key"]
+        if "invalid" in lowered:
+            return "The identifier or password is incorrect for this account type."
+        if status == 401:
+            return "Authentication failed — check the identifier, password, and account type (Demo/Live)."
+        if status == 403:
+            return "Access denied by Capital.com. The API key may lack trading permissions or the account is restricted."
+        if status in (429, 502, 503, 504):
+            return f"Capital.com is temporarily unavailable (HTTP {status}). Try again shortly."
+        return message or f"Broker authentication failed (HTTP {status})."
 
     def _auth_headers(self) -> Dict:
         return {"CST": self.cst or "", "X-SECURITY-TOKEN": self.security_token or "", "Content-Type": "application/json"}
@@ -218,6 +272,12 @@ class CapitalClient:
 
     def last_error(self) -> Tuple[int, str]:
         return 0, self._last_order_error or "No error"
+
+    def last_error_hint(self) -> str:
+        return self._last_error_hint or self._last_order_error or ""
+
+    def last_error_code(self) -> str:
+        return self._last_error_code
 
     def last_order_error(self) -> str:
         return self._last_order_error
