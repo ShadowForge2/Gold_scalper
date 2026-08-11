@@ -40,6 +40,13 @@ except Exception:
     WaveScalper = None
     _HAS_WAVE = False
 
+try:
+    from app.pull_h1_scalper import PullPrevH1Scalper
+    _HAS_PULL = True
+except Exception:
+    PullPrevH1Scalper = None
+    _HAS_PULL = False
+
 
 class Bot:
     STATES = {
@@ -90,16 +97,23 @@ class Bot:
         self._symbol_wave_entry: Dict[str, bool] = {}   # current trade is a wave entry
         self._symbol_wave_cache_ts: Dict[str, float] = {}  # M1 history fetch time
         self._last_wave_warn_ts: float = 0.0  # throttle for wave history warnings
+        # Pull-into-H1 scalper per-symbol state
+        self._symbol_pull_engine: Dict[str, Optional[object]] = {}  # PullPrevH1Scalper instances
+        self._symbol_pull_entry: Dict[str, bool] = {}   # current trade is a pull entry
+        self._symbol_pull_cache_ts: Dict[str, float] = {}  # M1 history fetch time
+        self._last_pull_warn_ts: float = 0.0  # throttle for pull history warnings
 
         # Load per-symbol models and signal engines
         # ML (CandleML/CandleBrain) models are skipped for momentum/wave-owned
         # pairs — those engines own entry/exit, so the models are never used.
         for sym in self.symbols:
             candle_pred = None
-            wave_owns = bool(getattr(cfg, "WAVE_ENGINE_ENABLED", {}).get(sym, False)) and _HAS_WAVE
-            momentum_owns = (not wave_owns
+            pull_owns = bool(getattr(cfg, "PULL_ENGINE_ENABLED", {}).get(sym, False)) and _HAS_PULL
+            wave_owns = (not pull_owns
+                         and bool(getattr(cfg, "WAVE_ENGINE_ENABLED", {}).get(sym, False)) and _HAS_WAVE)
+            momentum_owns = (not wave_owns and not pull_owns
                              and bool(getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False)))
-            if (not wave_owns and not momentum_owns
+            if (not wave_owns and not momentum_owns and not pull_owns
                     and _HAS_CANDLE and getattr(cfg, "CANDLE_ML_ENABLED", True)):
                 candle_path = cfg.CANDLE_ML_MODEL_PATHS.get(sym, cfg.CANDLE_ML_MODEL_PATHS.get("XAUUSD"))
                 try:
@@ -211,6 +225,34 @@ class Bot:
             self._symbol_wave_engine[sym] = wave_eng
             self._symbol_wave_entry[sym] = False
             self._symbol_wave_cache_ts[sym] = 0.0
+
+            # ── Pull-into-H1 scalper engine (owns entry/exit when enabled) ──
+            pull_eng = None
+            if pull_owns:
+                try:
+                    pp = dict(getattr(cfg, "SYMBOL_PULL_PARAMS", {}).get(sym, {}) or {})
+                    pull_eng = PullPrevH1Scalper(
+                        symbol=sym,
+                        logger=self.logger,
+                        pull_r=float(pp.get("pull_r", 0.30)),
+                        trail_r=float(pp.get("trail_r", 0.35)),
+                        max_hold_bars=int(pp.get("max_hold", 24)),
+                        round_trip_price=float(pp.get("round_trip", 0.0)),
+                        min_h1_bars=int(getattr(cfg, "PULL_MIN_H1_BARS", 30)),
+                        daily_target_r=float(pp.get("daily_target_r", 0.0)),
+                        daily_max_loss_r=float(pp.get("daily_max_loss_r", 0.0)),
+                    )
+                    self.logger.info(
+                        f"[{sym}] Pull scalper enabled (pull {pull_eng.pull_r}R "
+                        f"trail {pull_eng.trail_r}R max_hold {pull_eng.max_hold_bars} "
+                        f"cost {pull_eng.round_trip_price:.2f})"
+                    )
+                except Exception as e:
+                    self.logger.warning(f"[{sym}] Pull scalper init failed: {e}")
+                    pull_eng = None
+            self._symbol_pull_engine[sym] = pull_eng
+            self._symbol_pull_entry[sym] = False
+            self._symbol_pull_cache_ts[sym] = 0.0
 
         # Legacy single-symbol references (use first symbol for backward compat)
         first_sym = self.symbols[0] if self.symbols else cfg.SYMBOL
@@ -586,13 +628,14 @@ class Bot:
                     # SL (per-pair) + jump target + retrace + max hold.
                     is_mom = bool(getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False))
                     wave_owns_rec = bool(getattr(cfg, "WAVE_ENGINE_ENABLED", {}).get(sym, False))
+                    pull_owns_rec = bool(getattr(cfg, "PULL_ENGINE_ENABLED", {}).get(sym, False))
                     if is_mom:
                         mom_eng = self._symbol_momentum_engine.get(sym)
                         sl_r = float(mom_eng.sl_r) if mom_eng is not None else float(getattr(cfg, "MOMENTUM_SL_R", 1.0))
                         sl = broker_sl if broker_sl > 0 else (entry_price - sl_r * atr_val if direction == "BUY" else entry_price + sl_r * atr_val)
                         tp = None
                     self._symbol_signals[sym] = {
-                        "signal_type": "wave" if wave_owns_rec else ("momentum" if is_mom else "candle_ml"),
+                        "signal_type": "pull" if pull_owns_rec else ("wave" if wave_owns_rec else ("momentum" if is_mom else "candle_ml")),
                         "direction": direction,
                         "sl": sl,
                         "tp1": tp,
@@ -600,19 +643,24 @@ class Bot:
                         "score": 0.5,
                         "recovered": True,
                     }
+                    if pull_owns_rec:
+                        pull_eng = self._symbol_pull_engine.get(sym)
+                        if pull_eng is not None:
+                            pull_eng.adopt_position(direction, entry_price, atr=atr_val)
+                            self._symbol_pull_entry[sym] = True
                     if wave_owns_rec:
                         wave_eng = self._symbol_wave_engine.get(sym)
                         if wave_eng is not None:
                             wave_eng.adopt_position(direction, entry_price, atr=atr_val)
                             self._symbol_wave_entry[sym] = True
-                    self._symbol_momentum_entry[sym] = is_mom and not wave_owns_rec
-                    self._symbol_momentum_peak[sym] = entry_price if (is_mom and not wave_owns_rec) else None
+                    self._symbol_momentum_entry[sym] = is_mom and not wave_owns_rec and not pull_owns_rec
+                    self._symbol_momentum_peak[sym] = entry_price if (is_mom and not wave_owns_rec and not pull_owns_rec) else None
                     self._symbol_momentum_last_boundary[sym] = 0
                     self._symbol_momentum_last_signal_ts[sym] = time.time()
                     self.logger.info(
                         f"[{sym}] Reconstructed signal: {direction} entry={entry_price:.2f} "
                         f"sl={sl:.2f} tp={tp if tp else 'n/a'} atr={atr_val:.2f} "
-                        f"type={'wave' if wave_owns_rec else ('momentum' if is_mom else 'candle_ml')}"
+                        f"type={'pull' if pull_owns_rec else ('wave' if wave_owns_rec else ('momentum' if is_mom else 'candle_ml'))}"
                     )
 
         info = self.client.get_symbol_info(sym)
@@ -897,6 +945,69 @@ class Bot:
             "gate_ok": eng.gate_ok,
         }
 
+    def _pull_refresh(self, sym: str, pull_eng) -> Optional[pd.DataFrame]:
+        """Fetch fresh M1 bars for the pull engine (long history on a refresh
+        timer, short tail every tick). Returns the recent frame or None."""
+        now = time.time()
+        refresh = getattr(cfg, "PULL_REFRESH_SEC", 60)
+        try:
+            if now - self._symbol_pull_cache_ts.get(sym, 0.0) >= refresh:
+                from datetime import timedelta
+                hist = int(getattr(cfg, "PULL_M1_HISTORY_BARS", 8000))
+                window_min = hist + 600
+                to_dt = datetime.utcnow()
+                from_dt = to_dt - timedelta(seconds=window_min * 60)
+                fetched = self.client.get_rates_range(sym, 1, from_dt, to_dt)
+                self._symbol_pull_cache_ts[sym] = now
+                if fetched is not None and len(fetched) > 0:
+                    pull_eng.set_history(fetched)
+        except Exception as e:
+            self.logger.warning(f"[{sym}] Pull M1 history refresh failed: {e}")
+        try:
+            recent = self.client.get_rates(sym, 1, 30)
+            if recent is not None and len(recent) > 0:
+                return recent
+        except Exception as e:
+            if time.time() - self._last_pull_warn_ts > 600:
+                self._last_pull_warn_ts = time.time()
+                self.logger.warning(f"[{sym}] Pull M1 fetch failed: {e}")
+        return None
+
+    def _pull_entry_signal(self, sym: str, current_price: float, symbol_info: Dict) -> Optional[Dict]:
+        """Pull scalper entry: feed fresh M1 bars; return a signal dict when the
+        engine fires a pullback-into-H1-trend entry trigger (order still needs
+        confirmation)."""
+        eng = self._symbol_pull_engine.get(sym)
+        if eng is None:
+            return None
+        recent = self._pull_refresh(sym, eng)
+        now = time.time()
+        if recent is None:
+            return None
+        if not eng.warm_up(now):
+            return None
+        try:
+            action = eng.feed(recent, now_ts=now)
+        except Exception as e:
+            self.logger.warning(f"[{sym}] Pull eval failed: {e}")
+            return None
+        if action is None or action.get("type") != "enter":
+            return None
+        atr = eng.atr if eng.atr > 0 else (current_price * 0.001)
+        return {
+            "direction": action["direction"],
+            "score": 0.5,
+            "price": current_price,
+            "candle_open": current_price,
+            "sl": None,
+            "tp1": None,
+            "signal_type": "pull",
+            "atr": atr,
+            "high_volatility": False,
+            "bar_time": now,
+            "gate_ok": True,
+        }
+
     async def _search_symbol(self, sym: str, pnl_data: Dict):
         """Search for entry signal on a single symbol."""
         engine = self._symbol_engines.get(sym)
@@ -904,9 +1015,12 @@ class Bot:
             return
 
         momentum_enabled = (not bool(getattr(cfg, "WAVE_ENGINE_ENABLED", {}).get(sym, False))
+                            and not bool(getattr(cfg, "PULL_ENGINE_ENABLED", {}).get(sym, False))
                             and bool(getattr(cfg, "MOMENTUM_ENGINE_ENABLED", {}).get(sym, False)))
         wave_owns = (bool(getattr(cfg, "WAVE_ENGINE_ENABLED", {}).get(sym, False))
                      and self._symbol_wave_engine.get(sym) is not None)
+        pull_owns = (bool(getattr(cfg, "PULL_ENGINE_ENABLED", {}).get(sym, False))
+                     and self._symbol_pull_engine.get(sym) is not None)
 
         m1_data = None
         current_atr = 0.0
@@ -965,8 +1079,17 @@ class Bot:
 
         signal = None
 
+        # ── Pull scalper — owns entry for its symbols ──
+        if pull_owns:
+            signal = self._pull_entry_signal(sym, current_price, symbol_info)
+            if signal is not None:
+                self.logger.signal(
+                    f"[{sym}] Pull: {signal['direction']} score={signal['score']:.2f} "
+                    f"px={current_price:.2f} atr={signal.get('atr', 0):.4f}"
+                )
+
         # ── Wave scalper — owns entry for its symbols ──
-        if wave_owns:
+        elif wave_owns:
             signal = self._wave_entry_signal(sym, current_price, symbol_info)
             if signal is not None:
                 self.logger.signal(
@@ -997,7 +1120,7 @@ class Bot:
                 return high_vol
             return False
 
-        if not wave_owns and not momentum_enabled and _use_candle_ml():
+        if not wave_owns and not pull_owns and not momentum_enabled and _use_candle_ml():
             try:
                 from app.candle_ml import compute_candle_features
                 m1_idx = m1_data.set_index("time") if "time" in m1_data.columns else m1_data
@@ -1099,7 +1222,8 @@ class Bot:
 
         if signal:
             can_enter, reason = self.risk_manager.can_enter_trade(
-                symbol_info, datetime.utcnow(), symbol=sym
+                symbol_info, datetime.utcnow(), symbol=sym,
+                skip_session=bool(signal.get("signal_type") == "pull"),
             )
             if not can_enter:
                 bk_key = f"{sym}|blocked_{signal['direction']}|{reason}"
@@ -1231,6 +1355,7 @@ class Bot:
             self._symbol_momentum_peak[sym] = None
             self._symbol_momentum_last_boundary[sym] = 0
             self._symbol_wave_entry[sym] = False
+            self._symbol_pull_entry[sym] = False
             return
 
         acct = self.client.get_account_info()
@@ -1238,9 +1363,10 @@ class Bot:
 
         direction = sym_positions[0].get("type", "BUY") if sym_positions else "BUY"
 
-        # Candle ML / wave trades skip event loss — those backtests have no event-loss stop.
+        # Candle ML / wave / pull trades skip event loss — those backtests have no event-loss stop.
         is_candle = (self._symbol_candle_entry.get(sym, False)
-                     or self._symbol_wave_entry.get(sym, False))
+                     or self._symbol_wave_entry.get(sym, False)
+                     or self._symbol_pull_entry.get(sym, False))
         if not is_candle:
             # Correlated symbols (EVENT_LOSS_GROUP) share ONE combined event-loss
             # budget. US100 + US500 move ~95% together, so pool their PnL so a
@@ -1279,6 +1405,7 @@ class Bot:
                         self._symbol_momentum_peak[g_sym] = None
                         self._symbol_momentum_last_boundary[g_sym] = 0
                         self._symbol_wave_entry[g_sym] = False
+                        self._symbol_pull_entry[g_sym] = False
                     await self._notify(
                         "trade_close",
                         f"Trade Closed — {sym}",
@@ -1299,6 +1426,54 @@ class Bot:
 
         pos_signal = self._symbol_signals.get(sym)
         minutes_held = (time.time() - event_start) / 60.0 if event_start else 0.0
+
+        # ── Pull scalper exit — engine-driven (trailing giveback / max hold) ──
+        # No timeout, no event loss. The engine emits a pending exit action on a
+        # completed M5 bar; we close at market and confirm_exit() so it can
+        # re-arm the next pullback pattern from the exit price.
+        if self._symbol_pull_entry.get(sym, False):
+            eng = self._symbol_pull_engine.get(sym)
+            if eng is None:
+                self.logger.warning(f"[{sym}] Pull engine missing for open pull trade")
+                self._symbol_pull_entry[sym] = False
+            else:
+                recent = self._pull_refresh(sym, eng)
+                action = None
+                if recent is not None:
+                    try:
+                        action = eng.feed(recent, now_ts=time.time())
+                    except Exception as e:
+                        self.logger.warning(f"[{sym}] Pull exit eval failed: {e}")
+                if action is None or action.get("type") != "exit":
+                    return
+                exit_reason = action.get("reason", "pull_exit")
+                self.logger.signal(
+                    f"[{sym}] Pull exit: {exit_reason} | dir={direction} entry={entry_price:.2f} "
+                    f"px={current_px:.2f} atr={eng.atr:.4f} held={minutes_held:.1f}m "
+                    f"daily_r={eng.daily_r:+.3f}"
+                )
+                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                for pos_data in closed:
+                    self.position_manager.note_closed(
+                        pos_data, exit_reason=exit_reason,
+                        score=pos_signal.get("score", 0) if pos_signal else 0,
+                        balance=balance)
+                if closed:
+                    pnl = sum(p.get("profit", 0) for p in closed)
+                    self._record_trade_result(sym, pnl, False)
+                    eng.confirm_exit()
+                    self._symbol_states[sym] = self.STATES["IDLE"]
+                    self._symbol_event_start_ts[sym] = None
+                    self._symbol_pull_entry[sym] = False
+                    await self._notify(
+                        "trade_close",
+                        f"Trade Closed — {sym}",
+                        f"{direction} {sym} closed ({exit_reason}) | PnL: ${pnl:+.2f} | held {int(minutes_held)}m",
+                        {"symbol": sym, "direction": direction, "exit_reason": exit_reason, "pnl": pnl, "held_minutes": minutes_held},
+                    )
+                else:
+                    self.logger.warning(f"[{sym}] Pull exit close failed, retrying next tick")
+                return
 
         # ── Wave scalper exit — engine-driven (cut / lock / rider trail / candle end) ──
         # No timeout, no event loss. The engine emits a pending exit action on a
@@ -1833,6 +2008,15 @@ class Bot:
             self._symbol_event_start_ts[sym] = time.time()
             self._symbol_candle_entry[sym] = signal.get("signal_type") == "candle_ml"
             self._symbol_flip_streak[sym] = 0  # fresh trade — no stale flip streak
+            if signal.get("signal_type") == "pull":
+                # Pull trade: the engine state machine owns all exits from here
+                # (trailing giveback / max-hold), anchored at the ACTUAL fill.
+                pull_eng = self._symbol_pull_engine.get(sym)
+                if pull_eng is not None:
+                    pull_eng.confirm_entry(current_price)
+                    self._symbol_pull_entry[sym] = True
+                else:
+                    self._symbol_pull_entry[sym] = False
             if signal.get("signal_type") == "wave":
                 # Wave trade: anchor cut/lock/trail at the ACTUAL fill (the
                 # engine state machine owns all exits from here).
@@ -1879,6 +2063,10 @@ class Bot:
             )
         else:
             self._symbol_states[sym] = self.STATES["IDLE"]
+            if signal.get("signal_type") == "pull":
+                pull_eng = self._symbol_pull_engine.get(sym)
+                if pull_eng is not None:
+                    pull_eng.cancel_entry()
             if signal.get("signal_type") == "wave":
                 wave_eng = self._symbol_wave_engine.get(sym)
                 if wave_eng is not None:

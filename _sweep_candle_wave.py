@@ -82,55 +82,95 @@ def compute_jump_flags(h1, atr, break_r, body_r):
 
 def run_candle_wave(m1, o, atr, entry_r, cut_r, profit_r, cost_r,
                     jump_break_r, jump_body_r, trail_r, reversal_r,
-                    rider_enabled=True):
+                    rider_enabled=True, fill="market",
+                    h1_dir_mode="none", h1_dir_prev=0, min_body_r=0.30):
     """Scalp the micro-waves of ONE forming H1 candle on its M1 bars.
 
     `m1`: (n,4) array of [open, high, low, close] sub-bars.
     `o`: candle open. `atr`: ATR at the candle's start.
+    `fill`: "market" (default) fills entries AND exits at the trigger bar's
+        close `bc` and anchors stop/lock/trail at the ACTUAL fill — this mirrors
+        the live WaveScalper, which opens/closes at market on the completed
+        bar. "level" is the legacy mode that fills at the exact trigger level
+        (impossible live: it buys the 0.5R trigger even when the bar closed
+        2R past it, and enters jump-riders at the candle open).
+    `h1_dir_mode`: "none" trades both directions freely; "prev" uses the
+        PREVIOUS H1 candle's color as the only tradable direction; "current"
+        lets the FORMING candle decide — the running color (close vs open) must
+        reach min_body_r*ATR before ANY entry, and entries are then locked to
+        that color. This is "let the candle decide and follow it tightly":
+        a green H1 candle only allows BUY waves (each pullback is bought), a
+        red one only SELL.
     Returns list of realized R values.
     """
     trades = []
     base = o
     flat = True
     pos = 0
-    entry = 0.0
+    entry = 0.0          # theoretical trigger level (base anchoring parity)
+    entry_fill = 0.0     # actual fill: anchors stop/lock/trail and R
     peak = 0.0
     rider = False
     jump_dir = 0
     just_entered = False
 
+    def f(level, bc):
+        return bc if fill == "market" else level
+
+    def run_dir(bc):
+        # The H1 color as known at this completed bar (honest, no lookahead).
+        if h1_dir_mode == "prev":
+            return h1_dir_prev
+        if h1_dir_mode == "current":
+            body = bc - o
+            if atr <= 0:
+                return 0
+            if body >= min_body_r * atr:
+                return 1
+            if body <= -min_body_r * atr:
+                return -1
+            return 0
+        return 0
+
     for bo, bh, bl, bc in m1:
+        d = run_dir(bc)
         if flat and not rider:
-            if bh >= base + entry_r * atr:
+            allow_buy = h1_dir_mode == "none" or d >= 0
+            allow_sell = h1_dir_mode == "none" or d <= 0
+            if allow_buy and bh >= base + entry_r * atr:
                 entry = base + entry_r * atr
+                entry_fill = f(entry, bc)
                 pos = 1
-                peak = entry
+                peak = entry_fill
                 flat = False
                 just_entered = True
-            elif bl <= base - entry_r * atr:
+            elif allow_sell and bl <= base - entry_r * atr:
                 entry = base - entry_r * atr
+                entry_fill = f(entry, bc)
                 pos = -1
-                peak = entry
+                peak = entry_fill
                 flat = False
                 just_entered = True
-            elif rider_enabled:
+            elif rider_enabled and (allow_buy or allow_sell):
                 # Jump-rider trigger: forming candle body reached jump break.
-                if (bh - o) >= jump_break_r * atr and (bh - bl) > 0:
+                if allow_buy and (bh - o) >= jump_break_r * atr and (bh - bl) > 0:
                     body = bh - o
                     if body / (bh - bl) >= jump_body_r:
                         entry = o
+                        entry_fill = f(o, bc)
                         pos = 1
-                        peak = o
+                        peak = entry_fill
                         flat = False
                         rider = True
                         jump_dir = 1
                         just_entered = True
-                elif (o - bl) >= jump_break_r * atr and (bh - bl) > 0:
+                elif allow_sell and (o - bl) >= jump_break_r * atr and (bh - bl) > 0:
                     body = o - bl
                     if body / (bh - bl) >= jump_body_r:
                         entry = o
+                        entry_fill = f(o, bc)
                         pos = -1
-                        peak = o
+                        peak = entry_fill
                         flat = False
                         rider = True
                         jump_dir = -1
@@ -140,22 +180,25 @@ def run_candle_wave(m1, o, atr, entry_r, cut_r, profit_r, cost_r,
         elif pos == 1:
             # Strict: check exits against the PREVIOUS peak, then update it.
             # A bar can never sell its own high (no buy-low/sell-high same bar).
-            stop = entry - cut_r * atr
+            stop = entry_fill - cut_r * atr
             lock = peak - profit_r * atr
             if bl <= stop:
-                trades.append((stop - entry) / atr - cost_r)
+                px = f(stop, bc)
+                trades.append((px - entry_fill) / atr - cost_r)
                 base = stop
                 flat = True
                 pos = 0
             elif bl <= lock:
-                trades.append((lock - entry) / atr - cost_r)
+                px = f(lock, bc)
+                trades.append((px - entry_fill) / atr - cost_r)
                 base = lock
                 flat = True
                 pos = 0
             elif rider:
                 ts = peak - trail_r * atr
                 if bl <= ts:
-                    trades.append((ts - entry) / atr - cost_r)
+                    px = f(ts, bc)
+                    trades.append((px - entry_fill) / atr - cost_r)
                     flat = True
                     pos = 0
                     rider = False
@@ -163,22 +206,25 @@ def run_candle_wave(m1, o, atr, entry_r, cut_r, profit_r, cost_r,
             if bh > peak:
                 peak = bh
         elif pos == -1:
-            stop = entry + cut_r * atr
+            stop = entry_fill + cut_r * atr
             lock = peak + profit_r * atr
             if bh >= stop:
-                trades.append((entry - stop) / atr - cost_r)
+                px = f(stop, bc)
+                trades.append((entry_fill - px) / atr - cost_r)
                 base = stop
                 flat = True
                 pos = 0
             elif bh >= lock:
-                trades.append((entry - lock) / atr - cost_r)
+                px = f(lock, bc)
+                trades.append((entry_fill - px) / atr - cost_r)
                 base = lock
                 flat = True
                 pos = 0
             elif rider:
                 ts = peak + trail_r * atr
                 if bh >= ts:
-                    trades.append((entry - ts) / atr - cost_r)
+                    px = f(ts, bc)
+                    trades.append((entry_fill - px) / atr - cost_r)
                     flat = True
                     pos = 0
                     rider = False
@@ -187,7 +233,7 @@ def run_candle_wave(m1, o, atr, entry_r, cut_r, profit_r, cost_r,
                 peak = bl
 
     if pos != 0:
-        r = (bc - entry) * pos / atr - cost_r
+        r = (bc - entry_fill) * pos / atr - cost_r
         trades.append(r)
     return trades
 
@@ -195,7 +241,8 @@ def run_candle_wave(m1, o, atr, entry_r, cut_r, profit_r, cost_r,
 def run_symbol(symbol, train_start, train_end, test_start, test_end, combos,
                tf_min=60, rider_enabled=True, gate_enabled=True,
                start_balance=20.0,
-               ref_balance=20.0, lot_exp=0.0, compound=False):
+               ref_balance=20.0, lot_exp=0.0, compound=False,
+               fill="market", h1_dir_mode="none", min_body_r=0.30):
     import xgboost as xgb
     print(f"\n=== {symbol} ({tf_min}min) ===", flush=True)
     m1 = load_m1_data(symbol, start_year=train_start, end_year=test_end)
@@ -317,6 +364,9 @@ def run_symbol(symbol, train_start, train_end, test_start, test_end, combos,
                 continue
             o = float(h1_test["open"].iloc[k])
             atr = float(atr_test.iloc[prev]) if atr_test.iloc[prev] > 0 else 1e-9
+            # H1-color directional gate: only the candle's color may be traded.
+            prev_body = float(h1_test["close"].iloc[prev]) - float(h1_test["open"].iloc[prev])
+            h1_dir_prev = 1 if prev_body > 0 else (-1 if prev_body < 0 else 0)
             # Lot-scaled cut/profit: cut grows with position size so the
             # dollar loss per cut stays a constant fraction of the wave.
             # scale = 1 at the reference balance (lot = base lot).
@@ -329,6 +379,9 @@ def run_symbol(symbol, train_start, train_end, test_start, test_end, combos,
                 combo["jump_break_r"], combo["jump_body_r"],
                 combo.get("trail_r", 0.5), combo.get("reversal_r", 0.5),
                 rider_enabled=rider_enabled,
+                fill=fill,
+                h1_dir_mode=h1_dir_mode, h1_dir_prev=h1_dir_prev,
+                min_body_r=min_body_r,
             )
             n_wave += len(rs)
             all_r.extend(rs)
@@ -423,6 +476,20 @@ def main():
                         help="override the cut grid with this single value")
     parser.add_argument("--profit-r", type=float, default=None,
                         help="override the profit grid with this single value")
+    parser.add_argument("--fill", default="market",
+                        choices=["market", "level"],
+                        help="entry/exit fill convention: 'market' fills at the "
+                             "trigger bar's close like the live bot (default), "
+                             "'level' fills at the exact trigger level (legacy)")
+    parser.add_argument("--dir-mode", default="none",
+                        choices=["none", "prev", "current"],
+                        help="H1-color directional gate: 'none' trades both ways; "
+                             "'prev' only trades the PREVIOUS H1 candle's color; "
+                             "'current' lets the forming H1 candle decide "
+                             "(running color must reach min_body_r*ATR first)")
+    parser.add_argument("--min-body-r", type=float, default=0.30,
+                        help="min running H1 body (xATR) before 'current' mode "
+                             "locks a direction")
     args = parser.parse_args()
 
     lock_entry = args.entry_r if args.entry_r is not None else float(getattr(cfg, "CANDLE_ENGINE_WAVE_ENTRY_R", 0.50))
@@ -481,7 +548,10 @@ def main():
                        start_balance=args.start_balance,
                        ref_balance=args.ref_balance,
                        lot_exp=args.lot_exp,
-                       compound=args.compound)
+                       compound=args.compound,
+                       fill=args.fill,
+                       h1_dir_mode=args.dir_mode,
+                       min_body_r=args.min_body_r)
         except Exception as e:
             import traceback
             print(f"\n=== {sym} FAILED: {e} ===", flush=True)

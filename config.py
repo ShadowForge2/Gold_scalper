@@ -492,6 +492,59 @@ CANDLE_ENGINE_PAIR_TOP_K = _env_int("CANDLE_ENGINE_PAIR_TOP_K", 2)
 CANDLE_ENGINE_PAIR_SCORE_WINDOW = _env_int("CANDLE_ENGINE_PAIR_SCORE_WINDOW", 720)  # ~30d H1 bars
 CANDLE_ENGINE_PAIR_PCT_MIN = _env_float("CANDLE_ENGINE_PAIR_PCT_MIN", 0.70)
 
+# ── Pull-into-H1 scalper (prevh1 / pull / trail) — LIVE execution ────
+# Trades the M5 pullback in the direction of the last COMPLETED H1 candle
+# body, trailing a giveback fraction of the wave, force-closing at a fixed
+# horizon (in M5 bars). This is the ONLY strategy that survived honest
+# backtests with real costs (see _bt_pull_prevh1.py, _tune_pull_prevh1.py).
+# Per-symbol tuned configs (train 2023-24 -> 2025 -> OOS 2026):
+#   US30   pull .30 trail .35 hold 24  PF 1.73 -> 1.83 -> 1.81  (best)
+#   XAUUSD pull .30 trail .15 hold 12  PF 1.22 -> 1.96 -> 1.40
+#   US100  pull .30 trail .50 hold 6   PF 1.38 -> 1.86 -> 1.34
+#   DE40   pull .30 trail .50 hold 24  (no 2026 data)
+#   US500  pull .30 trail .35 hold 24  (marginal after costs)
+#   JP225  pull .30 trail .35 hold 24  (marginal after costs — avoid)
+# Enabled per symbol (OFF by default). Flip PULL_US30=true etc. to trade it.
+PULL_ENGINE_ENABLED = {sym: _env_bool(f"PULL_{sym}", False) for sym in SYMBOLS}
+PULL_M1_HISTORY_BARS = _env_int("PULL_M1_HISTORY_BARS", 8000)
+PULL_REFRESH_SEC = _env_int("PULL_REFRESH_SEC", 60)
+PULL_MIN_H1_BARS = _env_int("PULL_MIN_H1_BARS", 30)  # completed H1 candles before trading
+# Round-trip cost in price units = spread + 2 x commission (matches the
+# backtest's cost model; used to score trade R for the daily guard).
+PULL_SYMBOL_ROUND_TRIP = {
+    "XAUUSD": _env_float("PULL_ROUND_TRIP_XAUUSD", 0.38),
+    "US100": _env_float("PULL_ROUND_TRIP_US100", 2.00),
+    "JP225": _env_float("PULL_ROUND_TRIP_JP225", 10.0),
+    "DE40": _env_float("PULL_ROUND_TRIP_DE40", 2.00),
+    "US500": _env_float("PULL_ROUND_TRIP_US500", 0.80),
+    "US30": _env_float("PULL_ROUND_TRIP_US30", 2.00),
+}
+PULL_SYMBOL_DEFAULTS = {
+    "XAUUSD": dict(pull_r=0.30, trail_r=0.15, max_hold=12),
+    "US100": dict(pull_r=0.30, trail_r=0.50, max_hold=6),
+    "JP225": dict(pull_r=0.30, trail_r=0.35, max_hold=24),
+    "DE40": dict(pull_r=0.30, trail_r=0.50, max_hold=24),
+    "US500": dict(pull_r=0.30, trail_r=0.35, max_hold=24),
+    "US30": dict(pull_r=0.30, trail_r=0.35, max_hold=24),
+}
+# "Daily profit bot" guards (per symbol, R in entry ATR units, UTC midnight
+# rollover): stop NEW entries once the day's net R reaches the target (lock in
+# the day) or hits the max loss (stop the bleed). 0.0 = guard disabled. An open
+# position is never force-closed by these — only new entries are blocked.
+PULL_DAILY_TARGET_R = {sym: _env_float(f"PULL_DAILY_TARGET_R_{sym}", 0.0) for sym in SYMBOLS}
+PULL_DAILY_MAX_LOSS_R = {sym: _env_float(f"PULL_DAILY_MAX_LOSS_R_{sym}", 0.0) for sym in SYMBOLS}
+SYMBOL_PULL_PARAMS = {
+    sym: {
+        "pull_r": _env_float(f"PULL_PULL_R_{sym}", PULL_SYMBOL_DEFAULTS.get(sym, {}).get("pull_r", 0.30)),
+        "trail_r": _env_float(f"PULL_TRAIL_R_{sym}", PULL_SYMBOL_DEFAULTS.get(sym, {}).get("trail_r", 0.35)),
+        "max_hold": _env_int(f"PULL_MAX_HOLD_{sym}", PULL_SYMBOL_DEFAULTS.get(sym, {}).get("max_hold", 24)),
+        "round_trip": PULL_SYMBOL_ROUND_TRIP.get(sym, 0.0),
+        "daily_target_r": PULL_DAILY_TARGET_R.get(sym, 0.0),
+        "daily_max_loss_r": PULL_DAILY_MAX_LOSS_R.get(sym, 0.0),
+    }
+    for sym in SYMBOLS
+}
+
 # ── Momentum-jump engine (per-pair adapted) ──────────────────────────
 # Validated OOS on M5 2022-2025 with per-pair regime gates:
 #   US100: vol>=55 gate  -> +127.8R  (all 4 years positive)
