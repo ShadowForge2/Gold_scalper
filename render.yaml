@@ -136,11 +136,11 @@ services:
       - key: PEAK_HARVEST_MAX_HOLD_BARS
         value: "48"
       - key: MOMENTUM_US100
-        value: "true"
+        value: "false"
       - key: MOMENTUM_JP225
-        value: "true"
+        value: "false"
       - key: MOMENTUM_DE40
-        value: "true"
+        value: "false"
       - key: MOMENTUM_XAUUSD
         value: "false"
       - key: MOMENTUM_US500
@@ -257,18 +257,51 @@ services:
         value: "0.50"
       - key: WAVE_TRAIL_R_US30
         value: "0.5"
-      # ── Pull-into-H1 scalper — LIVE on US30 (daily profit bot) ──
-      # The pull engine takes ownership of US30: wave + momentum are disabled
-      # for it, the session filter is bypassed for pull signals (trades freely
-      # like the honest backtest), and the daily guards lock in a good day /
-      # stop the bleed (R in entry-H1-ATR units, UTC-midnight rollover).
-      # Tuned OOS 2026: pull .3R / trail .35 / hold 24 -> PF 1.81.
-      - key: PULL_US30
-        value: "true"
+      # ── Wave scalper — DISABLED live (2026-08-11) ──
+      # The wave's PF 4.17 was a legacy "level" fill artifact (fills at the
+      # exact trigger level, impossible live). Under market fills (what the
+      # live bot does, proven equal trade-for-trade to WaveScalper) it is a
+      # LOSER: XAUUSD PF 0.53, net -286R. Wave disabled on all pairs.
+      - key: WAVE_XAUUSD
+        value: "false"
+      - key: WAVE_US100
+        value: "false"
+      - key: WAVE_JP225
+        value: "false"
+      - key: WAVE_DE40
+        value: "false"
+      - key: WAVE_US500
+        value: "false"
       - key: WAVE_US30
         value: "false"
-      - key: MOMENTUM_US30
-        value: "false"
+      # ── Pull-into-H1 scalper — LIVE (daily profit bot) ──
+      # The ONLY strategy that survived honest backtests (bar-close fills +
+      # real costs from the start). Pull owns its symbols (wave + momentum
+      # disabled there), the session filter is bypassed for pull signals
+      # (trades freely like the backtest), and the daily guards lock in a
+      # good day / stop the bleed (R in entry-H1-ATR units, UTC rollover).
+      # Live on the 3 pairs that survived OOS 2026 at PF >= 1.3:
+      #   US30   pull .3 / trail .35 / hold 24  PF train 1.73 valid 1.83 OOS 1.81
+      #   XAUUSD pull .3 / trail .15 / hold 12  PF train 1.22 valid 1.96 OOS 1.40
+      #   US100  pull .3 / trail .50 / hold 6   PF train 1.38 valid 1.86 OOS 1.34
+      - key: PULL_XAUUSD
+        value: "true"
+      - key: PULL_US100
+        value: "true"
+      - key: PULL_US30
+        value: "true"
+      - key: PULL_PULL_R_XAUUSD
+        value: "0.30"
+      - key: PULL_TRAIL_R_XAUUSD
+        value: "0.15"
+      - key: PULL_MAX_HOLD_XAUUSD
+        value: "12"
+      - key: PULL_PULL_R_US100
+        value: "0.30"
+      - key: PULL_TRAIL_R_US100
+        value: "0.50"
+      - key: PULL_MAX_HOLD_US100
+        value: "6"
       - key: PULL_PULL_R_US30
         value: "0.30"
       - key: PULL_TRAIL_R_US30
@@ -279,6 +312,16 @@ services:
         value: "3.0"
       - key: PULL_DAILY_MAX_LOSS_R_US30
         value: "2.5"
+      # JP225/DE40/US500 are NOT enabled for pull (JP225 breaks even, DE40 has
+      # no 2026 data, US500 marginal). Force CandleML off on them so NOTHING
+      # trades there — wave+momentum are already false, only the legacy
+      # CandleML fallback could still fire (bot.py:1123).
+      - key: CANDLE_ML_MODE_JP225
+        value: "off"
+      - key: CANDLE_ML_MODE_DE40
+        value: "off"
+      - key: CANDLE_ML_MODE_US500
+        value: "off"
       - key: USD_TO_NGN_RATE
         value: "1500"
       - key: PAYSTACK_SECRET_KEY
