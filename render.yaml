@@ -181,6 +181,82 @@ services:
         value: "60"
       - key: MOMENTUM_M1_HISTORY_BARS
         value: "8000"
+      # ── Wave scalper — PER-PAIR swept values (OOS 2023-25 optimum) ──
+      # Each pair gets its own entry/cut/profit/jump/trail via
+      # WAVE_ENTRY_R_{SYM}, WAVE_CUT_R_{SYM}, ... (read by SYMBOL_WAVE_PARAMS
+      # in config.py). Universal values helped some pairs and hurt others.
+      - key: WAVE_ENTRY_R_XAUUSD
+        value: "0.50"
+      - key: WAVE_CUT_R_XAUUSD
+        value: "0.01"
+      - key: WAVE_PROFIT_R_XAUUSD
+        value: "0.05"
+      - key: WAVE_JUMP_BREAK_R_XAUUSD
+        value: "1.0"
+      - key: WAVE_JUMP_BODY_R_XAUUSD
+        value: "0.50"
+      - key: WAVE_TRAIL_R_XAUUSD
+        value: "0.5"
+      - key: WAVE_ENTRY_R_US100
+        value: "0.50"
+      - key: WAVE_CUT_R_US100
+        value: "0.01"
+      - key: WAVE_PROFIT_R_US100
+        value: "0.05"
+      - key: WAVE_JUMP_BREAK_R_US100
+        value: "1.0"
+      - key: WAVE_JUMP_BODY_R_US100
+        value: "0.50"
+      - key: WAVE_TRAIL_R_US100
+        value: "0.5"
+      - key: WAVE_ENTRY_R_JP225
+        value: "0.50"
+      - key: WAVE_CUT_R_JP225
+        value: "0.01"
+      - key: WAVE_PROFIT_R_JP225
+        value: "0.05"
+      - key: WAVE_JUMP_BREAK_R_JP225
+        value: "1.0"
+      - key: WAVE_JUMP_BODY_R_JP225
+        value: "0.50"
+      - key: WAVE_TRAIL_R_JP225
+        value: "0.5"
+      - key: WAVE_ENTRY_R_DE40
+        value: "0.50"
+      - key: WAVE_CUT_R_DE40
+        value: "0.01"
+      - key: WAVE_PROFIT_R_DE40
+        value: "0.05"
+      - key: WAVE_JUMP_BREAK_R_DE40
+        value: "1.0"
+      - key: WAVE_JUMP_BODY_R_DE40
+        value: "0.50"
+      - key: WAVE_TRAIL_R_DE40
+        value: "0.5"
+      - key: WAVE_ENTRY_R_US500
+        value: "0.50"
+      - key: WAVE_CUT_R_US500
+        value: "0.01"
+      - key: WAVE_PROFIT_R_US500
+        value: "0.05"
+      - key: WAVE_JUMP_BREAK_R_US500
+        value: "1.0"
+      - key: WAVE_JUMP_BODY_R_US500
+        value: "0.50"
+      - key: WAVE_TRAIL_R_US500
+        value: "0.5"
+      - key: WAVE_ENTRY_R_US30
+        value: "0.50"
+      - key: WAVE_CUT_R_US30
+        value: "0.01"
+      - key: WAVE_PROFIT_R_US30
+        value: "0.05"
+      - key: WAVE_JUMP_BREAK_R_US30
+        value: "1.0"
+      - key: WAVE_JUMP_BODY_R_US30
+        value: "0.50"
+      - key: WAVE_TRAIL_R_US30
+        value: "0.5"
       - key: USD_TO_NGN_RATE
         value: "1500"
       - key: PAYSTACK_SECRET_KEY

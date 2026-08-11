@@ -193,7 +193,8 @@ def run_candle_wave(m1, o, atr, entry_r, cut_r, profit_r, cost_r,
 
 
 def run_symbol(symbol, train_start, train_end, test_start, test_end, combos,
-               tf_min=60, rider_enabled=True, start_balance=20.0,
+               tf_min=60, rider_enabled=True, gate_enabled=True,
+               start_balance=20.0,
                ref_balance=20.0, lot_exp=0.0, compound=False):
     import xgboost as xgb
     print(f"\n=== {symbol} ({tf_min}min) ===", flush=True)
@@ -245,14 +246,19 @@ def run_symbol(symbol, train_start, train_end, test_start, test_end, combos,
         return out
 
     per_class = int(getattr(cfg, "CANDLE_ENGINE_TRAIN_PER_CLASS", 15000))
-    tr_sel = balanced(tr_idx, per_class)
-    va_sel = tr_idx[int(0.85 * len(tr_idx)):]
-    model = train_model(X[tr_sel], Yl[tr_sel], X[va_sel], Yl[va_sel])
+    if gate_enabled:
+        tr_sel = balanced(tr_idx, per_class)
+        va_sel = tr_idx[int(0.85 * len(tr_idx)):]
+        model = train_model(X[tr_sel], Yl[tr_sel], X[va_sel], Yl[va_sel])
+    else:
+        model = None
 
     h1_test = feats_all.iloc[te_idx]
     atr_test = atr_all.iloc[te_idx]
     X_test = h1_test[FEATURE_COLS].fillna(0.0).values
-    probs = model.predict(xgb.DMatrix(X_test))
+    probs = None
+    if gate_enabled:
+        probs = model.predict(xgb.DMatrix(X_test))
 
     jump_cache = {}
     for combo in combos:
@@ -301,9 +307,10 @@ def run_symbol(symbol, train_start, train_end, test_start, test_end, combos,
                 continue
             # Chop gate uses the PREVIOUS completed candle (known at this open).
             prev = k - 1
-            pb, ps, pn = float(probs[prev][0]), float(probs[prev][1]), float(probs[prev][2])
-            if pn > max(pb, ps) and not jf[prev]:
-                continue
+            if gate_enabled:
+                pb, ps, pn = float(probs[prev][0]), float(probs[prev][1]), float(probs[prev][2])
+                if pn > max(pb, ps) and not jf[prev]:
+                    continue
             n_candle += 1
             sub = candle_m1.get(ts)
             if sub is None or len(sub) < 2:
@@ -359,17 +366,21 @@ def run_symbol(symbol, train_start, train_end, test_start, test_end, combos,
             "eq_dd": max_dd if compound else None,
         }))
 
-    print(f"\n  {'entry':>5} {'cut':>5} {'profit':>6} {'trd':>6} {'cndl':>5} "
-          f"{'WR%':>5} {'expR':>6} {'PF':>5} {'netR':>7} {'dd':>5}", flush=True)
+    print(f"\n  {'entry':>5} {'cut':>5} {'profit':>6} {'jb':>4} {'jbd':>4} "
+          f"{'trail':>5} {'trd':>6} {'cndl':>5} {'WR%':>5} {'expR':>6} "
+          f"{'PF':>5} {'netR':>7} {'dd':>5}", flush=True)
     if compound:
         print("  (compound: final equity in base-lot units, dd as % of peak)", flush=True)
     for combo, m in sorted(results, key=lambda kv: (kv[1] or {}).get("pf", 0), reverse=True):
         if m is None:
             print(f"  {combo['entry_r']:>5.2f} {combo['cut_r']:>5.2f} "
-                  f"{combo['profit_r']:>6.2f} |  no trades", flush=True)
+                  f"{combo['profit_r']:>6.2f} {combo['jump_break_r']:>4.1f} "
+                  f"{combo['jump_body_r']:>4.2f} {combo['trail_r']:>5.2f} |  no trades", flush=True)
             continue
         line = (f"  {combo['entry_r']:>5.2f} {combo['cut_r']:>5.2f} "
-                f"{combo['profit_r']:>6.2f} | {m['trades']:>6} {m['candles']:>5} "
+                f"{combo['profit_r']:>6.2f} {combo['jump_break_r']:>4.1f} "
+                f"{combo['jump_body_r']:>4.2f} {combo['trail_r']:>5.2f} "
+                f"| {m['trades']:>6} {m['candles']:>5} "
                 f"{m['wr']:>5.1f} {m['exp']:>+6.3f} {m['pf']:>5.2f} "
                 f"{m['net']:>+7.1f} {m['dd']:>5.1f}")
         if compound and m.get("eq_final") is not None:
@@ -388,6 +399,8 @@ def main():
     parser.add_argument("--tf", type=int, default=60)
     parser.add_argument("--no-rider", action="store_true",
                         help="disable jump-rider mode (pure wave scalper)")
+    parser.add_argument("--no-gate", action="store_true",
+                        help="disable the ML chop gate entirely (trade every candle)")
     parser.add_argument("--start-balance", type=float, default=20.0,
                         help="starting equity for compounding sim (reference = 20)")
     parser.add_argument("--ref-balance", type=float, default=20.0,
@@ -400,11 +413,21 @@ def main():
                         help="track equity through the loop (dollar PnL = R*ATR*lot)")
     parser.add_argument("--sweep", action="store_true",
                         help="restore full combo grid (overrides locked config)")
+    parser.add_argument("--sweep-rider", action="store_true",
+                        help="sweep jump-rider trail_r (0.3/0.5/0.8/1.0)")
+    parser.add_argument("--sweep-jump", action="store_true",
+                        help="sweep jump triggers (break 1.0/1.5/2.0 x body 0.5/0.7/0.9)")
+    parser.add_argument("--entry-r", type=float, default=None,
+                        help="override the entry grid with this single value")
+    parser.add_argument("--cut-r", type=float, default=None,
+                        help="override the cut grid with this single value")
+    parser.add_argument("--profit-r", type=float, default=None,
+                        help="override the profit grid with this single value")
     args = parser.parse_args()
 
-    lock_entry = float(getattr(cfg, "CANDLE_ENGINE_WAVE_ENTRY_R", 0.50))
-    lock_cut = float(getattr(cfg, "CANDLE_ENGINE_WAVE_CUT_R", 0.03))
-    lock_profit = float(getattr(cfg, "CANDLE_ENGINE_WAVE_PROFIT_R", 0.05))
+    lock_entry = args.entry_r if args.entry_r is not None else float(getattr(cfg, "CANDLE_ENGINE_WAVE_ENTRY_R", 0.50))
+    lock_cut = args.cut_r if args.cut_r is not None else float(getattr(cfg, "CANDLE_ENGINE_WAVE_CUT_R", 0.03))
+    lock_profit = args.profit_r if args.profit_r is not None else float(getattr(cfg, "CANDLE_ENGINE_WAVE_PROFIT_R", 0.05))
     lock_trail = float(getattr(cfg, "CANDLE_ENGINE_WAVE_TRAIL_R", 0.5))
     lock_reversal = float(getattr(cfg, "CANDLE_ENGINE_WAVE_REVERSAL_R", 0.5))
     combos = []
@@ -414,19 +437,47 @@ def main():
     else:
         grid = [(lock_entry, lock_cut, lock_profit)]
     for entry_r, cut_r, profit_r in grid:
-        combos.append(dict(
-            entry_r=entry_r, cut_r=cut_r, profit_r=profit_r,
-            cost_r=float(getattr(cfg, "CANDLE_ENGINE_COST_R", 0.05)),
-            jump_break_r=float(getattr(cfg, "CANDLE_ENGINE_JUMP_BREAK_R", 1.5)),
-            jump_body_r=float(getattr(cfg, "CANDLE_ENGINE_JUMP_BODY_R", 0.70)),
-            trail_r=lock_trail, reversal_r=lock_reversal,
-        ))
+        if args.sweep_jump:
+            for jb, jbd in itertools.product([1.0, 1.5, 2.0], [0.5, 0.7, 0.9]):
+                if args.sweep_rider:
+                    for tr in [0.3, 0.5, 0.8, 1.0]:
+                        combos.append(dict(
+                            entry_r=entry_r, cut_r=cut_r, profit_r=profit_r,
+                            cost_r=float(getattr(cfg, "CANDLE_ENGINE_COST_R", 0.05)),
+                            jump_break_r=jb, jump_body_r=jbd,
+                            trail_r=tr, reversal_r=lock_reversal,
+                        ))
+                else:
+                    combos.append(dict(
+                        entry_r=entry_r, cut_r=cut_r, profit_r=profit_r,
+                        cost_r=float(getattr(cfg, "CANDLE_ENGINE_COST_R", 0.05)),
+                        jump_break_r=jb, jump_body_r=jbd,
+                        trail_r=lock_trail, reversal_r=lock_reversal,
+                    ))
+        elif args.sweep_rider:
+            for tr in [0.3, 0.5, 0.8, 1.0]:
+                combos.append(dict(
+                    entry_r=entry_r, cut_r=cut_r, profit_r=profit_r,
+                    cost_r=float(getattr(cfg, "CANDLE_ENGINE_COST_R", 0.05)),
+                    jump_break_r=float(getattr(cfg, "CANDLE_ENGINE_JUMP_BREAK_R", 1.5)),
+                    jump_body_r=float(getattr(cfg, "CANDLE_ENGINE_JUMP_BODY_R", 0.70)),
+                    trail_r=tr, reversal_r=lock_reversal,
+                ))
+        else:
+            combos.append(dict(
+                entry_r=entry_r, cut_r=cut_r, profit_r=profit_r,
+                cost_r=float(getattr(cfg, "CANDLE_ENGINE_COST_R", 0.05)),
+                jump_break_r=float(getattr(cfg, "CANDLE_ENGINE_JUMP_BREAK_R", 1.5)),
+                jump_body_r=float(getattr(cfg, "CANDLE_ENGINE_JUMP_BODY_R", 0.70)),
+                trail_r=lock_trail, reversal_r=lock_reversal,
+            ))
 
     for sym in [s.strip().upper() for s in args.symbols.split(",") if s.strip()]:
         try:
             run_symbol(sym, args.train_start, args.train_end,
                        args.test_start, args.test_end, combos, tf_min=args.tf,
                        rider_enabled=not args.no_rider,
+                       gate_enabled=not args.no_gate,
                        start_balance=args.start_balance,
                        ref_balance=args.ref_balance,
                        lot_exp=args.lot_exp,

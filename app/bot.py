@@ -184,18 +184,19 @@ class Bot:
                     feature_cols = loaded.get("feature_cols") if isinstance(loaded, dict) else None
                     if model is None:
                         self.logger.warning(f"[{sym}] Wave scalper: no model at {model_path} — chop gate disabled")
+                    wave_params = getattr(cfg, "SYMBOL_WAVE_PARAMS", {}).get(sym, {})
                     wave_eng = WaveScalper(
                         symbol=sym,
                         model=model,
                         feature_cols=feature_cols,
                         logger=self.logger,
-                        entry_r=float(getattr(cfg, "CANDLE_ENGINE_WAVE_ENTRY_R", 0.50)),
-                        cut_r=float(getattr(cfg, "CANDLE_ENGINE_WAVE_CUT_R", 0.03)),
-                        profit_r=float(getattr(cfg, "CANDLE_ENGINE_WAVE_PROFIT_R", 0.05)),
+                        entry_r=float(wave_params.get("entry_r", getattr(cfg, "CANDLE_ENGINE_WAVE_ENTRY_R", 0.50))),
+                        cut_r=float(wave_params.get("cut_r", getattr(cfg, "CANDLE_ENGINE_WAVE_CUT_R", 0.03))),
+                        profit_r=float(wave_params.get("profit_r", getattr(cfg, "CANDLE_ENGINE_WAVE_PROFIT_R", 0.05))),
                         cost_r=float(getattr(cfg, "CANDLE_ENGINE_COST_R", 0.05)),
-                        jump_break_r=float(getattr(cfg, "CANDLE_ENGINE_WAVE_JUMP_BREAK_R", getattr(cfg, "CANDLE_ENGINE_JUMP_BREAK_R", 1.5))),
-                        jump_body_r=float(getattr(cfg, "CANDLE_ENGINE_WAVE_JUMP_BODY_R", getattr(cfg, "CANDLE_ENGINE_JUMP_BODY_R", 0.70))),
-                        trail_r=float(getattr(cfg, "CANDLE_ENGINE_WAVE_TRAIL_R", 0.5)),
+                        jump_break_r=float(wave_params.get("jump_break_r", getattr(cfg, "CANDLE_ENGINE_JUMP_BREAK_R", 1.5))),
+                        jump_body_r=float(wave_params.get("jump_body_r", getattr(cfg, "CANDLE_ENGINE_JUMP_BODY_R", 0.70))),
+                        trail_r=float(wave_params.get("trail_r", getattr(cfg, "CANDLE_ENGINE_WAVE_TRAIL_R", 0.5))),
                         reversal_r=float(getattr(cfg, "CANDLE_ENGINE_WAVE_REVERSAL_R", 0.5)),
                         rider_enabled=not bool(getattr(cfg, "CANDLE_ENGINE_WAVE_NO_RIDER", False)),
                     )

@@ -454,6 +454,27 @@ CANDLE_ENGINE_WAVE_REVERSAL_R = _env_float("CANDLE_ENGINE_WAVE_REVERSAL_R", 0.5)
 # risk grow as equity^1.5 (superlinear) and runs every combo to negative
 # equity in the compounding backtest. Keep this at 0.
 CANDLE_ENGINE_WAVE_LOT_EXP = _env_float("CANDLE_ENGINE_WAVE_LOT_EXP", 0.0)
+# ── Wave scalper — PER-SYMBOL overrides ───────────────────────────────
+# Each symbol falls back to the global CANDLE_ENGINE_WAVE_* values above
+# unless a per-symbol env var (WAVE_ENTRY_R_XAUUSD, WAVE_CUT_R_US30, ...) is
+# set. Pairs are NOT interchangeable: a config that suits one instrument's
+# volatility can bleed on another, so every pair gets its own swept values.
+# Swept OOS 2023-25 (and confirmed 2021-22 on XAUUSD/US100/XAGUSD): all pairs
+# optimize at entry 0.50 / cut 0.01 / profit 0.05 / jump 1.0/0.50, but the
+# edge MAGNITUDE differs per pair, so per-symbol tuning stays the rule.
+SYMBOL_WAVE_PARAMS = {
+    sym: {
+        "entry_r": _env_float(f"WAVE_ENTRY_R_{sym}", CANDLE_ENGINE_WAVE_ENTRY_R),
+        "cut_r": _env_float(f"WAVE_CUT_R_{sym}", CANDLE_ENGINE_WAVE_CUT_R),
+        "profit_r": _env_float(f"WAVE_PROFIT_R_{sym}", CANDLE_ENGINE_WAVE_PROFIT_R),
+        "jump_break_r": _env_float(
+            f"WAVE_JUMP_BREAK_R_{sym}", CANDLE_ENGINE_JUMP_BREAK_R),
+        "jump_body_r": _env_float(
+            f"WAVE_JUMP_BODY_R_{sym}", CANDLE_ENGINE_JUMP_BODY_R),
+        "trail_r": _env_float(f"WAVE_TRAIL_R_{sym}", CANDLE_ENGINE_WAVE_TRAIL_R),
+    }
+    for sym in SYMBOLS
+}
 # ── Wave scalper — LIVE execution ─────────────────────────────────────
 # When enabled for a symbol, the WaveScalper engine owns entry/exit for that
 # symbol (the old momentum/candle engines are not built for it). Enabled by
