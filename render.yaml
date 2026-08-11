@@ -257,6 +257,28 @@ services:
         value: "0.50"
       - key: WAVE_TRAIL_R_US30
         value: "0.5"
+      # ── Pull-into-H1 scalper — LIVE on US30 (daily profit bot) ──
+      # The pull engine takes ownership of US30: wave + momentum are disabled
+      # for it, the session filter is bypassed for pull signals (trades freely
+      # like the honest backtest), and the daily guards lock in a good day /
+      # stop the bleed (R in entry-H1-ATR units, UTC-midnight rollover).
+      # Tuned OOS 2026: pull .3R / trail .35 / hold 24 -> PF 1.81.
+      - key: PULL_US30
+        value: "true"
+      - key: WAVE_US30
+        value: "false"
+      - key: MOMENTUM_US30
+        value: "false"
+      - key: PULL_PULL_R_US30
+        value: "0.30"
+      - key: PULL_TRAIL_R_US30
+        value: "0.35"
+      - key: PULL_MAX_HOLD_US30
+        value: "24"
+      - key: PULL_DAILY_TARGET_R_US30
+        value: "3.0"
+      - key: PULL_DAILY_MAX_LOSS_R_US30
+        value: "2.5"
       - key: USD_TO_NGN_RATE
         value: "1500"
       - key: PAYSTACK_SECRET_KEY
