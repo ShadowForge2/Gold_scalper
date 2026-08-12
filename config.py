@@ -311,9 +311,9 @@ CANDLE_ML_MODEL_PATHS = {
 CANDLE_ML_MODE = {
     "XAUUSD": _env_str("CANDLE_ML_MODE_XAUUSD", "always"),
     "US100": _env_str("CANDLE_ML_MODE_US100", "always"),
-    "JP225": _env_str("CANDLE_ML_MODE_JP225", "always"),
-    "DE40": _env_str("CANDLE_ML_MODE_DE40", "always"),
-    "US500": _env_str("CANDLE_ML_MODE_US500", "always"),
+    "JP225": _env_str("CANDLE_ML_MODE_JP225", "off"),
+    "DE40": _env_str("CANDLE_ML_MODE_DE40", "off"),
+    "US500": _env_str("CANDLE_ML_MODE_US500", "off"),
     "US30": _env_str("CANDLE_ML_MODE_US30", "always"),
 }
 # For "volatility" mode: switch to Candle ML when short-term / long-term ATR > this
@@ -453,8 +453,16 @@ CANDLE_ENGINE_PAIR_PCT_MIN = _env_float("CANDLE_ENGINE_PAIR_PCT_MIN", 0.70)
 #   DE40   pull .30 trail .50 hold 24  (no 2026 data)
 #   US500  pull .30 trail .35 hold 24  (marginal after costs)
 #   JP225  pull .30 trail .35 hold 24  (marginal after costs — avoid)
-# Enabled per symbol (OFF by default). Flip PULL_US30=true etc. to trade it.
-PULL_ENGINE_ENABLED = {sym: _env_bool(f"PULL_{sym}", False) for sym in SYMBOLS}
+# Enabled per symbol (ON for the 3 OOS-validated pairs, OFF by default for
+# the rest). Flip PULL_XAUUSD=false etc. to disable a pair.
+PULL_ENGINE_ENABLED = {
+    "XAUUSD": _env_bool("PULL_XAUUSD", True),
+    "US100": _env_bool("PULL_US100", True),
+    "JP225": _env_bool("PULL_JP225", False),
+    "DE40": _env_bool("PULL_DE40", False),
+    "US500": _env_bool("PULL_US500", False),
+    "US30": _env_bool("PULL_US30", True),
+}
 PULL_M1_HISTORY_BARS = _env_int("PULL_M1_HISTORY_BARS", 8000)
 PULL_REFRESH_SEC = _env_int("PULL_REFRESH_SEC", 60)
 PULL_MIN_H1_BARS = _env_int("PULL_MIN_H1_BARS", 30)  # completed H1 candles before trading
@@ -480,8 +488,22 @@ PULL_SYMBOL_DEFAULTS = {
 # rollover): stop NEW entries once the day's net R reaches the target (lock in
 # the day) or hits the max loss (stop the bleed). 0.0 = guard disabled. An open
 # position is never force-closed by these — only new entries are blocked.
-PULL_DAILY_TARGET_R = {sym: _env_float(f"PULL_DAILY_TARGET_R_{sym}", 0.0) for sym in SYMBOLS}
-PULL_DAILY_MAX_LOSS_R = {sym: _env_float(f"PULL_DAILY_MAX_LOSS_R_{sym}", 0.0) for sym in SYMBOLS}
+PULL_DAILY_TARGET_R = {
+    "XAUUSD": _env_float("PULL_DAILY_TARGET_R_XAUUSD", 0.0),
+    "US100": _env_float("PULL_DAILY_TARGET_R_US100", 0.0),
+    "JP225": _env_float("PULL_DAILY_TARGET_R_JP225", 0.0),
+    "DE40": _env_float("PULL_DAILY_TARGET_R_DE40", 0.0),
+    "US500": _env_float("PULL_DAILY_TARGET_R_US500", 0.0),
+    "US30": _env_float("PULL_DAILY_TARGET_R_US30", 3.0),
+}
+PULL_DAILY_MAX_LOSS_R = {
+    "XAUUSD": _env_float("PULL_DAILY_MAX_LOSS_R_XAUUSD", 0.0),
+    "US100": _env_float("PULL_DAILY_MAX_LOSS_R_US100", 0.0),
+    "JP225": _env_float("PULL_DAILY_MAX_LOSS_R_JP225", 0.0),
+    "DE40": _env_float("PULL_DAILY_MAX_LOSS_R_DE40", 0.0),
+    "US500": _env_float("PULL_DAILY_MAX_LOSS_R_US500", 0.0),
+    "US30": _env_float("PULL_DAILY_MAX_LOSS_R_US30", 2.5),
+}
 SYMBOL_PULL_PARAMS = {
     sym: {
         "pull_r": _env_float(f"PULL_PULL_R_{sym}", PULL_SYMBOL_DEFAULTS.get(sym, {}).get("pull_r", 0.30)),
@@ -509,9 +531,9 @@ SYMBOL_PULL_PARAMS = {
 # window ("er", trending-only, good for DE40). "none" disables the gate.
 MOMENTUM_ENGINE_ENABLED = {
     "XAUUSD": _env_bool("MOMENTUM_XAUUSD", False),
-    "US100": _env_bool("MOMENTUM_US100", True),
-    "JP225": _env_bool("MOMENTUM_JP225", True),
-    "DE40": _env_bool("MOMENTUM_DE40", True),
+    "US100": _env_bool("MOMENTUM_US100", False),
+    "JP225": _env_bool("MOMENTUM_JP225", False),
+    "DE40": _env_bool("MOMENTUM_DE40", False),
     "US500": _env_bool("MOMENTUM_US500", False),
     "US30": _env_bool("MOMENTUM_US30", False),
 }
