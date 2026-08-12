@@ -102,6 +102,8 @@ class Bot:
                         min_h1_bars=int(getattr(cfg, "PULL_MIN_H1_BARS", 30)),
                         daily_target_r=float(pp.get("daily_target_r", 0.0)),
                         daily_max_loss_r=float(pp.get("daily_max_loss_r", 0.0)),
+                        giveback_cap=float(pp.get("giveback_cap", getattr(cfg, "PULL_GIVEBACK_CAP", 0.30))),
+                        pump_atr=float(pp.get("pump_atr", getattr(cfg, "PULL_PUMP_ATR", 0.5))),
                     )
                     self.logger.info(
                         f"[{sym}] Pull scalper enabled (pull {pull_eng.pull_r}R "
@@ -355,6 +357,8 @@ class Bot:
             max_hold_bars=int(getattr(cfg, "SCANNER_MAX_HOLD", 12)),
             round_trip_price=round_trip,
             min_h1_bars=int(getattr(cfg, "PULL_MIN_H1_BARS", 30)),
+            giveback_cap=float(getattr(cfg, "PULL_GIVEBACK_CAP", 0.30)),
+            pump_atr=float(getattr(cfg, "PULL_PUMP_ATR", 0.5)),
         )
 
     def _ensure_symbol_state(self, sym: str) -> None:

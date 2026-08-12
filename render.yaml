@@ -105,6 +105,10 @@ services:
         value: "3.0"
       - key: PULL_DAILY_MAX_LOSS_R_US30
         value: "2.5"
+      - key: PULL_GIVEBACK_CAP
+        value: "0.30"
+      - key: PULL_PUMP_ATR
+        value: "0.5"
       - key: USD_TO_NGN_RATE
         value: "1500"
       - key: PAYSTACK_SECRET_KEY

@@ -249,6 +249,15 @@ PULL_ENGINE_ENABLED = {
 PULL_M1_HISTORY_BARS = _env_int("PULL_M1_HISTORY_BARS", 8000)
 PULL_REFRESH_SEC = _env_int("PULL_REFRESH_SEC", 60)
 PULL_MIN_H1_BARS = _env_int("PULL_MIN_H1_BARS", 30)  # completed H1 candles before trading
+# Profit lock-in for the PullPrevH1 engine:
+#   GIVEBACK_CAP — a live trade never gives back more than this fraction of the
+#                  peak profit it has touched (tight trailing stop that rises
+#                  with the run; 0.30 = keep at least 70% of the best run).
+#   PUMP_ATR     — a single M5 candle whose favourable body exceeds this many
+#                  H1-ATR is treated as a sudden pump; the trade exits at that
+#                  candle's close to capture the tip instead of waiting to trail.
+PULL_GIVEBACK_CAP = _env_float("PULL_GIVEBACK_CAP", 0.30)
+PULL_PUMP_ATR = _env_float("PULL_PUMP_ATR", 0.5)
 # Round-trip cost in price units = spread + 2 x commission (matches the
 # backtest's cost model; used to score trade R for the daily guard).
 PULL_SYMBOL_ROUND_TRIP = {

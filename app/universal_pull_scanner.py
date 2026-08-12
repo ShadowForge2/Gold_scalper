@@ -46,6 +46,8 @@ def _build_scalper(symbol: str, logger: BotLogger) -> PullPrevH1Scalper:
         min_h1_bars=int(getattr(cfg, "PULL_MIN_H1_BARS", 30)),
         daily_target_r=float(pp.get("daily_target_r", 0.0)),
         daily_max_loss_r=float(pp.get("daily_max_loss_r", 0.0)),
+        giveback_cap=float(pp.get("giveback_cap", getattr(cfg, "PULL_GIVEBACK_CAP", 0.30))),
+        pump_atr=float(pp.get("pump_atr", getattr(cfg, "PULL_PUMP_ATR", 0.5))),
     )
 
 

@@ -50,6 +50,8 @@ class PullPrevH1Scalper:
         min_h1_bars: int = 30,
         daily_target_r: float = 0.0,
         daily_max_loss_r: float = 0.0,
+        giveback_cap: float = 0.30,
+        pump_atr: float = 0.5,
     ):
         self.symbol = symbol
         self._logger = logger
@@ -60,6 +62,13 @@ class PullPrevH1Scalper:
         self.min_h1_bars = int(min_h1_bars)
         self.daily_target_r = float(daily_target_r)
         self.daily_max_loss_r = float(daily_max_loss_r)
+        # Profit lock-in: never give back more than GIVEBACK_CAP of the max
+        # profit the trade has touched (tight trailing stop that rises with the
+        # peak). PUMP_ATR: a single M5 candle whose favorable body exceeds this
+        # multiple of the H1 ATR is treated as a "sudden pump" — exit at that
+        # candle's close to capture the tip instead of waiting for a retrace.
+        self.giveback_cap = float(giveback_cap)
+        self.pump_atr = float(pump_atr)
 
         # M1 cache (naive UTC, sorted, deduped); M5/H1 resampled on demand.
         self._cache = None
@@ -77,6 +86,7 @@ class PullPrevH1Scalper:
         self._entry = 0.0
         self._hold = 0               # completed M5 bars since entry
         self._run_ext = 0.0
+        self._peak_profit = 0.0      # max favorable move (R) the trade has touched
         self._pending = None
 
         # Daily guard state
@@ -175,6 +185,7 @@ class PullPrevH1Scalper:
         self._pos = 1 if str(direction).upper() == "BUY" else -1
         self._entry = float(entry_price)
         self._run_ext = float(entry_price)
+        self._peak_profit = 0.0
         self._hold = 0
         self._pending = None
         if atr and atr > 0:
@@ -227,7 +238,7 @@ class PullPrevH1Scalper:
             if self._pos == 0:
                 self._evaluate_entry(ts, bc)
             else:
-                self._evaluate_exit(ts, bc)
+                self._evaluate_exit(ts, row)
             self._last_m5_ts = ts
             self._last_m5_close = bc
             if self._pending is not None:
@@ -259,15 +270,34 @@ class PullPrevH1Scalper:
             "entry": bc,
         }
 
-    def _evaluate_exit(self, ts: pd.Timestamp, bc: float):
+    def _evaluate_exit(self, ts: pd.Timestamp, row: pd.DataFrame):
         dirn = self._pos
+        bc = float(row["close"])
         self._hold += 1
         if dirn > 0:
             self._run_ext = max(self._run_ext, bc)
         else:
             self._run_ext = min(self._run_ext, bc)
+        cur = (bc - self._entry) * dirn           # current favorable move
         wave = (self._run_ext - self._entry) * dirn
+        # Track the best favorable move the trade has touched so the trailing
+        # lock-in can cap the giveback at a fraction of the peak.
+        if cur > self._peak_profit:
+            self._peak_profit = cur
         back = (self._run_ext - bc) * dirn
+        # Sudden-pump tip exit: a single M5 candle whose favorable body exceeds
+        # pump_atr * ATR is treated as the tip of a spike — exit at that close
+        # immediately instead of waiting for a retrace.
+        body = (float(row["close"]) - float(row["open"])) * dirn
+        if self._atr > 0 and body >= self.pump_atr * self._atr:
+            self._pending = {"type": "exit", "reason": "pump_tip", "price": bc}
+            return
+        # Tight trailing: never give back more than GIVEBACK_CAP of the peak
+        # profit the trade has touched (measured from the current price, so the
+        # stop rises with the run and locks in the bulk of a spike).
+        if self._peak_profit > 0 and cur <= self._peak_profit * (1 - self.giveback_cap):
+            self._pending = {"type": "exit", "reason": "giveback_cap", "price": bc}
+            return
         if wave > 0 and back >= self.trail_r * wave:
             self._pending = {"type": "exit", "reason": "trail", "price": bc}
         elif self._hold >= self.max_hold_bars:
@@ -282,6 +312,7 @@ class PullPrevH1Scalper:
         self._pos = 1 if p["direction"] == "BUY" else -1
         self._entry = float(fill_price)
         self._run_ext = float(fill_price)
+        self._peak_profit = 0.0
         self._hold = 0
         self._atr_entry = self._atr
         self._pending = None
