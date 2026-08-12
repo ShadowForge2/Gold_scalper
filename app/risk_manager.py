@@ -105,26 +105,18 @@ class EquityScaler:
 class RiskManager:
     def __init__(self):
         self.max_spread = cfg.MAX_SPREAD_PIPS
-        self.allowed_sessions = [s.strip().upper() for s in cfg.ALLOWED_SESSIONS.split(",")]
         self.daily_pnl = 0.0
 
     def reset_daily_pnl(self):
         self.daily_pnl = 0.0
 
     def can_enter_trade(self, symbol_info: Dict,
-                        current_time: datetime, symbol: str = "XAUUSD",
-                        skip_session: bool = False) -> Tuple[bool, str]:
-        now = current_time
+                        current_time: datetime, symbol: str = "XAUUSD") -> Tuple[bool, str]:
         point = symbol_info.get("point", 0.0001)
         spread_pips = float(symbol_info.get("spread", 0)) / point if point > 0 else 0
         max_spread = getattr(cfg, 'SYMBOL_MAX_SPREAD', {}).get(symbol, self.max_spread)
         if spread_pips > max_spread:
             return False, f"spread_too_high ({spread_pips:.1f} > {max_spread})"
-
-        if not skip_session:
-            session_ok, session_name = self._check_session(now, symbol)
-            if not session_ok:
-                return False, f"session_not_allowed ({session_name})"
 
         return True, "ok"
 
@@ -137,26 +129,3 @@ class RiskManager:
         if event_pnl < -max_loss_usd:
             return False, f"event_loss_limit ({event_pnl:.2f} < -${max_loss_usd:.2f} = {loss_pct:.1f}% of ${balance:.2f})"
         return True, "ok"
-
-    def _check_session(self, dt: datetime, symbol: str = "XAUUSD") -> Tuple[bool, str]:
-        hour = dt.hour
-        minute = dt.minute
-        time_decimal = hour + minute / 60.0
-
-        session_windows = {
-            "ASIA": (0, 8),
-            "LONDON": (7, 17),
-            "NEW_YORK": (12, 22),
-        }
-
-        sym_sessions = getattr(cfg, 'SYMBOL_ALLOWED_SESSIONS', {}).get(symbol, self.allowed_sessions)
-        if isinstance(sym_sessions, str):
-            sym_sessions = [s.strip().upper() for s in sym_sessions.split(",")]
-
-        for name in sym_sessions:
-            if name in session_windows:
-                start, end = session_windows[name]
-                if start <= time_decimal < end:
-                    return True, name
-
-        return False, "outside_allowed_sessions"

@@ -547,9 +547,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
     async def device_bot_config(device_id: str = Header(None, alias="X-Device-Id")):
         return {
             "LOT_MULTIPLIER": str(cfg.LOT_MULTIPLIER),
-            "EXIT_THRESHOLD_TIGHT": str(cfg.EXIT_THRESHOLD_TIGHT),
             "MAX_SPREAD_PIPS": str(cfg.MAX_SPREAD_PIPS),
-            "ALLOWED_SESSIONS": cfg.ALLOWED_SESSIONS,
             "MIN_BALANCE": str(cfg.MIN_BALANCE),
             "MAX_LOT": str(cfg.MAX_LOT),
             "LOT_SIZE": str(cfg.LOT_SIZE),
@@ -567,10 +565,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         # Normalize env-var style keys to the format update_settings expects
         KEY_MAP = {
             "LOT_MULTIPLIER": "lot_multiplier",
-            "EXIT_THRESHOLD_TIGHT": "exit_threshold_tight",
             "MAX_SPREAD_PIPS": "max_spread_pips",
-            "BIAS_UPDATE_INTERVAL_SEC": "bias_update_interval_sec",
-            "ALLOWED_SESSIONS": "allowed_sessions",
         }
         normalized = {}
         for k, v in data.items():

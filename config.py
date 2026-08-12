@@ -47,7 +47,6 @@ COMMENT = _env_str("COMMENT", "Gold Scalper")
 # Lot sizing
 LOT_SIZE = _env_float("LOT_SIZE", 0.02)
 MIN_LOT = _env_float("MIN_LOT", 0.02)
-MAX_LOT = 9999.0
 LOT_STEP = _env_float("LOT_STEP", 0.01)
 LOT_MULTIPLIER = _env_int("LOT_MULTIPLIER", 2)
 # Hard safety cap on the lot multiplier regardless of env/API value.
@@ -58,35 +57,12 @@ MAX_LOT_MULTIPLIER = _env_float("MAX_LOT_MULTIPLIER", 2.0)
 # Minimum balance to start trading
 MIN_BALANCE = _env_float("MIN_BALANCE", 10.0)
 
-# Signal — ML confidence is the only entry gate
-MIN_BREAKOUT_SCORE = _env_float("MIN_BREAKOUT_SCORE", 0.02)
-ATR_MULTIPLIER = _env_float("ATR_MULTIPLIER", 1.0)
+# ATR used by the pull scalper (and as the SL/TP basis).
 ATR_PERIOD = _env_int("ATR_PERIOD", 14)
-BIAS_UPDATE_INTERVAL_SEC = _env_int("BIAS_UPDATE_INTERVAL_SEC", 60)
 
-# Exit mode and thresholds
-EXIT_MODE = _env_int("EXIT_MODE", 5)  # 5=peak harvest (no hard SL), 6=multi-TP zone
-EXIT_THRESHOLD_TIGHT = _env_float("EXIT_THRESHOLD_TIGHT", 0.50)
-EXIT_MOMENTUM_THRESHOLD = _env_float("EXIT_MOMENTUM_THRESHOLD", 0.30)
-
-# Peak harvest exit (mode 5)
-PEAK_HARVEST_TRAIL_TRIGGER = _env_float("PEAK_HARVEST_TRAIL_TRIGGER", 2.0)
-PEAK_HARVEST_TRAIL_RETRACE = _env_float("PEAK_HARVEST_TRAIL_RETRACE", 0.50)
-PEAK_HARVEST_MIN_BARS_EXIT = _env_int("PEAK_HARVEST_MIN_BARS_EXIT", 10)
-PEAK_HARVEST_MOMENTUM_THRESHOLD = _env_float("PEAK_HARVEST_MOMENTUM_THRESHOLD", 0.85)
-PEAK_HARVEST_MAX_HOLD_BARS = _env_int("PEAK_HARVEST_MAX_HOLD_BARS", 48)
-DIRECTION_LOSS_LOOKBACK = _env_int("DIRECTION_LOSS_LOOKBACK", 5)
-DIRECTION_LOSS_STREAK = _env_int("DIRECTION_LOSS_STREAK", 3)
-
-EXIT_CHECK_INTERVAL = _env_int("EXIT_CHECK_INTERVAL", 300)  # 5 min (M5 bar)
-
-# Multi-TP zone exit (mode 6)
+# Trailing SL / TP (used for recovered-position fallback sizing).
 SL_ATR_MULTIPLIER = _env_float("SL_ATR_MULTIPLIER", 1.0)
 TP1_MULTIPLIER = _env_float("TP1_MULTIPLIER", 2.0)
-TP2_MULTIPLIER = _env_float("TP2_MULTIPLIER", 4.0)
-TP3_MULTIPLIER = _env_float("TP3_MULTIPLIER", 6.0)
-TP_CLOSE_THRESHOLD = _env_float("TP_CLOSE_THRESHOLD", 0.8)
-TP_CLOSE_MOMENTUM_MIN = _env_float("TP_CLOSE_MOMENTUM_MIN", 0.25)
 
 # Event loss — percentage of balance (scales with equity)
 MAX_EVENT_LOSS_PCT = _env_float("MAX_EVENT_LOSS_PCT", 5.0)  # 5% of balance
@@ -110,26 +86,8 @@ VOLATILITY_LOT_REDUCTION = _env_float("VOLATILITY_LOT_REDUCTION", 0.5)  # 50% lo
 CONSECUTIVE_LOSS_SKIP = _env_int("CONSECUTIVE_LOSS_SKIP", 5)  # skip regime after N consecutive losses
 CONSECUTIVE_LOSS_RESET_HOURS = _env_float("CONSECUTIVE_LOSS_RESET_HOURS", 4.0)  # reset counter after N hours
 
-# Meta strategy
-META_LOOKBACK_WINDOW = _env_int("META_LOOKBACK_WINDOW", 20)
-META_THRESHOLD_MIN = _env_float("META_THRESHOLD_MIN", 0.03)
-META_THRESHOLD_MAX = _env_float("META_THRESHOLD_MAX", 0.30)
-META_ENABLED = _env_bool("META_ENABLED", False)
-META_MIN_TRADES_FOR_REGIME = _env_int("META_MIN_TRADES_FOR_REGIME", 5)
-SIGNAL_ENTRY_THRESHOLD = _env_float("SIGNAL_ENTRY_THRESHOLD", 0.10)
-MAX_TRADES_PER_EVENT = _env_int("MAX_TRADES_PER_EVENT", 6)
-BIAS_STRENGTH_MIN = _env_float("BIAS_STRENGTH_MIN", 0.3)
+# Hard safety cap on lot size regardless of API/equity scaling.
 MAX_LOT = _env_float("MAX_LOT", 9999.0)
-
-# Aggressive sizing
-AGGRESSIVE_SIZING_ENABLED = _env_bool("AGGRESSIVE_SIZING_ENABLED", True)
-AGGRESSIVE_VERY_STRONG_THRESHOLD = _env_float("AGGRESSIVE_VERY_STRONG_THRESHOLD", 0.50)
-AGGRESSIVE_VERY_STRONG_LOT_MULT = _env_float("AGGRESSIVE_VERY_STRONG_LOT_MULT", 2.0)
-AGGRESSIVE_STRONG_THRESHOLD = _env_float("AGGRESSIVE_STRONG_THRESHOLD", 0.30)
-AGGRESSIVE_STRONG_LOT_MULT = _env_float("AGGRESSIVE_STRONG_LOT_MULT", 1.5)
-
-# ML override
-ML_OVERRIDE_MAX_PER_SESSION = _env_int("ML_OVERRIDE_MAX_PER_SESSION", 3)
 
 # Multi-symbol: bot trades XAUUSD, US100, US500, and US30 automatically.
 # All pairs trade from MIN_BALANCE ($10) — the $30 gate was for the old
@@ -215,29 +173,8 @@ SYMBOL_MAX_DRIFT = {
     "US30": _env_float("MAX_DRIFT_US30", 10.00),
 }
 
-# Candle ML smart timeout — own rescan cycle matching its ~4-min prediction horizon
-# First re-scan ~1 candle after entry, then every CANDLE_ML_TIMEOUT_RESCAN_SEC
-CANDLE_ML_TIMEOUT_MIN = _env_float("CANDLE_ML_TIMEOUT_MIN", 3.8)
-CANDLE_ML_TIMEOUT_RESCAN_SEC = _env_int("CANDLE_ML_TIMEOUT_RESCAN_SEC", 60)
-
-# Adaptive confirmation
-ADAPTIVE_CONFIRMATION_ENABLED = _env_bool("ADAPTIVE_CONFIRMATION_ENABLED", True)
-ADAPTIVE_CONF_WINDOW = _env_int("ADAPTIVE_CONF_WINDOW", 200)
-ADAPTIVE_CONF_P_LOW = _env_int("ADAPTIVE_CONF_P_LOW", 60)
-ADAPTIVE_CONF_P_NORM = _env_int("ADAPTIVE_CONF_P_NORM", 40)
-ADAPTIVE_CONF_P_HIGH = _env_int("ADAPTIVE_CONF_P_HIGH", 0)
-
 # Filters
 MAX_SPREAD_PIPS = _env_float("MAX_SPREAD_PIPS", 35.0)
-ALLOWED_SESSIONS = _env_str("ALLOWED_SESSIONS", "LONDON,NEW_YORK")
-SYMBOL_ALLOWED_SESSIONS = {
-    "XAUUSD": _env_str("SESSIONS_XAUUSD", "ASIA,LONDON,NEW_YORK"),
-    "US100": _env_str("SESSIONS_US100", "LONDON,NEW_YORK"),
-    "JP225": _env_str("SESSIONS_JP225", "ASIA"),
-    "DE40": _env_str("SESSIONS_DE40", "LONDON"),
-    "US500": _env_str("SESSIONS_US500", "LONDON,NEW_YORK"),
-    "US30": _env_str("SESSIONS_US30", "LONDON,NEW_YORK"),
-}
 
 # Deviation / slippage
 MAX_SLIPPAGE_PIPS = _env_int("MAX_SLIPPAGE_PIPS", 10)
@@ -283,163 +220,9 @@ DE40_CLOSE_HOUR_UTC = 21
 FRIDAY_CLOSE_BLOCK_MIN = _env_int("FRIDAY_CLOSE_BLOCK_MIN", 60)
 
 
-# Candle ML — multi-timeframe M5 direction prediction
-CANDLE_ML_ENABLED = _env_bool("CANDLE_ML_ENABLED", True)
-CANDLE_ML_CONFIDENCE_THRESHOLD = _env_float("CANDLE_ML_CONFIDENCE_THRESHOLD", 0.65)
-# Per-symbol entry confidence override (defaults to CANDLE_ML_CONFIDENCE_THRESHOLD).
-# US500 (S&P 500) is less volatile and more mean-reverting than US100 (Nasdaq),
-# so it may want a different bar than the US100-tuned global default.
-CANDLE_ML_CONFIDENCE_THRESHOLDS = {
-    "XAUUSD": _env_float("CANDLE_ML_CONFIDENCE_XAUUSD", CANDLE_ML_CONFIDENCE_THRESHOLD),
-    "US100": _env_float("CANDLE_ML_CONFIDENCE_US100", CANDLE_ML_CONFIDENCE_THRESHOLD),
-    "JP225": _env_float("CANDLE_ML_CONFIDENCE_JP225", CANDLE_ML_CONFIDENCE_THRESHOLD),
-    "DE40": _env_float("CANDLE_ML_CONFIDENCE_DE40", CANDLE_ML_CONFIDENCE_THRESHOLD),
-    "US500": _env_float("CANDLE_ML_CONFIDENCE_US500", CANDLE_ML_CONFIDENCE_THRESHOLD),
-    "US30": _env_float("CANDLE_ML_CONFIDENCE_US30", CANDLE_ML_CONFIDENCE_THRESHOLD),
-}
-CANDLE_ML_M1_HISTORY_BARS = _env_int("CANDLE_ML_M1_HISTORY_BARS", 500)
-CANDLE_ML_MODEL_PATHS = {
-    "XAUUSD": _env_str("CANDLE_ML_MODEL_PATH_XAUUSD", "models/candle_xgb_m5_XAUUSD.joblib"),
-    "US100": _env_str("CANDLE_ML_MODEL_PATH_US100", "models/candle_xgb_m5_US100.joblib"),
-    "JP225": _env_str("CANDLE_ML_MODEL_PATH_JP225", "models/candle_xgb_m5_JP225.joblib"),
-    "DE40": _env_str("CANDLE_ML_MODEL_PATH_DE40", "models/candle_xgb_m5_DE40.joblib"),
-    "US500": _env_str("CANDLE_ML_MODEL_PATH_US500", "models/candle_xgb_m5_US500.joblib"),
-    "US30": _env_str("CANDLE_ML_MODEL_PATH_US30", "models/candle_xgb_m5_US30.joblib"),
-}
-# Mode: "always" = use Candle ML for all entries
-#       "volatility" = use Candle ML when vol_ratio > threshold
-CANDLE_ML_MODE = {
-    "XAUUSD": _env_str("CANDLE_ML_MODE_XAUUSD", "always"),
-    "US100": _env_str("CANDLE_ML_MODE_US100", "always"),
-    "JP225": _env_str("CANDLE_ML_MODE_JP225", "off"),
-    "DE40": _env_str("CANDLE_ML_MODE_DE40", "off"),
-    "US500": _env_str("CANDLE_ML_MODE_US500", "off"),
-    "US30": _env_str("CANDLE_ML_MODE_US30", "always"),
-}
-# For "volatility" mode: switch to Candle ML when short-term / long-term ATR > this
-CANDLE_ML_VOL_THRESHOLD = _env_float("CANDLE_ML_VOL_THRESHOLD", 1.3)
-CANDLE_ML_VOL_WINDOW_SHORT = _env_int("CANDLE_ML_VOL_WINDOW_SHORT", 5)   # M5 bars
-CANDLE_ML_VOL_WINDOW_LONG = _env_int("CANDLE_ML_VOL_WINDOW_LONG", 40)    # M5 bars
-# Entry quality filter (research-backed): only trade on strong candles at best sessions.
-# mode: "strict" (strong_body/pin_bar/engulfing only) | "basic" (+normal, skip doji/tiny) | "off"
-CANDLE_ML_PATTERN_FILTER = _env_str("CANDLE_ML_PATTERN_FILTER", "strict")
-# Per-symbol pattern filter override (defaults to CANDLE_ML_PATTERN_FILTER).
-CANDLE_ML_PATTERN_FILTERS = {
-    "XAUUSD": _env_str("CANDLE_ML_PATTERN_XAUUSD", CANDLE_ML_PATTERN_FILTER),
-    "US100": _env_str("CANDLE_ML_PATTERN_US100", CANDLE_ML_PATTERN_FILTER),
-    "JP225": _env_str("CANDLE_ML_PATTERN_JP225", CANDLE_ML_PATTERN_FILTER),
-    "DE40": _env_str("CANDLE_ML_PATTERN_DE40", CANDLE_ML_PATTERN_FILTER),
-    "US500": _env_str("CANDLE_ML_PATTERN_US500", CANDLE_ML_PATTERN_FILTER),
-    "US30": _env_str("CANDLE_ML_PATTERN_US30", CANDLE_ML_PATTERN_FILTER),
-}
-# Best hours per symbol (UTC). Empty string = all hours. XAUUSD backtest: 13-18 UTC = London/NY (WR 55-61%).
-CANDLE_ML_ALLOWED_HOURS = {
-    "XAUUSD": _env_str("CANDLE_ML_ALLOWED_HOURS_XAUUSD", "13,14,15,16,17,18"),
-    "US100": _env_str("CANDLE_ML_ALLOWED_HOURS_US100", ""),
-    "JP225": _env_str("CANDLE_ML_ALLOWED_HOURS_JP225", ""),
-    "DE40": _env_str("CANDLE_ML_ALLOWED_HOURS_DE40", ""),
-    "US500": _env_str("CANDLE_ML_ALLOWED_HOURS_US500", ""),
-    "US30": _env_str("CANDLE_ML_ALLOWED_HOURS_US30", ""),
-}
-# Exit: the candle_reversal line trails the best price by CANDLE_ML_TRAIL_ATR x
-# ATR (floored at the fill/break-even), so normal pullbacks don't close a trade
-# CandleML still agrees with. Wider value = more room to breathe, less locked in.
-CANDLE_ML_TRAILING_ENABLED = _env_bool("CANDLE_ML_TRAILING_ENABLED", True)
-CANDLE_ML_TRAIL_ATR = _env_float("CANDLE_ML_TRAIL_ATR", 1.5)
-# Peak-retrace trailing (profitable trades only): instead of trailing a fixed ATR
-# distance behind the best price, trail a fraction of the peak profit already made
-# (CANDLE_ML_PEAK_RETRACE_FRAC). Auto-adapts to lot/equity scaling — small moves
-# keep most of their profit (70%), big moves lock in proportionally. Only applied
-# while the trade is in profit; losing trades keep the existing flip-cut logic.
-CANDLE_ML_PEAK_RETRACE_ENABLED = _env_bool("CANDLE_ML_PEAK_RETRACE_ENABLED", True)
-CANDLE_ML_PEAK_RETRACE_FRAC = _env_float("CANDLE_ML_PEAK_RETRACE_FRAC", 0.3)
-# Model-flip loss cut: at each M5 boundary re-run the candle model for the open
-# symbol. If it now predicts the OPPOSITE direction AND the trade is already
-# underwater by CANDLE_ML_FLIP_LOSS_ATR x ATR, exit immediately
-# ("candle_model_flip"). Never triggers on winners — only cuts losers short.
-#
-# Rigidity (the model is flippy: ~48% of runs are single-boundary blips, and
-# first-flip confidence is only ~0.73-0.74 median):
-#   - CANDLE_ML_FLIP_CONSECUTIVE (default 2): the opposite call must repeat for
-#     2 consecutive M5 boundaries (a single blip is ignored; a real reversal
-#     persists). Halves the flip-trigger rate at every horizon.
-#   - CANDLE_ML_FLIP_CONF (default 0.70): the opposite call must be strong,
-#     above the 0.65 entry threshold, so weak "no"s don't count.
-CANDLE_ML_FLIP_EXIT_ENABLED = _env_bool("CANDLE_ML_FLIP_EXIT_ENABLED", True)
-CANDLE_ML_FLIP_LOSS_ATR = _env_float("CANDLE_ML_FLIP_LOSS_ATR", 0.25)
-CANDLE_ML_FLIP_CONSECUTIVE = _env_int("CANDLE_ML_FLIP_CONSECUTIVE", 2)
-CANDLE_ML_FLIP_CONF = _env_float("CANDLE_ML_FLIP_CONF", 0.70)
-# Per-symbol flip-cut overrides (default to the global values above).
-CANDLE_ML_FLIP_CONSECUTIVES = {
-    "XAUUSD": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_XAUUSD", CANDLE_ML_FLIP_CONSECUTIVE),
-    "US100": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_US100", CANDLE_ML_FLIP_CONSECUTIVE),
-    "JP225": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_JP225", CANDLE_ML_FLIP_CONSECUTIVE),
-    "DE40": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_DE40", CANDLE_ML_FLIP_CONSECUTIVE),
-    "US500": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_US500", CANDLE_ML_FLIP_CONSECUTIVE),
-    "US30": _env_int("CANDLE_ML_FLIP_CONSECUTIVE_US30", CANDLE_ML_FLIP_CONSECUTIVE),
-}
-CANDLE_ML_FLIP_CONFS = {
-    "XAUUSD": _env_float("CANDLE_ML_FLIP_CONF_XAUUSD", CANDLE_ML_FLIP_CONF),
-    "US100": _env_float("CANDLE_ML_FLIP_CONF_US100", CANDLE_ML_FLIP_CONF),
-    "JP225": _env_float("CANDLE_ML_FLIP_CONF_JP225", CANDLE_ML_FLIP_CONF),
-    "DE40": _env_float("CANDLE_ML_FLIP_CONF_DE40", CANDLE_ML_FLIP_CONF),
-    "US500": _env_float("CANDLE_ML_FLIP_CONF_US500", CANDLE_ML_FLIP_CONF),
-    "US30": _env_float("CANDLE_ML_FLIP_CONF_US30", CANDLE_ML_FLIP_CONF),
-}
 
-# Max loss time — force close Candle ML trades that are underwater after this many minutes.
-# Prevents losing positions from blocking better opportunities indefinitely.
-CANDLE_ML_MAX_LOSS_MINUTES = _env_float("CANDLE_ML_MAX_LOSS_MINUTES", 120.0)
 
-# ── H1 Candle Engine (candle-following, XGBoost per-pair) ────────────
-# Follows the H1 candle instead of predicting it (see CANDLE_STRATEGY.md).
-# Enter at candle commit, ride the full move, trail once past open into
-# profit, close on reversal/confusion and wait for a fresh candle. Small
-# fixed bleeds are covered by the rare full move (+3.00$). Each enabled pair
-# gets its own model + dynamic threshold; a pair-selection layer only lets
-# the currently-best-moving pairs fire (jump away from idle symbols).
-CANDLE_ENGINE_ENABLED = _env_bool("CANDLE_ENGINE_ENABLED", True)
-CANDLE_ENGINE_PAIRS = [s.strip() for s in _env_str("CANDLE_ENGINE_PAIRS", "XAUUSD,US100,JP225,DE40,US500,US30").split(",")]
-CANDLE_ENGINE_TF = _env_int("CANDLE_ENGINE_TF", 60)  # minutes: 60 = H1, 30 = 30m
-CANDLE_ENGINE_MODEL_DIR = _env_str("CANDLE_ENGINE_MODEL_DIR", "models/candle_h1")
-# Profit-based labels: simulate the candle-following trade per bar (enter at
-# commit, SL = SL_ATR*ATR, ride until reversal/trail, cap at MAX_HOLD, cost
-# COST_R). A bar is BUY/SELL only if its realized R beats the other side by
-# EDGE_MARGIN (chop => NONE => no trade => no bleed).
-CANDLE_ENGINE_SL_ATR = _env_float("CANDLE_ENGINE_SL_ATR", 1.5)
-CANDLE_ENGINE_REVERSAL_ATR = _env_float("CANDLE_ENGINE_REVERSAL_ATR", 0.5)
-CANDLE_ENGINE_TRAIL_ATR = _env_float("CANDLE_ENGINE_TRAIL_ATR", 0.5)
-CANDLE_ENGINE_MAX_HOLD_BARS = _env_int("CANDLE_ENGINE_MAX_HOLD_BARS", 24)
-CANDLE_ENGINE_COST_R = _env_float("CANDLE_ENGINE_COST_R", 0.05)
-# Label stop for TRAINING (decoupled from the live exit SL): labels are
-# simulated with a TIGHT 1.0R stop so the model learns early-strength candles,
-# while the live engine rides with a WIDER 1.5R stop. Coupling them (labels
-# @ 1.5R) dropped OOS PF 1.67 -> 1.07, so keep them separate.
-CANDLE_ENGINE_LABEL_SL_ATR = _env_float("CANDLE_ENGINE_LABEL_SL_ATR", 1.0)
-# Label strictness (the model only fires on the strong, clearly-directional
-# moves): a bar is BUY/SELL only if the winning side realizes >= ENTRY_MIN_R
-# AND beats the losing side by >= EDGE_MARGIN. Sweep on H1 OOS 2023-25:
-#   (0.35, 1.0) -> PF 1.18   (0.60, 1.0) -> PF 1.31
-#   (0.90, 1.75) -> PF 1.67  (broad plateau, WR ~69%, dd ~7R)
-# Looser labels teach the model to chase weak-move noise; the tight labels
-# confine trades to the ~15% of bars with a real directional edge.
-CANDLE_ENGINE_ENTRY_MIN_R = _env_float("CANDLE_ENGINE_ENTRY_MIN_R", 0.90)
-CANDLE_ENGINE_EDGE_MARGIN = _env_float("CANDLE_ENGINE_EDGE_MARGIN", 1.75)
-CANDLE_ENGINE_MIN_CONF = _env_float("CANDLE_ENGINE_MIN_CONF", 0.60)
-CANDLE_ENGINE_TRAIN_PER_CLASS = _env_int("CANDLE_ENGINE_TRAIN_PER_CLASS", 15000)
-# Jump-candle scan (add-on): a candle that leaves its starting point and jumps
-# in its full direction gets a higher-conviction entry. Detected when close has
-# moved JUMP_BREAK_R*ATR past the open AND the body covers >= JUMP_BODY_R of
-# the H1 range.
-CANDLE_ENGINE_JUMP_ENABLED = _env_bool("CANDLE_ENGINE_JUMP_ENABLED", True)
-CANDLE_ENGINE_JUMP_BREAK_R = _env_float("CANDLE_ENGINE_JUMP_BREAK_R", 1.5)
-CANDLE_ENGINE_JUMP_BODY_R = _env_float("CANDLE_ENGINE_JUMP_BODY_R", 0.70)
-# Pair-selection layer: only the top-K pairs by live candle momentum score may
-# fire at any time. Each pair's own threshold adapts to its 30-60d score
-# percentile (dynamic per-pair), so idle pairs are automatically muted.
-CANDLE_ENGINE_PAIR_TOP_K = _env_int("CANDLE_ENGINE_PAIR_TOP_K", 2)
-CANDLE_ENGINE_PAIR_SCORE_WINDOW = _env_int("CANDLE_ENGINE_PAIR_SCORE_WINDOW", 720)  # ~30d H1 bars
-CANDLE_ENGINE_PAIR_PCT_MIN = _env_float("CANDLE_ENGINE_PAIR_PCT_MIN", 0.70)
+
 
 # ── Pull-into-H1 scalper (prevh1 / pull / trail) — LIVE execution ────
 # Trades the M5 pullback in the direction of the last COMPLETED H1 candle
@@ -516,66 +299,53 @@ SYMBOL_PULL_PARAMS = {
     for sym in SYMBOLS
 }
 
-# ── Momentum-jump engine (per-pair adapted) ──────────────────────────
-# Validated OOS on M5 2022-2025 with per-pair regime gates:
-#   US100: vol>=55 gate  -> +127.8R  (all 4 years positive)
-#   JP225: vol>=55 gate + mz2.5/jump1.0/hold18/retr0.5 -> +111.8R (all 4 years positive)
-#   DE40:  er>=0.35 gate + mz2.5/jump1.25/hold18 -> +6.2R (all years ~flat/+)
-# Signal (long example): surge bar (momentum_z >= MZ_MIN, body_ratio >= BODY_MIN,
-# |trend_strength| >= TS_MIN) inside the long-term EMA480 regime (long above /
-# short below) entered at bar close; SL = SL_R x ATR; exits on jump-target
-# JUMP_TARGET_R + RETRACE_R retrace from the peak, or after MAX_HOLD_BARS.
-# Regime gate (M5, forward-safe): only trade when the market's current ATR is
-# in the top (1-GATE_THRESHOLD) of the last GATE_WINDOW M5 bars ("vol", good for
-# US100/JP225) OR when the Kaufman efficiency ratio >= GATE_THRESHOLD over the
-# window ("er", trending-only, good for DE40). "none" disables the gate.
-MOMENTUM_ENGINE_ENABLED = {
-    "XAUUSD": _env_bool("MOMENTUM_XAUUSD", False),
-    "US100": _env_bool("MOMENTUM_US100", False),
-    "JP225": _env_bool("MOMENTUM_JP225", False),
-    "DE40": _env_bool("MOMENTUM_DE40", False),
-    "US500": _env_bool("MOMENTUM_US500", False),
-    "US30": _env_bool("MOMENTUM_US30", False),
-}
-MOMENTUM_MZ_MIN = _env_float("MOMENTUM_MZ_MIN", 2.0)
-MOMENTUM_BODY_RATIO_MIN = _env_float("MOMENTUM_BODY_RATIO_MIN", 0.60)
-MOMENTUM_TS_MIN = _env_float("MOMENTUM_TS_MIN", 0.50)
-MOMENTUM_EMA_SPAN = _env_int("MOMENTUM_EMA_SPAN", 480)
-MOMENTUM_SL_R = _env_float("MOMENTUM_SL_R", 1.0)
-MOMENTUM_JUMP_TARGET_R = _env_float("MOMENTUM_JUMP_TARGET_R", 1.0)
-MOMENTUM_RETRACE_R = _env_float("MOMENTUM_RETRACE_R", 0.25)
-MOMENTUM_MAX_HOLD_BARS = _env_int("MOMENTUM_MAX_HOLD_BARS", 12)
 
-# Per-pair parameter overrides (backtest-adapted). Keys omitted from the dict
-# fall back to the global MOMENTUM_* values above.
-MOMENTUM_PAIR_PARAMS = {
-    "US100": {"mz_min": 2.0, "jump_target": 1.0, "retr_r": 0.25, "max_hold": 12},
-    "JP225": {"mz_min": 2.5, "jump_target": 1.0, "retr_r": 0.50, "max_hold": 18},
-    "DE40": {"mz_min": 2.5, "jump_target": 1.25, "retr_r": 0.25, "max_hold": 18},
-}
 
-# Per-pair regime gate ("none" | "vol" | "er").
-#   vol: ATR percentile >= threshold (fraction), window = MOMENTUM_GATE_WINDOW.
-#   er:  Kaufman efficiency ratio >= threshold (fraction), window = same.
-MOMENTUM_GATE = {
-    "US100": _env_str("MOMENTUM_GATE_US100", "vol"),
-    "JP225": _env_str("MOMENTUM_GATE_JP225", "vol"),
-    "DE40": _env_str("MOMENTUM_GATE_DE40", "er"),
-}
-MOMENTUM_GATE_THRESHOLD = {
-    "US100": _env_float("MOMENTUM_GATE_THRESHOLD_US100", 0.55),
-    "JP225": _env_float("MOMENTUM_GATE_THRESHOLD_JP225", 0.55),
-    "DE40": _env_float("MOMENTUM_GATE_THRESHOLD_DE40", 0.35),
-}
-# M5 bars in the regime window (96 M5 = 8 hours of market data).
-MOMENTUM_GATE_WINDOW = _env_int("MOMENTUM_GATE_WINDOW", 96)
-# How often the bot refetches M1 history for the EMA480 regime (seconds).
-MOMENTUM_REFRESH_SEC = _env_int("MOMENTUM_REFRESH_SEC", 60)
-# M1 bars fetched for the EMA480 regime. 485 M5 buckets are needed for the EMA480
-# warmup (480 + 5) = ~2425 M1 bars of market data; 8000 bars (~5.5 trading days)
-# guarantees that window even across market breaks/weekend gaps. 2500 was too
-# small (max 500 buckets, real windows averaged ~408 -> detect() never fired).
-MOMENTUM_M1_HISTORY_BARS = _env_int("MOMENTUM_M1_HISTORY_BARS", 8000)
+# ── Pair scanner — whole-board trading (daily-returns bot) ───────────
+# The bot scans ALL ~4000 Capital.com markets in one request every
+# SCANNER_SCAN_SEC and takes the top-K highest-momentum TRADEABLE instruments
+# that pass the tradability screen (status, spread, ATR band, streaming).
+# Trades are simple trend+breakout with a fixed ATR SL/TP ("simple sl, take
+# profit at max"). Honest fills (entry at ask for BUY / bid for SELL), cost =
+# live spread + SCANNER_COST_R of price, validated by _bt_pair_scanner.py.
+SCANNER_ENABLED = _env_bool("SCANNER_ENABLED", True)
+SCANNER_SCAN_SEC = _env_int("SCANNER_SCAN_SEC", 120)
+SCANNER_TOP_K = _env_int("SCANNER_TOP_K", 4)
+SCANNER_TIMEFRAME = _env_int("SCANNER_TIMEFRAME", 15)        # M15 analysis bars
+SCANNER_LOOKBACK_BARS = _env_int("SCANNER_LOOKBACK_BARS", 300)
+# Tradable universe filter. Real Capital.com instrumentType values are plural:
+# "INDICES", "CURRENCIES", "COMMODITIES" (covers metals AND energy), and
+# "CRYPTOCURRENCIES". "SHARES"/"ETFS"/"BONDS" can be added to trade stocks.
+SCANNER_TYPES = _env_str("SCANNER_TYPES",
+    "INDICES,CURRENCIES,COMMODITIES,CRYPTOCURRENCIES").split(",")
+SCANNER_MAX_SPREAD_R = _env_float("SCANNER_MAX_SPREAD_R", 0.0004)   # spread <= 4bps of price
+SCANNER_MIN_ATR_R = _env_float("SCANNER_MIN_ATR_R", 0.0002)         # min volatility 2bps/bar
+SCANNER_MAX_ATR_R = _env_float("SCANNER_MAX_ATR_R", 0.01)           # max volatility 1%/bar
+# Momentum ranking (snapshot-based; M15 6-bar ROC used for the entry filter).
+SCANNER_MIN_PCT_CHANGE = _env_float("SCANNER_MIN_PCT_CHANGE", 0.10) # abs daily move >= 0.10%
+# Entry / exit rule (R in SCANNER_TIMEFRAME ATR units).
+SCANNER_SL_R = _env_float("SCANNER_SL_R", 1.5)
+SCANNER_TP_R = _env_float("SCANNER_TP_R", 2.0)
+SCANNER_TRAIL_AT_R = _env_float("SCANNER_TRAIL_AT_R", 1.0)   # start trailing once >= 1R
+SCANNER_TRAIL_R = _env_float("SCANNER_TRAIL_R", 0.5)         # giveback allowed before exit
+SCANNER_MAX_HOLD_BARS = _env_int("SCANNER_MAX_HOLD_BARS", 16)   # M15 bars (~4h)
+SCANNER_EMA_FAST = _env_int("SCANNER_EMA_FAST", 20)
+SCANNER_EMA_SLOW = _env_int("SCANNER_EMA_SLOW", 50)
+SCANNER_SWING_BACK = _env_int("SCANNER_SWING_BACK", 10)      # breakout vs max high of last N bars
+SCANNER_ROC_BARS = _env_int("SCANNER_ROC_BARS", 6)
+SCANNER_BREAKOUT_MIN_R = _env_float("SCANNER_BREAKOUT_MIN_R", 0.0)  # fresh breakout: close must pierce swing by >= X*ATR
+SCANNER_COOLDOWN_SEC = _env_int("SCANNER_COOLDOWN_SEC", 1800)   # no re-entry on same epic
+SCANNER_COST_R = _env_float("SCANNER_COST_R", 0.0001)           # extra round-trip cost f(bps)
+SCANNER_HIST_SPREAD_R = _env_float("SCANNER_HIST_SPREAD_R", 0.00008)  # per-bar spread cost f(price) for offline M1-parquet backtests
+SCANNER_MAX_TRADES_DAY = _env_int("SCANNER_MAX_TRADES_DAY", 6)  # per-epic daily cap
+
+# General scalper fixed pull params (validated in _bt_general_scalper.py):
+# ONE parameter set for EVERY pair — no per-symbol tuning. The scanner's top-K
+# momentum ranking is the only selector: the bot trades whatever pair is
+# currently leading the board (scan and see, no fixed symbol configuration).
+SCANNER_PULL_R = _env_float("SCANNER_PULL_R", 0.30)
+SCANNER_TRAIL_R = _env_float("SCANNER_TRAIL_R", 0.35)
+SCANNER_MAX_HOLD = _env_int("SCANNER_MAX_HOLD", 12)
 
 # MaxelPay
 MAXELPAY_API_KEY = _env_str("MAXELPAY_API_KEY", "")

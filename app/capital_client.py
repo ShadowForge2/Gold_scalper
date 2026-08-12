@@ -537,6 +537,27 @@ class CapitalClient:
         mask = (df["time"] >= from_dt) & (df["time"] <= to_dt)
         return df[mask].copy() if mask.any() else df
 
+    def get_all_markets(self) -> Optional[List[Dict]]:
+        """Fetch the full tradable-market catalog in ONE request.
+
+        Capital.com returns every market (4000+) with live snapshot fields
+        (bid/offer/status/type/high/low/pct change) when a pageSize param is
+        sent, regardless of its value. Used by the pair scanner to pick
+        tradeable instruments on the whole board each scan."""
+        if not self._ensure_session():
+            return None
+        try:
+            r = self._request(
+                "GET", f"{self.base_url}/api/v1/markets",
+                params={"pageSize": 500},
+                headers=self._auth_headers(),
+            )
+            if r is not None and r.ok:
+                return r.json().get("markets") or []
+        except Exception:
+            pass
+        return None
+
     @staticmethod
     def _extract_price(price_field, side: str = "bid") -> float:
         if isinstance(price_field, dict):

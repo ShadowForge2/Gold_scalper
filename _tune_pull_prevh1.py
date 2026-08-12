@@ -18,7 +18,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from _train_candle_h1 import load_m1_data
+from _data_loader import load_m1_data
 from app.candle_engine import compute_atr
 
 ATR_PERIOD = 14
