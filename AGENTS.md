@@ -3,14 +3,13 @@
 ## Project
 Gold scalping bot trading XAUUSD on Capital.com (MT5 removed). Built with Python, deployed on Render.
 
-## Current Strategy (LOCKED 2026-08-07): Wave Scalper
-The strategy that replaced all prior H1-breakout / candle-following work is the **intra-candle M1 wave scalper**.
-- **Full spec, locked config table, strict-engine mechanics, and 12-pair validation live in `WAVE_STRATEGY.md`** — read it first.
-- Locked params in `config.py`: `CANDLE_ENGINE_WAVE_ENTRY_R=0.50`, `CUT_R=0.03`, `PROFIT_R=0.05`, `TRAIL_R=0.5`, `REVERSAL_R=0.5`, `COST_R=0.05`, jump 1.5/0.70.
-- `CANDLE_ENGINE_WAVE_LOT_EXP=0.0` is **LOCKED — do not change**. Widening the cut with lot makes dollar risk grow as equity^1.5 and runs every combo to negative equity (tested). Dollar risk is already a constant fraction of equity via `EquityScaler`.
-- `_sweep_candle_wave.py` now defaults to the locked combo; `--sweep` restores the grid; `--compound` runs the equity-accounted sim.
-- XAUUSD OOS 2023-25: **PF 4.17**, +927R, dd 2.8R, 5202 trades, WR 29.6%. All 12 pairs PF 3.16–5.59 (corrected after the long-cut sign fix, see WAVE_STRATEGY.md §6).
-- Model is ONLY a chop gate (previous-candle NONE + not a jump → sit out). No confidence floor, no direction veto.
+## Current Strategy (LIVE): Pull-into-H1 Scalper
+- Trades the M5 pullback in the direction of the last COMPLETED H1 candle body, trailing a giveback fraction of the wave, force-closing at a fixed horizon (in M5 bars). Engine: `app/pull_h1_scalper.py` (`PullPrevH1Scalper`), per-symbol tuned configs in `config.py` (`PULL_ENGINE_ENABLED`, `PULL_PULL_R_{SYM}`, `PULL_TRAIL_R_{SYM}`, `PULL_MAX_HOLD_{SYM}`).
+- Only strategy that survived honest backtests (bar-close fills + real costs). Live on US30, XAUUSD, US100; validated OOS 2026 at PF >= 1.3:
+  - US30   pull .30 / trail .35 / hold 24  PF train 1.73 valid 1.83 OOS 1.81
+  - XAUUSD pull .30 / trail .15 / hold 12  PF train 1.22 valid 1.96 OOS 1.40
+  - US100  pull .30 / trail .50 / hold 6   PF train 1.38 valid 1.86 OOS 1.34
+- The Wave scalper (intra-candle M1 micro-waves) was REMOVED entirely on 2026-08-12. Its PF 4.17 was a legacy "level"-fill artifact; under market fills it is a loser (XAUUSD PF 0.53, −286R). Wave engine, sweep scripts, config, and render.yaml vars are deleted. Backtests: `_bt_pull_prevh1.py`, `_tune_pull_prevh1.py`.
 
 ## Bugs Found & Fixed
 

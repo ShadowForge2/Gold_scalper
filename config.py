@@ -434,57 +434,6 @@ CANDLE_ENGINE_TRAIN_PER_CLASS = _env_int("CANDLE_ENGINE_TRAIN_PER_CLASS", 15000)
 CANDLE_ENGINE_JUMP_ENABLED = _env_bool("CANDLE_ENGINE_JUMP_ENABLED", True)
 CANDLE_ENGINE_JUMP_BREAK_R = _env_float("CANDLE_ENGINE_JUMP_BREAK_R", 1.5)
 CANDLE_ENGINE_JUMP_BODY_R = _env_float("CANDLE_ENGINE_JUMP_BODY_R", 0.70)
-# ── Wave scalper (intra-candle M1 micro-waves) — LOCKED ────────────────
-# Trades the micro-waves INSIDE the forming H1 candle on M1 bars instead of
-# predicting the whole candle. Validated on 12 pairs, H1 OOS 2023-2025 with
-# the strict engine (entry bar skipped for exits, peak updated only after
-# exit checks — a bar can never sell its own high/low). All pairs positive;
-# PF 3.16 (XAGUSD) .. 5.59 (GAS) (corrected 2026-08-07 after the long-cut sign fix); best combo shown below.
-# NOTE: the ML model is ONLY a chop gate. It never vetoes direction and has
-# no confidence floor. A NONE-leaning PREVIOUS H1 candle that is not a jump
-# means "sit out this candle" — everything else is tradable.
-CANDLE_ENGINE_WAVE_ENTRY_R = _env_float("CANDLE_ENGINE_WAVE_ENTRY_R", 0.50)    # enter past wave base
-CANDLE_ENGINE_WAVE_CUT_R = _env_float("CANDLE_ENGINE_WAVE_CUT_R", 0.03)        # stop = ~zero
-CANDLE_ENGINE_WAVE_PROFIT_R = _env_float("CANDLE_ENGINE_WAVE_PROFIT_R", 0.05)  # lock profit at wave peak - this pullback
-CANDLE_ENGINE_WAVE_TRAIL_R = _env_float("CANDLE_ENGINE_WAVE_TRAIL_R", 0.5)     # jump-rider trail
-CANDLE_ENGINE_WAVE_REVERSAL_R = _env_float("CANDLE_ENGINE_WAVE_REVERSAL_R", 0.5)  # close on reversal
-# LOT EXP = 0 IS LOCKED. The cut/profit ATR-distances do NOT grow with lot.
-# Dollar risk per wave is already a constant fraction of equity because the
-# equity scaler makes lot ~ equity: widening the cut with lot makes dollar
-# risk grow as equity^1.5 (superlinear) and runs every combo to negative
-# equity in the compounding backtest. Keep this at 0.
-CANDLE_ENGINE_WAVE_LOT_EXP = _env_float("CANDLE_ENGINE_WAVE_LOT_EXP", 0.0)
-# ── Wave scalper — PER-SYMBOL overrides ───────────────────────────────
-# Each symbol falls back to the global CANDLE_ENGINE_WAVE_* values above
-# unless a per-symbol env var (WAVE_ENTRY_R_XAUUSD, WAVE_CUT_R_US30, ...) is
-# set. Pairs are NOT interchangeable: a config that suits one instrument's
-# volatility can bleed on another, so every pair gets its own swept values.
-# Swept OOS 2023-25 (and confirmed 2021-22 on XAUUSD/US100/XAGUSD): all pairs
-# optimize at entry 0.50 / cut 0.01 / profit 0.05 / jump 1.0/0.50, but the
-# edge MAGNITUDE differs per pair, so per-symbol tuning stays the rule.
-SYMBOL_WAVE_PARAMS = {
-    sym: {
-        "entry_r": _env_float(f"WAVE_ENTRY_R_{sym}", CANDLE_ENGINE_WAVE_ENTRY_R),
-        "cut_r": _env_float(f"WAVE_CUT_R_{sym}", CANDLE_ENGINE_WAVE_CUT_R),
-        "profit_r": _env_float(f"WAVE_PROFIT_R_{sym}", CANDLE_ENGINE_WAVE_PROFIT_R),
-        "jump_break_r": _env_float(
-            f"WAVE_JUMP_BREAK_R_{sym}", CANDLE_ENGINE_JUMP_BREAK_R),
-        "jump_body_r": _env_float(
-            f"WAVE_JUMP_BODY_R_{sym}", CANDLE_ENGINE_JUMP_BODY_R),
-        "trail_r": _env_float(f"WAVE_TRAIL_R_{sym}", CANDLE_ENGINE_WAVE_TRAIL_R),
-    }
-    for sym in SYMBOLS
-}
-# ── Wave scalper — LIVE execution ─────────────────────────────────────
-# When enabled for a symbol, the WaveScalper engine owns entry/exit for that
-# symbol (the old momentum/candle engines are not built for it). Enabled by
-# default for every configured symbol that has a saved H1 model; the model is
-# only used as the chop gate. Set WAVE_US100=false etc. to disable a symbol.
-WAVE_ENGINE_ENABLED = {sym: _env_bool(f"WAVE_{sym}", True) for sym in SYMBOLS}
-# Long M1 history kept for the H1 chop-gate features (~133 hours -> ~133 H1
-# candles, enough for the 96-bar rolling windows). Refetched per WAVE_REFRESH_SEC.
-WAVE_M1_HISTORY_BARS = _env_int("WAVE_M1_HISTORY_BARS", 8000)
-WAVE_REFRESH_SEC = _env_int("WAVE_REFRESH_SEC", 60)
 # Pair-selection layer: only the top-K pairs by live candle momentum score may
 # fire at any time. Each pair's own threshold adapts to its 30-60d score
 # percentile (dynamic per-pair), so idle pairs are automatically muted.

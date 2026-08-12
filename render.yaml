@@ -181,103 +181,10 @@ services:
         value: "60"
       - key: MOMENTUM_M1_HISTORY_BARS
         value: "8000"
-      # ── Wave scalper — PER-PAIR swept values (OOS 2023-25 optimum) ──
-      # Each pair gets its own entry/cut/profit/jump/trail via
-      # WAVE_ENTRY_R_{SYM}, WAVE_CUT_R_{SYM}, ... (read by SYMBOL_WAVE_PARAMS
-      # in config.py). Universal values helped some pairs and hurt others.
-      - key: WAVE_ENTRY_R_XAUUSD
-        value: "0.50"
-      - key: WAVE_CUT_R_XAUUSD
-        value: "0.01"
-      - key: WAVE_PROFIT_R_XAUUSD
-        value: "0.05"
-      - key: WAVE_JUMP_BREAK_R_XAUUSD
-        value: "1.0"
-      - key: WAVE_JUMP_BODY_R_XAUUSD
-        value: "0.50"
-      - key: WAVE_TRAIL_R_XAUUSD
-        value: "0.5"
-      - key: WAVE_ENTRY_R_US100
-        value: "0.50"
-      - key: WAVE_CUT_R_US100
-        value: "0.01"
-      - key: WAVE_PROFIT_R_US100
-        value: "0.05"
-      - key: WAVE_JUMP_BREAK_R_US100
-        value: "1.0"
-      - key: WAVE_JUMP_BODY_R_US100
-        value: "0.50"
-      - key: WAVE_TRAIL_R_US100
-        value: "0.5"
-      - key: WAVE_ENTRY_R_JP225
-        value: "0.50"
-      - key: WAVE_CUT_R_JP225
-        value: "0.01"
-      - key: WAVE_PROFIT_R_JP225
-        value: "0.05"
-      - key: WAVE_JUMP_BREAK_R_JP225
-        value: "1.0"
-      - key: WAVE_JUMP_BODY_R_JP225
-        value: "0.50"
-      - key: WAVE_TRAIL_R_JP225
-        value: "0.5"
-      - key: WAVE_ENTRY_R_DE40
-        value: "0.50"
-      - key: WAVE_CUT_R_DE40
-        value: "0.01"
-      - key: WAVE_PROFIT_R_DE40
-        value: "0.05"
-      - key: WAVE_JUMP_BREAK_R_DE40
-        value: "1.0"
-      - key: WAVE_JUMP_BODY_R_DE40
-        value: "0.50"
-      - key: WAVE_TRAIL_R_DE40
-        value: "0.5"
-      - key: WAVE_ENTRY_R_US500
-        value: "0.50"
-      - key: WAVE_CUT_R_US500
-        value: "0.01"
-      - key: WAVE_PROFIT_R_US500
-        value: "0.05"
-      - key: WAVE_JUMP_BREAK_R_US500
-        value: "1.0"
-      - key: WAVE_JUMP_BODY_R_US500
-        value: "0.50"
-      - key: WAVE_TRAIL_R_US500
-        value: "0.5"
-      - key: WAVE_ENTRY_R_US30
-        value: "0.50"
-      - key: WAVE_CUT_R_US30
-        value: "0.01"
-      - key: WAVE_PROFIT_R_US30
-        value: "0.05"
-      - key: WAVE_JUMP_BREAK_R_US30
-        value: "1.0"
-      - key: WAVE_JUMP_BODY_R_US30
-        value: "0.50"
-      - key: WAVE_TRAIL_R_US30
-        value: "0.5"
-      # ── Wave scalper — DISABLED live (2026-08-11) ──
-      # The wave's PF 4.17 was a legacy "level" fill artifact (fills at the
-      # exact trigger level, impossible live). Under market fills (what the
-      # live bot does, proven equal trade-for-trade to WaveScalper) it is a
-      # LOSER: XAUUSD PF 0.53, net -286R. Wave disabled on all pairs.
-      - key: WAVE_XAUUSD
-        value: "false"
-      - key: WAVE_US100
-        value: "false"
-      - key: WAVE_JP225
-        value: "false"
-      - key: WAVE_DE40
-        value: "false"
-      - key: WAVE_US500
-        value: "false"
-      - key: WAVE_US30
-        value: "false"
       # ── Pull-into-H1 scalper — LIVE (daily profit bot) ──
       # The ONLY strategy that survived honest backtests (bar-close fills +
-      # real costs from the start). Pull owns its symbols (wave + momentum
-      # disabled there), the session filter is bypassed for pull signals
+      # real costs from the start). Pull owns its symbols (momentum disabled
+      # there), the session filter is bypassed for pull signals
       # (trades freely like the backtest), and the daily guards lock in a
       # good day / stop the bleed (R in entry-H1-ATR units, UTC rollover).
       # Live on the 3 pairs that survived OOS 2026 at PF >= 1.3:
@@ -314,7 +221,7 @@ services:
         value: "2.5"
       # JP225/DE40/US500 are NOT enabled for pull (JP225 breaks even, DE40 has
       # no 2026 data, US500 marginal). Force CandleML off on them so NOTHING
-      # trades there — wave+momentum are already false, only the legacy
+      # trades there — momentum is already false, only the legacy
       # CandleML fallback could still fire (bot.py:1123).
       - key: CANDLE_ML_MODE_JP225
         value: "off"
