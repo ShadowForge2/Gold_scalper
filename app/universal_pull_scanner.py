@@ -56,6 +56,7 @@ class UniversalPullScanner:
         self.logger = logger or BotLogger()
         self.client = client
         self._cache: Dict[str, Dict] = {}      # symbol -> last ranking entry
+        self._cache_syms: List[str] = []       # universe of the last scan
         self._last_scan = 0.0
 
     def _log(self, msg: str):
@@ -130,12 +131,37 @@ class UniversalPullScanner:
             entry["momentum_z"] = 0.0  # ATR-weighted rank key (see scan_all)
         return entry
 
-    async def scan_all(self, client: Any = None, force: bool = False) -> List[Dict]:
-        """Scan ALL configured symbols and return eligible pairs ranked by the
-        proven pull-into-H1 edge (ATR-weighted). Cached for _SCAN_TTL seconds."""
+    async def scan_all(self, client: Any = None, force: bool = False,
+                      symbols: Optional[List[str]] = None) -> List[Dict]:
+        """Scan the FULL universe (configured symbols + any whole-board
+        candidates passed in) and return eligible pairs ranked by the proven
+        pull-into-H1 edge (ATR-weighted). This is the single scanner that drives
+        the bot: it evaluates every tradable pair the same way and ranks them so
+        the strongest pull setup is traded first. Cached for _SCAN_TTL seconds.
+
+        `symbols` lets the caller supply the combined universe (e.g.
+        cfg.SYMBOLS + the whole-board momentum top-K from the pair scanner). If
+        omitted, only cfg.SYMBOLS is scanned.
+        """
         client = client or self.client
         now = time.time()
-        if not force and client is not None and now - self._last_scan < _SCAN_TTL and self._cache:
+
+        # Combined universe: configured symbols first (always scanned), then any
+        # extra whole-board candidates, de-duplicated preserving order.
+        base = list(getattr(cfg, "SYMBOLS", []))
+        extra = list(symbols) if symbols is not None else []
+        seen = set()
+        syms = []
+        for s in base + extra:
+            if s and s not in seen:
+                seen.add(s)
+                syms.append(s)
+        if not syms:
+            return []
+
+        # Reuse the last scan only if the universe is unchanged and still fresh.
+        if (not force and client is not None and now - self._last_scan < _SCAN_TTL
+                and self._cache and syms == self._cache_syms):
             return list(self._cache.values())
 
         results: List[Dict] = []
@@ -149,7 +175,6 @@ class UniversalPullScanner:
                     self._log(f"scan error for {sym}: {e}")
                     return None
 
-        syms = list(getattr(cfg, "SYMBOLS", []))
         if not syms:
             return []
         try:
@@ -172,6 +197,7 @@ class UniversalPullScanner:
         results.sort(key=_rank, reverse=True)
 
         self._cache = {r["symbol"]: r for r in results}
+        self._cache_syms = syms
         self._last_scan = now
         self._log(
             f"scanned {len(syms)} symbols -> {len(results)} eligible "

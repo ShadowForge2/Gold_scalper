@@ -540,25 +540,30 @@ class Bot:
 
         await self._update_news_state()
 
-        # ── Dynamic universe: scan ALL available pairs and rank the eligible
-        # ones, then let the proven per-symbol pull engines (single source of
-        # truth for entry/exit state) trade them. ──────────────────────────
-        # 1. Whole-board momentum leaders from the live market catalog.
+        # ── Dynamic universe: ONE scanner ranks ALL tradable pairs by the
+        # proven pull-into-H1 edge. The whole-board momentum scan is the cheap
+        # first stage that narrows ~4000 markets to the top-K leaders; those
+        # candidates are merged with the configured symbols and handed to the
+        # universal pull scanner, which evaluates every pair the same way.
+        # Eligible pairs are then traded by the per-symbol pull engines (single
+        # source of truth for entry/exit state). ─────────────────────────────
+        # 1. Whole-board momentum leaders (cheap pre-filter across all markets).
         scan_candidates = self._current_candidates()
 
-        # 2. Universal pull-into-H1 scanner: ranks ALL configured symbols by the
-        #    proven strategy's edge (ATR + live signal). Drives priority order so
-        #    the strongest pull setups are evaluated/entered first.
+        # 2. Universal pull-into-H1 scanner: ranks the FULL universe (configured
+        #    symbols + whole-board candidates) by the proven strategy's edge.
         scan_rank = []
         try:
-            scan_rank = await self.universal_pull_scanner.scan_all(self.client)
+            scan_rank = await self.universal_pull_scanner.scan_all(
+                self.client, symbols=scan_candidates,
+            )
         except Exception as e:
             self.logger.debug(f"[UNIVERSAL PULL] scan failed: {e}")
             scan_rank = []
 
         # 3. Combine into one priority-ordered active universe: proven-strategy
-        #    eligible symbols first, then board candidates, then any symbol
-        #    still holding an open position (never orphan a live trade).
+        #    eligible symbols first, then any symbol still holding an open
+        #    position (never orphan a live trade).
         active_syms: List[str] = []
         seen = set()
 
@@ -570,8 +575,6 @@ class Bot:
 
         for r in scan_rank:
             _add(self._canon_sym(r.get("symbol", "")))
-        for sym in scan_candidates:
-            _add(sym)
         for sym in list(self._symbol_states.keys()):
             sym_open = any(p.get("_symbol_code") == sym for p in pnl_data.get("positions", []))
             if sym_open:
