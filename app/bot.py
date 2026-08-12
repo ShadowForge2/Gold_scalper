@@ -206,6 +206,19 @@ class Bot:
         except Exception:
             return None
 
+    @staticmethod
+    def _fmt_leverages(levs: dict) -> str:
+        """Render the per-asset-class leverage map (leverage is dynamic per
+        instrument type, NOT a single account value)."""
+        if not levs:
+            return "per-instrument (n/a)"
+        parts = []
+        for cls, lev in levs.items():
+            cur = lev.get("current") if isinstance(lev, dict) else None
+            if cur:
+                parts.append(f"{cls} 1:{cur}")
+        return " | ".join(parts) if parts else "per-instrument (n/a)"
+
 
     async def _notify(self, ntype: str, title: str, message: str, data: Optional[Dict] = None):
         ident = getattr(self, '_account_id', None) or cfg.CAPITAL_IDENTIFIER or "unknown"
@@ -216,7 +229,13 @@ class Bot:
             self.logger.warning(f"Notification failed ({ntype}): {e}")
 
     async def initialize(self) -> bool:
-        self.logger.info(f"Initializing {self.symbol} scalping bot (pull-into-H1 + board scanner)...")
+        n_cfg = len(self.symbols)
+        scanner_on = bool(getattr(cfg, "SCANNER_ENABLED", False))
+        self.logger.info(
+            f"Initializing multi-symbol pull-into-H1 scalper (whole-board scanner) — "
+            f"{n_cfg} configured symbol(s), board scanner {'ENABLED' if scanner_on else 'disabled'}, "
+            f"auto-tune {'ON' if getattr(cfg, 'PULL_AUTO_TUNE_ENABLED', True) else 'OFF'}"
+        )
         self.logger.info(f"Config: LOT_MULTIPLIER={cfg.LOT_MULTIPLIER}")
 
         self.logger.info("Broker: Capital.com (REST API)")
@@ -241,7 +260,7 @@ class Bot:
                 self.logger.info(
                     f"Connected: {info['name']} | "
                     f"Balance: ${info['balance']:.2f} | "
-                    f"Leverage: 1:{info['leverage']}"
+                    f"Leverage (per instrument): {self._fmt_leverages(info.get('leverages'))}"
                 )
                 if info["balance"] < cfg.MIN_BALANCE:
                     self.logger.warning(
@@ -285,7 +304,10 @@ class Bot:
             if info:
                 self.scaler.initialize(info["balance"])
                 self.logger.info(f"Account connected ✓")
-                self.logger.info(f"Balance: ${info['balance']:.2f} | Leverage: 1:{info['leverage']}")
+                self.logger.info(
+                    f"Balance: ${info['balance']:.2f} | "
+                    f"Leverage (per instrument): {self._fmt_leverages(info.get('leverages'))}"
+                )
                 if info["balance"] < cfg.MIN_BALANCE:
                     self.logger.warning(f"Balance ${info['balance']:.2f} below minimum ${cfg.MIN_BALANCE:.2f}")
                     self.state = self.STATES["WAITING_FOR_FUNDS"]
@@ -1361,11 +1383,13 @@ class Bot:
                 return
 
         ml_conf = signal.get("ml_confidence", signal.get("score", 0))
+        entry_lev = self.client.get_leverage_for_class(fresh_info.get("asset_class", "COMMODITIES"))
 
         self.logger.info(
             f"[{sym}] Entry: {direction} | score={score:.2f} | "
             f"balance=${balance:.2f} | lot={lot:.2f} | "
             f"max_trades={max_trades} | drift={drift_pct:.3f}% | "
+            f"leverage=1:{entry_lev:.0f} (per-instrument) | "
             f"margin=${free_margin:.2f} | "
             f"tier={self.scaler._tier(balance)} "
             f"({self.scaler.growth_pct(balance):.1f}% growth) | "
@@ -1561,7 +1585,10 @@ class Bot:
                 self.state = self.STATES["IDLE"]
                 for sym in self.symbols:
                     self._symbol_states[sym] = self.STATES["IDLE"]
-                self.logger.info(f"Reconnected: {info['name']} | Balance: ${info['balance']:.2f} | Leverage: 1:{info['leverage']}")
+                self.logger.info(
+                    f"Reconnected: {info['name']} | Balance: ${info['balance']:.2f} | "
+                    f"Leverage (per instrument): {self._fmt_leverages(info.get('leverages'))}"
+                )
                 return {"success": True, "account": info}
         err = self.client.last_error()
         self.logger.error(f"Login failed: {err}")
