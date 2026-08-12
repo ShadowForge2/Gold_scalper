@@ -115,6 +115,12 @@ services:
         value: "15"
       - key: MARGIN_BLOCK_BUFFER
         value: "1.05"
+      - key: PULL_AUTO_TUNE_ENABLED
+        value: "true"
+      - key: PULL_AUTO_TUNE_BARS_M5
+        value: "600"
+      - key: PULL_AUTO_TUNE_TTL_SEC
+        value: "21600"
       - key: USD_TO_NGN_RATE
         value: "1500"
       - key: PAYSTACK_SECRET_KEY

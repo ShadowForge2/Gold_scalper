@@ -265,6 +265,12 @@ PULL_PUMP_ATR = _env_float("PULL_PUMP_ATR", 0.5)
 MARGIN_BLOCK_ENABLED = _env_bool("MARGIN_BLOCK_ENABLED", True)
 MARGIN_BLOCK_RETRY_SEC = _env_float("MARGIN_BLOCK_RETRY_SEC", 15)
 MARGIN_BLOCK_BUFFER = _env_float("MARGIN_BLOCK_BUFFER", 1.05)
+# Per-symbol auto-calibration for the PullPrevH1 engine: any pair without an
+# explicit SYMBOL_PULL_PARAMS entry derives its own pull_r/trail_r/max_hold from
+# its recent M5/H1 structure. Results are cached and refreshed every TTL_SEC.
+PULL_AUTO_TUNE_ENABLED = _env_bool("PULL_AUTO_TUNE_ENABLED", True)
+PULL_AUTO_TUNE_BARS_M5 = _env_int("PULL_AUTO_TUNE_BARS_M5", 600)   # ~50h of M5
+PULL_AUTO_TUNE_TTL_SEC = _env_int("PULL_AUTO_TUNE_TTL_SEC", 21600)  # 6h
 # Round-trip cost in price units = spread + 2 x commission (matches the
 # backtest's cost model; used to score trade R for the daily guard).
 PULL_SYMBOL_ROUND_TRIP = {

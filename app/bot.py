@@ -28,6 +28,13 @@ except Exception:
     _HAS_PULL = False
 
 try:
+    from app import pull_auto_tune
+    _HAS_AUTO_TUNE = True
+except Exception:
+    pull_auto_tune = None
+    _HAS_AUTO_TUNE = False
+
+try:
     from app.pair_scanner import PairScanner
     _HAS_SCANNER = True
 except Exception:
@@ -358,16 +365,31 @@ class Bot:
                 round_trip = spread
         except (TypeError, ValueError):
             round_trip = 0.0
+        # Self-calibrate: use explicit SYMBOL_PULL_PARAMS if present, else
+        # auto-tune from the symbol's own recent structure (cached/refreshed).
+        pp = {}
+        if _HAS_AUTO_TUNE and pull_auto_tune is not None:
+            try:
+                pp = pull_auto_tune.get_pull_params(sym, self.client, self.logger)
+            except Exception as e:
+                self.logger.debug(f"[{sym}] auto-tune failed: {e}")
+                pp = {}
+        if not pp:
+            pp = {
+                "pull_r": float(getattr(cfg, "SCANNER_PULL_R", 0.30)),
+                "trail_r": float(getattr(cfg, "SCANNER_TRAIL_R", 0.35)),
+                "max_hold": int(getattr(cfg, "SCANNER_MAX_HOLD", 12)),
+            }
         return PullPrevH1Scalper(
             symbol=sym,
             logger=self.logger,
-            pull_r=float(getattr(cfg, "SCANNER_PULL_R", 0.30)),
-            trail_r=float(getattr(cfg, "SCANNER_TRAIL_R", 0.35)),
-            max_hold_bars=int(getattr(cfg, "SCANNER_MAX_HOLD", 12)),
+            pull_r=float(pp.get("pull_r", getattr(cfg, "SCANNER_PULL_R", 0.30))),
+            trail_r=float(pp.get("trail_r", getattr(cfg, "SCANNER_TRAIL_R", 0.35))),
+            max_hold_bars=int(pp.get("max_hold", getattr(cfg, "SCANNER_MAX_HOLD", 12))),
             round_trip_price=round_trip,
             min_h1_bars=int(getattr(cfg, "PULL_MIN_H1_BARS", 30)),
-            giveback_cap=float(getattr(cfg, "PULL_GIVEBACK_CAP", 0.30)),
-            pump_atr=float(getattr(cfg, "PULL_PUMP_ATR", 0.5)),
+            giveback_cap=float(pp.get("giveback_cap", getattr(cfg, "PULL_GIVEBACK_CAP", 0.30))),
+            pump_atr=float(pp.get("pump_atr", getattr(cfg, "PULL_PUMP_ATR", 0.5))),
         )
 
     def _ensure_symbol_state(self, sym: str) -> None:

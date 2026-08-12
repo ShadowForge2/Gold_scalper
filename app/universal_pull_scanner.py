@@ -28,14 +28,26 @@ import pandas as pd
 import config as cfg
 from app.pull_h1_scalper import PullPrevH1Scalper
 from app.logger import BotLogger
+from app import pull_auto_tune
 
 # Hard refresh throttle (seconds) between whole-board eligibility scans.
 _SCAN_TTL = float(getattr(cfg, "PULL_REFRESH_SEC", 60))
 
 
-def _build_scalper(symbol: str, logger: BotLogger) -> PullPrevH1Scalper:
-    """Build a throw-away PullPrevH1Scalper for a symbol with its tuned params."""
-    pp = dict(getattr(cfg, "SYMBOL_PULL_PARAMS", {}).get(symbol, {}) or {})
+def _build_scalper(symbol: str, logger: BotLogger, client: Any = None) -> PullPrevH1Scalper:
+    """Build a throw-away PullPrevH1Scalper for a symbol with its tuned params.
+
+    Uses explicit SYMBOL_PULL_PARAMS when present (validated pairs); otherwise
+    auto-calibrates from the symbol's own recent M5/H1 structure (so any board
+    pair self-tunes to its own volatility/run characteristics)."""
+    pp = pull_auto_tune.get_pull_params(symbol, client, logger)
+    if not pp:
+        pp = {
+            "pull_r": float(getattr(cfg, "SCANNER_PULL_R", 0.30)),
+            "trail_r": float(getattr(cfg, "SCANNER_TRAIL_R", 0.35)),
+            "max_hold": int(getattr(cfg, "SCANNER_MAX_HOLD", 12)),
+            "round_trip": 0.0,
+        }
     return PullPrevH1Scalper(
         symbol=symbol,
         logger=logger,
@@ -94,7 +106,7 @@ class UniversalPullScanner:
         if df is None or len(df) == 0:
             return None
 
-        eng = _build_scalper(symbol, self.logger)
+        eng = _build_scalper(symbol, self.logger, client)
         eng.set_history(df)
         ts = time.time()
         if not eng.warm_up(ts):
