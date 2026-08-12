@@ -258,6 +258,13 @@ PULL_MIN_H1_BARS = _env_int("PULL_MIN_H1_BARS", 30)  # completed H1 candles befo
 #                  candle's close to capture the tip instead of waiting to trail.
 PULL_GIVEBACK_CAP = _env_float("PULL_GIVEBACK_CAP", 0.30)
 PULL_PUMP_ATR = _env_float("PULL_PUMP_ATR", 0.5)
+# Global margin guard: if a NEW entry is rejected for insufficient margin, the
+# bot pauses ALL new entries (open positions keep trading/exiting) and only
+# resumes once free margin recovers past the blocked level (a position closing
+# frees margin). BUFFER adds hysteresis so tiny fluctuations don't flap.
+MARGIN_BLOCK_ENABLED = _env_bool("MARGIN_BLOCK_ENABLED", True)
+MARGIN_BLOCK_RETRY_SEC = _env_float("MARGIN_BLOCK_RETRY_SEC", 15)
+MARGIN_BLOCK_BUFFER = _env_float("MARGIN_BLOCK_BUFFER", 1.05)
 # Round-trip cost in price units = spread + 2 x commission (matches the
 # backtest's cost model; used to score trade R for the daily guard).
 PULL_SYMBOL_ROUND_TRIP = {

@@ -123,6 +123,15 @@ class Bot:
         self.risk_manager = RiskManager()
         self.scaler = EquityScaler()
 
+        # Global margin guard: once a NEW entry is rejected for insufficient
+        # margin, the bot stops firing further NEW entries across ALL symbols and
+        # only resumes once free margin recovers (e.g. an open position closed
+        # and freed margin). Open positions keep being managed/exited throughout.
+        self._margin_blocked: bool = False
+        self._margin_blocked_ts: float = 0.0        # last time we confirmed still blocked
+        self._margin_blocked_free: float = 0.0      # free margin snapshot when blocked
+        self._margin_block_last_log: float = 0.0    # throttle for the periodic "still blocked" log
+
         self.state: str = self.STATES["IDLE"]
         self.symbol: str = first_sym
         self.magic: int = cfg.MAGIC_NUMBER
@@ -608,6 +617,68 @@ class Bot:
 
         self._write_state()
 
+    # ── Global margin guard ─────────────────────────────────────────
+    # When a NEW entry is rejected for insufficient margin we stop firing further
+    # NEW entries everywhere and wait until free margin recovers (an open trade
+    # closing frees margin). Existing positions are always managed/exited.
+
+    @staticmethod
+    def _is_margin_error(text: str) -> bool:
+        t = (text or "").lower()
+        if not t:
+            return False
+        return any(k in t for k in (
+            "margin", "not enough", "insufficient", "available funds",
+            "rejected_margin", "free margin", "not sufficient",
+        ))
+
+    def _set_margin_blocked(self, free_margin: float = 0.0) -> None:
+        if not getattr(cfg, "MARGIN_BLOCK_ENABLED", True):
+            return
+        self._margin_blocked = True
+        self._margin_blocked_ts = time.time()
+        self._margin_blocked_free = float(free_margin)
+        self.logger.warning(
+            f"[MARGIN] Insufficient margin — pausing NEW entries globally until "
+            f"free margin recovers (was ${free_margin:.2f}). Open positions still managed."
+        )
+
+    def _margin_block_active(self, now: float) -> bool:
+        if not self._margin_blocked:
+            return False
+        if not getattr(cfg, "MARGIN_BLOCK_ENABLED", True):
+            self._margin_blocked = False
+            return False
+        retry = max(5.0, float(getattr(cfg, "MARGIN_BLOCK_RETRY_SEC", 15)))
+        if now - self._margin_blocked_ts < retry:
+            return True
+        # Re-probe free margin; resume only once it has recovered past the
+        # blocked level (a position closing frees margin). Hysteresis avoids
+        # flapping on tiny fluctuations.
+        try:
+            acct = self.client.get_account_info()
+            free = float(acct.get("free_margin", 0)) if acct else 0.0
+        except Exception:
+            free = 0.0
+        buf = max(1.0, float(getattr(cfg, "MARGIN_BLOCK_BUFFER", 1.05)))
+        if free >= self._margin_blocked_free * buf:
+            self._margin_blocked = False
+            self._margin_blocked_free = 0.0
+            self._margin_blocked_ts = 0.0
+            self.logger.info(
+                f"[MARGIN] Free margin recovered to ${free:.2f} — resuming NEW entries."
+            )
+            return False
+        # Still blocked: refresh probe timestamp + emit a throttled log.
+        self._margin_blocked_ts = now
+        if now - self._margin_block_last_log >= 60:
+            self._margin_block_last_log = now
+            self.logger.info(
+                f"[MARGIN] Still insufficient — free ${free:.2f} < "
+                f"needed ${self._margin_blocked_free * buf:.2f}. Holding new entries."
+            )
+        return True
+
     async def _tick_symbol(self, sym: str, pnl_data: Dict, balance: float = 0.0):
         state = self._symbol_states[sym]
 
@@ -979,6 +1050,13 @@ class Bot:
                 f"[{sym}] Signal triggered: [PULL] {signal.get('direction', 'UNKNOWN')} "
                 f"score={signal['score']:.2f}"
             )
+            # Global margin guard: never fire a NEW entry while margin is blocked;
+            # open positions continue to be managed in their IN_TRADE branch.
+            if self._margin_block_active(time.time()):
+                self.logger.debug(
+                    f"[{sym}] New entry skipped — global margin guard active"
+                )
+                return
             await self._execute_entry(signal, symbol_info, symbol=sym)
 
     def _is_high_volatility(self, sym: str, current_atr: float) -> bool:
@@ -1256,6 +1334,7 @@ class Bot:
                     f"[{sym}] Entry blocked: insufficient margin "
                     f"(est ${single_margin:.2f} needed, ${free_margin:.2f} available)"
                 )
+                self._set_margin_blocked(free_margin)
                 self._symbol_states[sym] = self.STATES["IDLE"]
                 return
 
@@ -1300,6 +1379,18 @@ class Bot:
                 if "currently closed" in err_detail.lower():
                     self.logger.info(f"[{sym}] Market closed detected, pausing until reopen")
                     self._symbol_states[sym] = self.STATES["MARKET_CLOSED"]
+                    return
+                if self._is_margin_error(err_detail):
+                    # Broker rejected for margin even though the pre-check passed
+                    # (stale free-margin / leverage race). Pause NEW entries until
+                    # free margin recovers instead of hammering the broker.
+                    fm = 0.0
+                    try:
+                        acct = self.client.get_account_info()
+                        fm = float(acct.get("free_margin", 0)) if acct else 0.0
+                    except Exception:
+                        pass
+                    self._set_margin_blocked(fm)
                     return
                 break
 

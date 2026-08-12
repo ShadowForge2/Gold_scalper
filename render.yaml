@@ -109,6 +109,12 @@ services:
         value: "0.30"
       - key: PULL_PUMP_ATR
         value: "0.5"
+      - key: MARGIN_BLOCK_ENABLED
+        value: "true"
+      - key: MARGIN_BLOCK_RETRY_SEC
+        value: "15"
+      - key: MARGIN_BLOCK_BUFFER
+        value: "1.05"
       - key: USD_TO_NGN_RATE
         value: "1500"
       - key: PAYSTACK_SECRET_KEY
