@@ -173,6 +173,36 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
     async def root():
         return {"service": "Gold Scalper", "status": "running"}
 
+    @app.get("/api/config")
+    async def get_config():
+        """Read-only dump of the env-resolved values the running process loaded.
+        Lets us confirm no stale Render dashboard override beats the repo
+        defaults for pull params / blacklist / broker mode. No secrets."""
+        symbols = list(getattr(cfg, "SYMBOLS", []))
+        pull_params = {}
+        for sym in symbols:
+            pp = (getattr(cfg, "SYMBOL_PULL_PARAMS", {}) or {}).get(sym, {}) or {}
+            pull_params[sym] = {
+                "pull_r": pp.get("pull_r"),
+                "trail_r": pp.get("trail_r"),
+                "max_hold": pp.get("max_hold"),
+                "round_trip": pp.get("round_trip"),
+            }
+        return {
+            "broker": getattr(cfg, "BROKER", None),
+            "demo": bool(getattr(cfg, "CAPITAL_DEMO", False)),
+            "symbols": symbols,
+            "blacklist": sorted(
+                str(s).strip().upper() for s in (getattr(cfg, "BLACKLIST_SYMBOLS", []) or []) if str(s).strip()
+            ),
+            "pull_enabled": {
+                sym: bool((getattr(cfg, "PULL_ENGINE_ENABLED", {}) or {}).get(sym, False))
+                for sym in symbols
+            },
+            "pull_params": pull_params,
+            "pull_auto_tune_enabled": bool(getattr(cfg, "PULL_AUTO_TUNE_ENABLED", True)),
+        }
+
     @app.get("/health")
     async def health():
         connected = bot.client is not None and bot.client.is_connected()
