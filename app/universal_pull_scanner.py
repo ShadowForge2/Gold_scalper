@@ -162,12 +162,15 @@ class UniversalPullScanner:
 
         # Combined universe: configured symbols first (always scanned), then any
         # extra whole-board candidates, de-duplicated preserving order.
+        # Blacklisted pairs (BLACKLIST_SYMBOLS) are excluded entirely.
         base = list(getattr(cfg, "SYMBOLS", []))
         extra = list(symbols) if symbols is not None else []
+        blacklist = getattr(cfg, "BLACKLIST_SYMBOLS", set())
         seen = set()
         syms = []
         for s in base + extra:
-            if s and s not in seen:
+            s = str(s or "").strip().upper()
+            if s and s not in seen and s not in blacklist:
                 seen.add(s)
                 syms.append(s)
         if not syms:

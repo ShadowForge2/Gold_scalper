@@ -77,6 +77,10 @@ services:
       #   US30   pull .3 / trail .35 / hold 24  PF train 1.73 valid 1.83 OOS 1.81
       #   XAUUSD pull .3 / trail .15 / hold 12  PF train 1.22 valid 1.96 OOS 1.40
       #   US100  pull .3 / trail .50 / hold 6   PF train 1.38 valid 1.86 OOS 1.34
+      # Never trade these pairs with the pull strategy (sweep: they fail under
+      # realistic fills). Excluded from the scan universe + no entry engine.
+      - key: BLACKLIST_SYMBOLS
+        value: "DE40,JP225,US500"
       - key: PULL_XAUUSD
         value: "true"
       - key: PULL_US100

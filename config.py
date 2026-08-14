@@ -95,6 +95,16 @@ MAX_LOT = _env_float("MAX_LOT", 9999.0)
 # JP225/DE40 are momentum-engine pairs (per-pair adapted params + regime gate).
 SYMBOLS = [s.strip() for s in _env_str("SYMBOLS", "XAUUSD,US100,JP225,DE40,US500,US30").split(",")]
 
+# Pairs that must NEVER be traded with the pull strategy (the sweep showed they
+# fail under realistic fills). They are excluded from the scan universe, never
+# get a pull engine armed, and any leftover open position is force-closed.
+# Override via BLACKLIST_SYMBOLS (comma-separated) in the env.
+BLACKLIST_SYMBOLS = {
+    s.strip().upper()
+    for s in _env_str("BLACKLIST_SYMBOLS", "DE40,JP225,US500").split(",")
+    if s.strip()
+}
+
 # Per-symbol minimum balance before that symbol becomes tradeable.
 SYMBOL_MIN_BALANCE = {
     "XAUUSD": _env_float("MIN_BALANCE_XAUUSD", MIN_BALANCE),

@@ -358,6 +358,10 @@ class Bot:
     # and keeps the top-K as the active universe. Symbols are canonicalized to
     # configured codes (GOLD -> XAUUSD) so positions/state never double-key.
 
+    @staticmethod
+    def _is_blacklisted(sym: str) -> bool:
+        return str(sym or "").strip().upper() in getattr(cfg, "BLACKLIST_SYMBOLS", set())
+
     def _canon_sym(self, key: str) -> str:
         key = str(key or "").strip().upper()
         if not key:
@@ -417,6 +421,25 @@ class Bot:
     def _ensure_symbol_state(self, sym: str) -> None:
         """Create per-symbol state + a general pull engine for a scanner
         candidate. The pull engine owns entry/exit for EVERY scan trade."""
+        if self._is_blacklisted(sym):
+            # Blacklisted pair (DE40/JP225/US500): never arm a pull engine, so
+            # no NEW entries ever fire here. State is kept only so any
+            # already-open position is still recovered and managed (never
+            # orphan a live trade).
+            if sym not in self._symbol_states:
+                self._symbol_states[sym] = self.STATES["IDLE"]
+                self._symbol_signals[sym] = None
+                self._symbol_event_start_ts[sym] = None
+                self._symbol_consecutive_losses[sym] = 0
+                self._symbol_last_loss_ts[sym] = 0.0
+                self._symbol_regime_skipped[sym] = None
+                self._symbol_atr_history[sym] = []
+                self._symbol_vol_regime[sym] = False
+                self._symbol_pull_engine[sym] = None
+                self._symbol_pull_entry[sym] = False
+                self._symbol_pull_cache_ts[sym] = 0.0
+            return
+
         if sym in self._symbol_states:
             # Configured symbol that is not pull-owned (e.g. US500): arm the
             # general engine once it becomes an active scanner candidate.
@@ -466,7 +489,7 @@ class Bot:
         out, seen = [], set()
         for c in cands:
             s = self._canon_sym(c.get("epic", ""))
-            if not s or s in seen:
+            if not s or s in seen or self._is_blacklisted(s):
                 continue
             seen.add(s)
             out.append(s)
@@ -637,7 +660,7 @@ class Bot:
             if sym_open:
                 _add(sym)
         if not active_syms:
-            active_syms = list(self.symbols)
+            active_syms = [s for s in self.symbols if not self._is_blacklisted(s)]
             self.logger.debug("[SCANNER] No candidates yet — falling back to configured symbols")
 
         # The proven PullPrevH1Scalper lives on the per-symbol engine. Feeding the
@@ -1199,6 +1222,27 @@ class Bot:
 
         acct = self.client.get_account_info()
         balance = acct.get("balance", 0) if acct else 0
+
+        # ── Blacklisted pair: never hold — force-close any open position ──
+        if self._is_blacklisted(sym):
+            self.logger.warning(f"[{sym}] Blacklisted pair — force-closing open position(s)")
+            closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+            for pos_data in closed:
+                self.position_manager.note_closed(
+                    pos_data, exit_reason="blacklist", score=0, balance=balance)
+            if closed:
+                pnl = sum(p.get("profit", 0) for p in closed)
+                self._record_trade_result(sym, pnl, False)
+                await self._notify(
+                    "trade_close",
+                    f"Trade Closed — {sym}",
+                    f"Blacklisted pair closed | PnL: ${pnl:+.2f}",
+                    {"symbol": sym, "exit_reason": "blacklist", "pnl": pnl},
+                )
+            self._symbol_states[sym] = self.STATES["IDLE"]
+            self._symbol_event_start_ts[sym] = None
+            self._symbol_pull_entry[sym] = False
+            return
 
         pos = sym_positions[0]
         direction = pos.get("type", "BUY")
