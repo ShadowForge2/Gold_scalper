@@ -95,13 +95,6 @@ MAX_LOT = _env_float("MAX_LOT", 9999.0)
 # JP225/DE40 are momentum-engine pairs (per-pair adapted params + regime gate).
 SYMBOLS = [s.strip() for s in _env_str("SYMBOLS", "XAUUSD,US100,JP225,DE40,US500,US30").split(",")]
 
-# ONLY these pairs may be traded for now. Each passed the strict 3-period pull
-# sweep (train 2023-24 / valid 2025 / OOS 2026, PF >= 1.0 everywhere): XAUUSD,
-# US100, US500, US30. DE40/JP225 have NO validated config (scanner ranks them
-# with the general engine otherwise) so they are excluded from the universe.
-# Open positions are still managed, never orphaned.
-VALIDATED_SYMBOLS = {s.strip() for s in _env_str("VALIDATED_SYMBOLS", "XAUUSD,US100,US500,US30").split(",")}
-
 # Per-symbol minimum balance before that symbol becomes tradeable.
 SYMBOL_MIN_BALANCE = {
     "XAUUSD": _env_float("MIN_BALANCE_XAUUSD", MIN_BALANCE),
@@ -236,23 +229,21 @@ FRIDAY_CLOSE_BLOCK_MIN = _env_int("FRIDAY_CLOSE_BLOCK_MIN", 60)
 # body, trailing a giveback fraction of the wave, force-closing at a fixed
 # horizon (in M5 bars). This is the ONLY strategy that survived honest
 # backtests with real costs (see _bt_pull_prevh1.py, _tune_pull_prevh1.py).
-# Per-symbol tuned configs — robust vectorized sweep 2026-08-13
-# (train 2023-24 / valid 2025 / OOS 2026, all 3 periods PF >= 1.0,
-# selected by geometric-mean PF):
-#   US30   pull .40 trail .45 hold 16  TRN 2.00 VAL 2.00 OOS 2.25
-#   XAUUSD pull .35 trail .15 hold 8   TRN 1.25 VAL 2.06 OOS 1.53
-#   US100  pull .40 trail .60 hold 36  TRN 1.27 VAL 2.30 OOS 2.50
-#   US500  pull .40 trail .60 hold 48  TRN 1.19 VAL 1.73 OOS 1.70
-#   DE40   no config survived all 3 periods (keep disabled)
-#   JP225  no config survived all 3 periods (keep disabled)
-# Enabled per symbol (ON for the 4 OOS-validated pairs, OFF for the rest).
-# Flip PULL_XAUUSD=false etc. to disable a pair.
+# Per-symbol tuned configs (train 2023-24 -> 2025 -> OOS 2026):
+#   US30   pull .30 trail .35 hold 24  PF 1.73 -> 1.83 -> 1.81  (best)
+#   XAUUSD pull .30 trail .15 hold 12  PF 1.22 -> 1.96 -> 1.40
+#   US100  pull .30 trail .50 hold 6   PF 1.38 -> 1.86 -> 1.34
+#   DE40   pull .30 trail .50 hold 24  (no 2026 data)
+#   US500  pull .30 trail .35 hold 24  (marginal after costs)
+#   JP225  pull .30 trail .35 hold 24  (marginal after costs — avoid)
+# Enabled per symbol (ON for the 3 OOS-validated pairs, OFF by default for
+# the rest). Flip PULL_XAUUSD=false etc. to disable a pair.
 PULL_ENGINE_ENABLED = {
     "XAUUSD": _env_bool("PULL_XAUUSD", True),
     "US100": _env_bool("PULL_US100", True),
     "JP225": _env_bool("PULL_JP225", False),
     "DE40": _env_bool("PULL_DE40", False),
-    "US500": _env_bool("PULL_US500", True),
+    "US500": _env_bool("PULL_US500", False),
     "US30": _env_bool("PULL_US30", True),
 }
 PULL_M1_HISTORY_BARS = _env_int("PULL_M1_HISTORY_BARS", 8000)
@@ -291,12 +282,12 @@ PULL_SYMBOL_ROUND_TRIP = {
     "US30": _env_float("PULL_ROUND_TRIP_US30", 2.00),
 }
 PULL_SYMBOL_DEFAULTS = {
-    "XAUUSD": dict(pull_r=0.35, trail_r=0.15, max_hold=8),
-    "US100": dict(pull_r=0.40, trail_r=0.60, max_hold=36),
+    "XAUUSD": dict(pull_r=0.30, trail_r=0.15, max_hold=12),
+    "US100": dict(pull_r=0.30, trail_r=0.50, max_hold=6),
     "JP225": dict(pull_r=0.30, trail_r=0.35, max_hold=24),
     "DE40": dict(pull_r=0.30, trail_r=0.50, max_hold=24),
-    "US500": dict(pull_r=0.40, trail_r=0.60, max_hold=48),
-    "US30": dict(pull_r=0.40, trail_r=0.45, max_hold=16),
+    "US500": dict(pull_r=0.30, trail_r=0.35, max_hold=24),
+    "US30": dict(pull_r=0.30, trail_r=0.35, max_hold=24),
 }
 # "Daily profit bot" guards (per symbol, R in entry ATR units, UTC midnight
 # rollover): stop NEW entries once the day's net R reaches the target (lock in

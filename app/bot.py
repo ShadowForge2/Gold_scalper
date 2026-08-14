@@ -358,11 +358,6 @@ class Bot:
     # and keeps the top-K as the active universe. Symbols are canonicalized to
     # configured codes (GOLD -> XAUUSD) so positions/state never double-key.
 
-    def _is_tradeable(self, sym: str) -> bool:
-        """True only for pairs validated by the strict pull sweep."""
-        validated = set(getattr(cfg, "VALIDATED_SYMBOLS", set()) or set())
-        return bool(sym) and sym in validated
-
     def _canon_sym(self, key: str) -> str:
         key = str(key or "").strip().upper()
         if not key:
@@ -472,8 +467,6 @@ class Bot:
         for c in cands:
             s = self._canon_sym(c.get("epic", ""))
             if not s or s in seen:
-                continue
-            if not self._is_tradeable(s):
                 continue
             seen.add(s)
             out.append(s)
@@ -634,11 +627,6 @@ class Bot:
         def _add(sym: str):
             if not sym or sym in seen:
                 return
-            if not self._is_tradeable(sym):
-                # Never open new trades on unvalidated pairs, but never orphan a
-                # position that is already open (it gets managed/exited).
-                if not any(p.get("_symbol_code") == sym for p in pnl_data.get("positions", [])):
-                    return
             seen.add(sym)
             active_syms.append(sym)
 
@@ -649,7 +637,7 @@ class Bot:
             if sym_open:
                 _add(sym)
         if not active_syms:
-            active_syms = [s for s in self.symbols if self._is_tradeable(s)]
+            active_syms = list(self.symbols)
             self.logger.debug("[SCANNER] No candidates yet — falling back to configured symbols")
 
         # The proven PullPrevH1Scalper lives on the per-symbol engine. Feeding the
