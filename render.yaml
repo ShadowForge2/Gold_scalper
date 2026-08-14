@@ -129,6 +129,18 @@ services:
         value: "1500"
       - key: PAYSTACK_SECRET_KEY
         sync: false
+      # ── Email (Resend) ──
+      # Multiple keys allowed as a comma-separated list; sends rotate
+      # round-robin and fail over to the next key on rate-limit/server errors.
+      - key: RESEND_API_KEYS
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        value: "QuantoraFX <onboarding@resend.dev>"
+      # Public base URL of this deployment — used to build the logo URL
+      # (/static/logo.png) referenced inside every email. Override with a
+      # BRAND_LOGO_URL env var for a fully external logo.
+      - key: PUBLIC_BASE_URL
+        value: "https://gold-scalper-qyhg.onrender.com"
       - key: DATABASE_URL
         sync: false
       - key: FAILOVER_ENABLED

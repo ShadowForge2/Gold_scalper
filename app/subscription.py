@@ -11,6 +11,7 @@ from typing import Optional, Dict, List, Any
 import httpx
 
 from app import database as db_mod
+from app import email_service
 
 logger = logging.getLogger("GoldScalper")
 
@@ -336,10 +337,13 @@ def _ensure_current_period(record: Dict, current_balance: float):
         current["fee_15pct"] = round(profit * 0.15, 2) if profit > 0 else 0.0
 
 
-async def start_trial(identifier: str, balance: float):
+async def start_trial(identifier: str, balance: float) -> bool:
+    """Create the 30-day trial record if none exists. Returns True when a new
+    trial was actually created (callers decide whether to send the welcome
+    email — the trial only begins when the user explicitly starts the bot)."""
     existing = await _get_sub_record(identifier)
     if existing:
-        return
+        return False
     now = datetime.utcnow()
     record = {
         "identifier": identifier,
@@ -362,6 +366,7 @@ async def start_trial(identifier: str, balance: float):
         ],
     }
     await _save_sub_record(record)
+    return True
 
 
 async def get_subscription(identifier: str, current_balance: float = 0.0) -> Dict:
@@ -540,6 +545,11 @@ async def verify_payment(reference: str) -> Optional[Dict]:
                         break
             await _save_sub_record(record)
             await _mark_payment_processed(reference, identifier, "paystack", amount_paid)
+            try:
+                await email_service.email_billing_payment_received(
+                    identifier, amount_paid, record.get("subscription_end") or "")
+            except Exception as e:
+                logger.debug("Payment email (paystack) failed: %s", e)
 
         return {
             "identifier": identifier,
@@ -701,6 +711,11 @@ async def process_maxelpay_callback(order_id: str, status: str, amount: float) -
                 break
     await _save_sub_record(record)
     await _mark_payment_processed(ref_key, ident, "maxelpay", amount)
+    try:
+        await email_service.email_billing_payment_received(
+            ident, amount, record.get("subscription_end") or "")
+    except Exception as e:
+        logger.debug("Payment email (maxelpay) failed: %s", e)
     return True
 
 
@@ -750,12 +765,25 @@ async def create_notification(identifier: str, ntype: str, title: str, message: 
             await db_mod.execute(sql, values)
     except Exception as e:
         logger.warning("DB notification insert failed: %s", e)
+
+    # User email prefs gate both channels: allow_push controls FCM, and
+    # transactional types (trade + news) are mirrored to email when allowed.
     try:
-        future = _schedule_on_main(_send_fcm_push(identifier, title, message, data))
-        if future is None:
-            asyncio.create_task(_send_fcm_push(identifier, title, message, data))
+        prefs = await email_service.get_email_prefs(identifier)
     except Exception:
-        pass
+        prefs = {}
+    if prefs.get("allow_push", True):
+        try:
+            future = _schedule_on_main(_send_fcm_push(identifier, title, message, data))
+            if future is None:
+                asyncio.create_task(_send_fcm_push(identifier, title, message, data))
+        except Exception:
+            pass
+    if ntype in ("trade_open", "trade_close", "news_alert"):
+        try:
+            await email_service.email_trade_alert(identifier, title, message)
+        except Exception as e:
+            logger.debug("Email trade alert mirror failed: %s", e)
 
 
 async def get_notifications(identifier: str, limit: int = 50) -> List[Dict]:

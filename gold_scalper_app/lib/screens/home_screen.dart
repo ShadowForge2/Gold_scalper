@@ -8,6 +8,7 @@ import '../widgets/fade_in_scale.dart';
 import '../widgets/onboarding_tutorial.dart';
 import '../widgets/ui/haptic.dart';
 import '../widgets/notification_bell.dart';
+import '../widgets/email_permission_sheet.dart';
 import '../theme.dart';
 import 'dashboard_screen.dart';
 import 'live_feed_screen.dart';
@@ -98,6 +99,32 @@ class _HomeScreenState extends State<HomeScreen> {
             MaterialPageRoute(builder: (_) => const SubscriptionScreen()),
           );
         }
+      });
+    }
+
+    if (bp.emailPermissionPending) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        bp.resolveEmailPermissionPending();
+        showModalBottomSheet<EmailPermissionResult>(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: kDarkSurface,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          builder: (_) => EmailPermissionSheet(email: bp.emailPrefs.email),
+        ).then((result) async {
+          final allowEmail = result?.allowEmail ?? false;
+          final allowPush = result?.allowPush ?? true;
+          final allowMarketing = result?.allowMarketing ?? false;
+          await bp.updateEmailPrefs(
+            allowEmail: allowEmail,
+            allowPush: allowPush,
+            allowMarketing: allowMarketing,
+            sendWelcome: allowEmail,
+          );
+        });
       });
     }
 

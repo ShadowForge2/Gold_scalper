@@ -339,3 +339,57 @@ trade-for-trade, R-for-R across three 3-month OOS windows (2023, 2024, 2025) —
 **Relevant files**: `app/wave_scalper.py`, `_sweep_candle_wave.py`,
 `_wave_strict_compare.py`, `_wave_engine_test.py`, `_wave_real_compare.py`,
 `WAVE_STRATEGY.md` (§6 updated), `AGENTS.md`.
+
+### Session 2026-08-14: Email Service (Resend) + Payment Auto-Restart + Email Branding
+
+**Email delivery (`app/email_service.py`)** — Resend-powered, dormant until
+`RESEND_API_KEYS` + `RESEND_FROM_EMAIL` are set (never breaks trading if email
+fails). Rotating keys: comma-separated `RESEND_API_KEYS` rotate round-robin and
+fail over to the next key on any non-success; legacy `RESEND_API_KEY` appended
+when both present; failing keys skipped for `_KEY_PENALTY_SEC` (300s). Emails go
+only to the Capital.com-registered identifier, only when `allow_email` (transactional)
+/ `allow_marketing` (promo). Per-type throttles via `email_log` table. New tables:
+`email_prefs`, `email_log` (+ `idx_email_log_lookup`).
+
+**Triggers**: welcome = explicit bot start only; payment received (Paystack
+verify + MaxelPay callback); trial-ending/expired + fee-due + promo + daily PnL
+recap via the hourly scheduler in `main.py` (`email_scheduler_loop`).
+
+**2026-08-14 fixes**:
+1. **No connect-time email** — `start_trial()` (subscription.py) no longer sends
+   the welcome email (and returns `True`/`False` = new trial created). The welcome
+   fires only from `api.py device_start_bot` when `trial_created` (explicit start),
+   or from the consent flow (`send_welcome`). Connecting an account alone sends
+   nothing.
+2. **Auto-restart after payment is conditional** — `_restore_bot_after_payment`
+   (api.py) now only restarts a bot whose account is still `active=1` in the DB.
+   A subscription-lapse stop leaves `active=1` (bot self-stops, no flag change) so
+   it auto-resumes on payment; a **manual** stop sets `active=0` (`device_stop_bot`)
+   so a later payment never re-starts it.
+3. **Email branding** — every template renders the Quantora logo in the header
+   (`app/static/logo.png`, 256px copy of the Flutter asset) served by FastAPI at
+   `/static/logo.png`; URL = `PUBLIC_BASE_URL/static/logo.png` (env `PUBLIC_BASE_URL`,
+   override `BRAND_LOGO_URL`). Dark gold theme matching the app. Payment email now
+   only claims the bot resumed when that is actually true ("If your bot was paused
+   because the subscription lapsed, it has automatically resumed").
+
+**Relevant files**: `app/email_service.py`, `app/static/logo.png`, `app/api.py`
+(static mount, `_restore_bot_after_payment`, welcome-on-start), `app/subscription.py`
+(`start_trial` returns bool), `main.py` (email scheduler), `render.yaml`
+(`RESEND_API_KEYS`, `RESEND_FROM_EMAIL`, `PUBLIC_BASE_URL`), Flutter
+`gold_scalper_app/lib/{models/email_prefs.dart,providers/bot_provider.dart,
+widgets/email_permission_sheet.dart,screens/home_screen.dart,screens/settings_screen.dart}`.
+
+**Two backends (primary + backup)**: both deploy the same repo, so both serve
+`/static/logo.png`. Set `PUBLIC_BASE_URL` on each Render service to that
+service's OWN URL (or use `BRAND_LOGO_URL` for one fixed external logo). The
+hourly email scheduler only runs on the failover leader
+(`main.py email_scheduler_step` calls `failover.can_trade()` when
+`FAILOVER_ENABLED=true`) so two instances sharing one DB never double-send
+scheduled emails; transactional emails from API requests still fire from either.
+
+**Email frequency (no spam)**: trial reminders fire only at milestones — exactly
+**14 days** and **7 days** before the trial ends (`main.py _email_scheduler_one`
+matches `days_remaining in (14, 7)`), plus the single "trial ended" notice when
+it expires (`billing_trial_expired` cooldown = 30 days). Promos are at most one
+every **14 days** (`promo` cooldown). Fee-due reminders stay 24h (real debt).

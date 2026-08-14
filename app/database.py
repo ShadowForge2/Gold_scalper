@@ -158,9 +158,36 @@ CREATE TABLE IF NOT EXISTS fcm_tokens (
 )
 """
 
-ALL_TABLES = [CREATE_DEVICES, CREATE_ACCOUNTS, CREATE_SUBSCRIPTIONS, CREATE_PERIODS, CREATE_PENDING_ORDERS, CREATE_PROCESSED_PAYMENTS]
-ALL_TABLES_SQLITE = [*ALL_TABLES, CREATE_NOTIFICATIONS_SQLITE, CREATE_FCM_TOKENS]
-ALL_TABLES_PG = [*ALL_TABLES, CREATE_NOTIFICATIONS_PG, CREATE_FCM_TOKENS]
+# Email delivery prefs, keyed by the broker-verified Capital.com identifier.
+# allow_email  -> transactional email mirror of notifications + billing/trade
+# allow_push   -> push notifications (FCM + in-app)
+# allow_marketing -> occasional promo emails ("opportunities come once in a while")
+CREATE_EMAIL_PREFS = """
+CREATE TABLE IF NOT EXISTS email_prefs (
+    identifier TEXT PRIMARY KEY,
+    allow_email INTEGER NOT NULL DEFAULT 0,
+    allow_push INTEGER NOT NULL DEFAULT 1,
+    allow_marketing INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT
+)
+"""
+
+CREATE_EMAIL_LOG = """
+CREATE TABLE IF NOT EXISTS email_log (
+    identifier TEXT NOT NULL,
+    email_type TEXT NOT NULL,
+    sent_at TEXT NOT NULL
+)
+"""
+
+CREATE_EMAIL_LOG_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_email_log_lookup
+ON email_log (identifier, email_type, sent_at)
+"""
+
+ALL_TABLES = [CREATE_DEVICES, CREATE_ACCOUNTS, CREATE_SUBSCRIPTIONS, CREATE_PERIODS, CREATE_PENDING_ORDERS, CREATE_PROCESSED_PAYMENTS, CREATE_EMAIL_PREFS, CREATE_EMAIL_LOG]
+ALL_TABLES_SQLITE = [*ALL_TABLES, CREATE_NOTIFICATIONS_SQLITE, CREATE_FCM_TOKENS, CREATE_EMAIL_LOG_INDEX]
+ALL_TABLES_PG = [*ALL_TABLES, CREATE_NOTIFICATIONS_PG, CREATE_FCM_TOKENS, CREATE_EMAIL_LOG_INDEX]
 
 
 async def _try_pg() -> bool:

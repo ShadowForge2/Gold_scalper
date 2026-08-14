@@ -1,13 +1,15 @@
 import asyncio
 import os
+from datetime import datetime
 import uvicorn
 from app.api import create_app
 from app.bot import Bot
 from app.bot_pool import BotPool
 from app import database as db_mod
 from app.database import init_db
-from app.subscription import get_active_accounts, can_start_live, start_trial
+from app.subscription import get_active_accounts, can_start_live, start_trial, get_subscription
 from app.failover import FailoverManager, HEARTBEAT_INTERVAL, OP_TIMEOUT
+from app import email_service
 import config as cfg
 
 bot = Bot()
@@ -146,6 +148,125 @@ async def _restore_user_bots():
         bot.logger.warning(f"Failed to restore user bots: {e}")
 
 
+# ── Email scheduler (trial reminders / fee due / promos / daily PnL) ──
+
+_EMAIL_SCHEDULE_INTERVAL_SEC = int(os.getenv("EMAIL_SCHEDULE_INTERVAL_SEC", "3600"))
+
+
+def _closed_today_pnl(state) -> float:
+    """Sum today's closed-trade PnL from a bot_pool state dict."""
+    try:
+        closed = (state.get("bot") or {}).get("closed_trades", []) or []
+    except Exception:
+        return 0.0
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    total = 0.0
+    for t in closed:
+        ca = (t.get("closed_at") or "") if isinstance(t, dict) else ""
+        if ca[:10] == today:
+            try:
+                total += float(t.get("profit", 0) or 0)
+            except (TypeError, ValueError):
+                pass
+    return round(total, 2)
+
+
+async def _email_scheduler_one(ident: str, state=None):
+    """Handle a single account's scheduled emails (best-effort, never raises)."""
+    try:
+        sub = await get_subscription(ident)
+    except Exception as e:
+        bot.logger.debug(f"Email scheduler sub lookup failed for {ident}: {e}")
+        return
+
+    now = datetime.utcnow()
+
+    # 1) Trial reminders — milestone-based so we never spam: exactly at
+    #    14 days and 7 days before the trial ends. The final "trial ended"
+    #    notice is sent below when the trial actually expires.
+    if sub.get("trial_active"):
+        dr = sub.get("days_remaining", 0)
+        if dr in (14, 7):
+            await email_service.email_billing_trial_ending(ident, dr)
+        return
+
+    # 2) Expired / not subscribed — trial-expired, fee-due, and promo nudges.
+    if not sub.get("subscribed"):
+        trial_end = sub.get("trial_end")
+        expired = False
+        if trial_end:
+            try:
+                expired = datetime.fromisoformat(trial_end) <= now
+            except (ValueError, TypeError):
+                expired = False
+        if expired:
+            await email_service.email_billing_trial_expired(ident)
+            due = sub.get("due_amount", 0) or 0
+            if due > 0:
+                await email_service.email_billing_fee_due(ident, float(due))
+            await email_service.email_promo(ident)
+
+    # 3) Daily PnL recap — only for running live bots with trades today.
+    if state is not None:
+        pnl = _closed_today_pnl(state)
+        if pnl != 0.0:
+            day_label = now.strftime("%A, %b %d")
+            account = state.get("account") or {}
+            balance = float(account.get("balance", 0) or 0)
+            trades = 0
+            try:
+                trades = len((state.get("bot") or {}).get("closed_trades", []) or [])
+            except Exception:
+                pass
+            await email_service.email_daily_pnl(ident, pnl, day_label, trades, balance)
+
+
+async def email_scheduler_step():
+    if not _db_connected or not email_service.email_configured():
+        return
+    # With two instances (primary + backup) sharing one DB, only the active
+    # leader runs the scheduled sends — otherwise both would send the same
+    # trial reminder / promo / daily PnL recap. Transactional emails fired
+    # from API requests (payment receipts, trade alerts) are unaffected.
+    if failover.enabled:
+        try:
+            if not await failover.can_trade():
+                return
+        except Exception as e:
+            bot.logger.warning(f"Email scheduler leader check failed: {e}")
+    try:
+        rows = await db_mod.fetch_all("SELECT DISTINCT identifier FROM accounts")
+    except Exception as e:
+        bot.logger.warning(f"Email scheduler: account scan failed: {e}")
+        return
+    if not rows:
+        return
+    for row in rows:
+        ident = row["identifier"]
+        state = None
+        try:
+            if bot_pool.is_running(ident):
+                state = await asyncio.to_thread(bot_pool.get_state, ident)
+        except Exception:
+            state = None
+        try:
+            await _email_scheduler_one(ident, state)
+        except Exception as e:
+            bot.logger.debug(f"Email scheduler step failed for {ident}: {e}")
+
+
+async def email_scheduler_loop():
+    while True:
+        try:
+            await email_scheduler_step()
+        except asyncio.CancelledError:
+            bot.logger.info("Email scheduler cancelled — shutting down")
+            raise
+        except Exception as e:
+            bot.logger.error(f"Email scheduler loop failed: {e}")
+        await asyncio.sleep(_EMAIL_SCHEDULE_INTERVAL_SEC)
+
+
 app = create_app(bot, bot_pool=bot_pool, db_check=is_db_connected)
 
 
@@ -168,6 +289,7 @@ async def startup():
     if failover.enabled:
         _fire_task(failover_heartbeat_loop(), name="failover.heartbeat")
     if _db_connected:
+        _fire_task(email_scheduler_loop(), name="email.scheduler")
         if failover.enabled:
             bot.logger.info("FAILOVER enabled — user bots start only on lease leadership")
         else:

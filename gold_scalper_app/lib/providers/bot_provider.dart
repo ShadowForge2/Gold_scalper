@@ -10,6 +10,7 @@ import '../models/trade.dart';
 import '../models/performance.dart';
 import '../models/config.dart';
 import '../models/notification_item.dart';
+import '../models/email_prefs.dart';
 import '../widgets/terminal_log.dart';
 import '../services/notification_service.dart';
 import 'device_provider.dart';
@@ -44,6 +45,9 @@ class BotProvider extends ChangeNotifier {
   int _unreadCount = 0;
   final Set<String> _seenNotificationIds = {};
   RealtimeChannel? _realtimeChannel;
+
+  EmailPrefs _emailPrefs = const EmailPrefs();
+  bool _emailPermissionPending = false;
 
   static const _configKey = 'saved_bot_config';
 
@@ -88,6 +92,8 @@ class BotProvider extends ChangeNotifier {
   bool get navigateToSubscription => _navigateToSubscription;
   List<NotificationItem> get notifications => _notifications;
   int get unreadCount => _unreadCount;
+  EmailPrefs get emailPrefs => _emailPrefs;
+  bool get emailPermissionPending => _emailPermissionPending;
 
   Future<void> _resolveUrl() async {
     for (final url in _baseUrls) {
@@ -317,7 +323,45 @@ class BotProvider extends ChangeNotifier {
       _fetchTrades(),
       _fetchEquityCurve(),
       _fetchNotifications(),
+      _fetchEmailPrefs(),
     ]);
+  }
+
+  Future<void> _fetchEmailPrefs() async {
+    try {
+      _emailPrefs = EmailPrefs.fromJson(await _get('/api/device/email/status'));
+    } catch (e) {
+      debugPrint('_fetchEmailPrefs failed: $e');
+    }
+  }
+
+  Future<bool> updateEmailPrefs({
+    required bool allowEmail,
+    required bool allowPush,
+    bool allowMarketing = false,
+    bool sendWelcome = false,
+  }) async {
+    try {
+      final res = await _post('/api/device/email/prefs', {
+        'allow_email': allowEmail,
+        'allow_push': allowPush,
+        'allow_marketing': allowMarketing,
+        'send_welcome': sendWelcome,
+      });
+      _emailPrefs = EmailPrefs(
+        configured: _emailPrefs.configured,
+        email: _emailPrefs.email ?? res['email'] as String?,
+        allowEmail: allowEmail,
+        allowPush: allowPush,
+        allowMarketing: allowMarketing,
+        isNew: false,
+      );
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('updateEmailPrefs failed: $e');
+      return false;
+    }
   }
 
   Future<void> _fetchState() async {
@@ -497,6 +541,7 @@ class BotProvider extends ChangeNotifier {
       _get('/api/device/bot/performance').then((d) { _performance = Performance.fromJson(d); }).catchError((e) { debugPrint('_tickLive perf: $e'); return; }),
       _fetchEquityCurve().catchError((e) { debugPrint('_tickLive equity: $e'); }),
       _fetchNotifications().catchError((e) { debugPrint('_tickLive notifications: $e'); }),
+      _fetchEmailPrefs().catchError((e) { debugPrint('_tickLive email prefs: $e'); }),
     ]);
 
     if (_botRunning && !isDemo && !hasNoAccounts && !canTrade && !_subscriptionBlocked) {
@@ -711,7 +756,17 @@ class BotProvider extends ChangeNotifier {
     await _device.saveCredentialsTimestamp();
     addLog('Account saved: $identifier', level: 'TRADE');
     await _fetchState(); // immediately pick up auto-started state
+    await _fetchEmailPrefs();
+    _emailPermissionPending = _emailPrefs.isNew && _emailPrefs.configured;
+    notifyListeners();
     return null;
+  }
+
+  Future<void> resolveEmailPermissionPending() async {
+    if (_emailPermissionPending) {
+      _emailPermissionPending = false;
+      notifyListeners();
+    }
   }
 
   Future<bool> removeAccount(String identifier) async {

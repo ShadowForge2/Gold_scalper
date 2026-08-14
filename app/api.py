@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 from fastapi import FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 import uvicorn
 
@@ -30,6 +31,7 @@ from app.subscription import (
     create_notification,
 )
 from app.capital_client import CapitalClient
+from app import email_service
 import config as cfg
 
 
@@ -80,6 +82,13 @@ class VerifyCredentialsRequest(BaseModel):
 class PaystackInitRequest(BaseModel):
     email: str
     channels: Optional[List[str]] = None
+
+
+class EmailPrefsRequest(BaseModel):
+    allow_email: bool = False
+    allow_push: bool = True
+    allow_marketing: bool = False
+    send_welcome: bool = False
 
 
 def sanitize_account(acct: Dict) -> Dict:
@@ -146,6 +155,14 @@ async def _auth_clear(key: str) -> None:
         _AUTH_ATTEMPTS.pop(key, None)
 
 
+def _fire_async(coro):
+    """Fire a background coroutine on the running loop (best-effort)."""
+    try:
+        asyncio.get_running_loop().create_task(coro)
+    except RuntimeError:
+        pass
+
+
 def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> FastAPI:
     app = FastAPI(title="Gold Scalper", version="2.0.0")
 
@@ -165,6 +182,10 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    _static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+    if os.path.isdir(_static_dir):
+        app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
     def _db_ok() -> bool:
         return db_check() if db_check else True
@@ -309,12 +330,15 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         return JSONResponse(status_code=503, content={"error": "Database not connected"})
 
     async def _restore_bot_after_payment(identifier: str):
+        # Only auto-restart a bot that was stopped because its subscription
+        # lapsed (account still marked active in the DB). A bot the user
+        # stopped manually was deactivated (active=0) and must stay stopped.
         if not bot_pool:
             return
         if bot_pool.is_running(identifier):
             return
         acct = await get_account_by_identifier(identifier)
-        if not acct:
+        if not acct or not acct.get("active"):
             return
         await bot_pool.start(
             identifier=acct["identifier"],
@@ -492,8 +516,10 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                     if info:
                         bal = info.get("balance", 0.0)
                     temp_client.shutdown()
-                await start_trial(ident, bal)
+                trial_created = await start_trial(ident, bal)
                 sub = await get_subscription(ident, bal)
+                if trial_created and sub.get("trial_end"):
+                    _fire_async(email_service.email_billing_welcome(ident, sub.get("trial_end") or ""))
                 dr = sub.get("days_remaining", 30)
                 bot_pool.add_log(ident, f"Live bot started. Trial active: {dr} day(s) remaining.", "INFO")
                 if dr <= 3:
@@ -1107,6 +1133,63 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                     bot_pool.add_log(ident, f"MaxelPay payment of ${amount:.2f} verified. Subscription active.", "INFO")
                     await _restore_bot_after_payment(ident)
         return {"ok": True}
+
+    # ── Email / Notification Preferences ────────────────────────────
+    @app.get("/api/device/email/status")
+    async def device_email_status(device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
+        did = device_id or "unknown"
+        dev = await get_device(did)
+        if not dev or not dev.get("accounts"):
+            return {
+                "configured": False,
+                "email": None,
+                "allow_email": False,
+                "allow_push": True,
+                "allow_marketing": False,
+                "is_new": True,
+            }
+        ident = dev["accounts"][0]["identifier"]
+        prefs = await email_service.get_email_prefs(ident)
+        return {
+            "configured": email_service.email_configured(),
+            "email": ident,
+            "allow_email": prefs["allow_email"],
+            "allow_push": prefs["allow_push"],
+            "allow_marketing": prefs["allow_marketing"],
+            "is_new": prefs.get("updated_at") is None,
+        }
+
+    @app.post("/api/device/email/prefs")
+    async def device_email_prefs(data: EmailPrefsRequest, device_id: str = Header(None, alias="X-Device-Id")):
+        if not _db_ok():
+            return _no_db()
+        did = device_id or "unknown"
+        dev = await get_device(did)
+        if not dev or not dev.get("accounts"):
+            return JSONResponse(status_code=400, content={"error": "No accounts found"})
+        ident = dev["accounts"][0]["identifier"]
+        await email_service.set_email_prefs(
+            ident,
+            allow_email=data.allow_email,
+            allow_push=data.allow_push,
+            allow_marketing=data.allow_marketing,
+        )
+        if data.send_welcome and data.allow_email:
+            try:
+                sub = await get_subscription(ident)
+                if sub.get("trial_active") or sub.get("trial_end"):
+                    _fire_async(email_service.email_billing_welcome(ident, sub.get("trial_end") or ""))
+            except Exception as e:
+                logger.debug("Welcome email on consent failed: %s", e)
+        return {
+            "success": True,
+            "email": ident,
+            "allow_email": data.allow_email,
+            "allow_push": data.allow_push,
+            "allow_marketing": data.allow_marketing,
+        }
 
     # ── Notifications ──────────────────────────────────────────────
     @app.get("/api/device/notifications")

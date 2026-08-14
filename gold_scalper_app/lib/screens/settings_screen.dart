@@ -206,6 +206,11 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
         ),
         const SizedBox(height: 16),
         FadeInScale(
+          delay: const Duration(milliseconds: 250),
+          child: _buildEmailSection(bp),
+        ),
+        const SizedBox(height: 16),
+        FadeInScale(
           delay: const Duration(milliseconds: 300),
           child: _buildSection('Info', [
             _infoTile('Broker', 'Capital.com'),
@@ -347,6 +352,117 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
           ),
         ],
       ]),
+    );
+  }
+
+  Widget _buildEmailSection(BotProvider bp) {
+    final prefs = bp.emailPrefs;
+    final tiles = <Widget>[
+      _switchTile(
+        icon: Icons.notifications_rounded,
+        title: 'Push notifications',
+        subtitle: 'Trade alerts, bot status and daily recaps',
+        value: prefs.allowPush,
+        onChanged: (v) => _saveEmailPrefs(bp,
+            allowPush: v,
+            allowEmail: prefs.allowEmail,
+            allowMarketing: prefs.allowMarketing),
+      ),
+    ];
+    if (prefs.configured) {
+      tiles.addAll([
+        const SizedBox(height: 4),
+        _switchTile(
+          icon: Icons.mark_email_read_rounded,
+          title: 'Email updates',
+          subtitle: 'Billing, receipts, PnL recaps and product news',
+          value: prefs.allowEmail,
+          onChanged: (v) => _saveEmailPrefs(bp,
+              allowPush: prefs.allowPush,
+              allowEmail: v,
+              allowMarketing: prefs.allowMarketing),
+        ),
+        const SizedBox(height: 4),
+        _switchTile(
+          icon: Icons.local_offer_rounded,
+          title: 'Occasional offers',
+          subtitle: 'Special promotions, once in a while',
+          value: prefs.allowMarketing,
+          onChanged: (v) => _saveEmailPrefs(bp,
+              allowPush: prefs.allowPush,
+              allowEmail: prefs.allowEmail,
+              allowMarketing: v),
+        ),
+        const SizedBox(height: 12),
+        _infoTile('Delivered to', prefs.email ?? '--'),
+      ]);
+    } else {
+      tiles.addAll([
+        const SizedBox(height: 8),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Text(
+            'Email updates are not configured yet — set RESEND_API_KEYS on the server to enable them.',
+            style: const TextStyle(color: kTextSecondary, fontSize: 12, height: 1.4),
+          ),
+        ),
+      ]);
+    }
+    return _buildSection('Notifications & Email', tiles);
+  }
+
+  Future<void> _saveEmailPrefs(
+    BotProvider bp, {
+    required bool allowPush,
+    required bool allowEmail,
+    required bool allowMarketing,
+  }) async {
+    final ok = await bp.updateEmailPrefs(
+      allowEmail: allowEmail,
+      allowPush: allowPush,
+      allowMarketing: allowMarketing,
+    );
+    if (!ok && mounted) _snack('Failed to save notification preferences');
+  }
+
+  Widget _switchTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: value ? kGold : kTextMuted),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(height: 1),
+                Text(subtitle,
+                    style: const TextStyle(
+                        color: kTextSecondary, fontSize: 12, height: 1.3)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Switch(
+            value: value,
+            onChanged: onChanged,
+            activeTrackColor: kGold.withValues(alpha: 0.35),
+            activeColor: kGold,
+          ),
+        ],
+      ),
     );
   }
 
