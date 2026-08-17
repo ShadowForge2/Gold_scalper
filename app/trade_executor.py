@@ -11,7 +11,8 @@ class TradeExecutor:
     async def open_market(self, symbol: str, direction: str,
                           volume: float, magic: int = cfg.MAGIC_NUMBER,
                           comment: str = cfg.COMMENT,
-                          slippage: int = cfg.MAX_SLIPPAGE_PIPS) -> Optional[Any]:
+                          slippage: int = cfg.MAX_SLIPPAGE_PIPS,
+                          expected_price: float = 0.0) -> Optional[Any]:
 
         try:
             ticket = await self.client.open_position(
@@ -22,6 +23,17 @@ class TradeExecutor:
             self.logger.error(f"Order exception for {symbol} {direction}: {e}")
             return None
         if ticket is not None:
+            if expected_price > 0:
+                info = self.client.get_symbol_info(symbol) if hasattr(self.client, 'get_symbol_info') else None
+                if info:
+                    actual_price = float(info.get("bid", 0) if direction == "SELL" else info.get("ask", 0))
+                    slip = abs(actual_price - expected_price)
+                    slip_pips = slip * 10  # approx for gold
+                    if slip_pips > slippage:
+                        self.logger.warning(
+                            f"Slippage {slip_pips:.1f}p exceeds max {slip_pips:.1f}p "
+                            f"(expected ${expected_price:.2f} got ${actual_price:.2f})"
+                        )
             self.logger.trade(
                 f"Opened {direction} {volume:.2f} {symbol} "
                 f"@ ticket {ticket}"
@@ -65,9 +77,7 @@ class TradeExecutor:
         return closed
 
     def close_all_positions(self, symbol: Optional[str] = None) -> int:
-        positions = self.client.get_positions() or []
-        if symbol:
-            positions = [p for p in positions if p.get("symbol") == symbol]
+        positions = self.client.get_positions(symbol=symbol) or []
         closed = 0
         for pos in positions:
             ticket = pos.get("ticket")

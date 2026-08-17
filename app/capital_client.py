@@ -617,8 +617,11 @@ class CapitalClient:
         if not self._ensure_session():
             return []
         try:
-            filter_symbol = symbol or cfg.SYMBOL
-            target_epic = self._resolve_epic(filter_symbol)
+            if symbol is not None:
+                filter_symbol = symbol
+                target_epic = self._resolve_epic(filter_symbol)
+            else:
+                target_epic = None  # return ALL positions
             r = self._request("GET", f"{self.base_url}/api/v1/positions", headers=self._auth_headers())
             if r is not None and r.ok:
                 result = []
@@ -626,7 +629,7 @@ class CapitalClient:
                     p = pos_data.get("position", {})
                     mkt = pos_data.get("market", {})
                     epic = mkt.get("epic", "")
-                    if epic != target_epic:
+                    if target_epic is not None and epic != target_epic:
                         continue
                     if magic is not None:
                         ref = p.get("reference", "") or p.get("dealReference", "")
@@ -712,8 +715,8 @@ class CapitalClient:
             return 0.0
 
         current_balance = info.get("balance", 0)
-        positions = self.get_positions(magic)
-        open_pnl = sum(p.get("profit", 0) for p in positions)
+        all_positions = self.get_positions(magic, symbol=None)
+        open_pnl = sum(p.get("profit", 0) for p in all_positions)
         return (current_balance - self._prev_balance) + open_pnl
 
     async def order_send(self, request: dict) -> Dict:

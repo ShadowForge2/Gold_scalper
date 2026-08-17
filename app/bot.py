@@ -69,6 +69,7 @@ class Bot:
         self._symbol_pull_entry: Dict[str, bool] = {}   # current trade is a pull entry
         self._symbol_pull_cache_ts: Dict[str, float] = {}  # M1 history fetch time
         self._last_pull_warn_ts: float = 0.0  # throttle for pull history warnings
+        self._symbol_engine_failures: Dict[str, int] = {}  # consecutive pull engine failures per symbol
         # Whole-board scanner: the active tradeable universe is the scanner's
         # top-K momentum leaders (no fixed symbol configuration — scan and see).
         self.scanner: Optional[object] = (
@@ -93,6 +94,7 @@ class Bot:
             self._symbol_regime_skipped[sym] = None
             self._symbol_atr_history[sym] = []
             self._symbol_vol_regime[sym] = False  # False = normal vol
+            self._symbol_engine_failures[sym] = 0  # consecutive pull engine failures
 
             # ── Pull-into-H1 scalper engine (owns entry/exit when enabled) ──
             pull_eng = None
@@ -612,6 +614,20 @@ class Bot:
                 else:
                     self._reconnect_attempts += 1
                 self._last_reconnect_time = now_t
+            max_reconnect = getattr(cfg, "MAX_RECONNECT_ATTEMPTS", 10)
+            if self._reconnect_attempts >= max_reconnect:
+                self.logger.warning(
+                    f"Connection lost after {self._reconnect_attempts} attempts — "
+                    f"force-closing all positions to prevent unprotected exposure"
+                )
+                for sym in self.symbols:
+                    closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                    for pos_data in closed:
+                        self.position_manager.note_closed(pos_data, exit_reason="reconnect_fail")
+                self.state = self.STATES["STOPPED"]
+                for sym in self.symbols:
+                    self._symbol_states[sym] = self.STATES["STOPPED"]
+                self._running = False
             self._write_state()
             return
 
@@ -1033,9 +1049,10 @@ class Bot:
         if action is None or action.get("type") != "enter":
             return None
         atr = eng.atr if eng.atr > 0 else (current_price * 0.001)
+        pull_quality = min(1.0, (eng.pull_r / max(eng._atr, 1e-6)) * 10) if eng.atr > 0 else 0.5
         return {
             "direction": action["direction"],
-            "score": 0.5,
+            "score": round(pull_quality, 3),
             "price": current_price,
             "candle_open": current_price,
             "sl": None,
@@ -1229,8 +1246,9 @@ class Bot:
 
         if not sym_positions:
             event_ts = self._symbol_event_start_ts.get(sym)
-            if event_ts is not None and time.time() - event_ts < 10:
-                self.logger.debug(f"[{sym}] Waiting for positions to appear (API delay grace period)")
+            grace = getattr(cfg, "POSITION_GRACE_SECONDS", 30)
+            if event_ts is not None and time.time() - event_ts < grace:
+                self.logger.debug(f"[{sym}] Waiting for positions to appear (API delay grace period {grace}s)")
                 return
             self._symbol_states[sym] = self.STATES["IDLE"]
             self._symbol_event_start_ts[sym] = None
@@ -1277,16 +1295,50 @@ class Bot:
         if self._symbol_pull_entry.get(sym, False):
             eng = self._symbol_pull_engine.get(sym)
             if eng is None:
-                self.logger.warning(f"[{sym}] Pull engine missing for open pull trade")
+                self.logger.warning(
+                    f"[{sym}] Pull engine missing for open pull trade — force-closing to prevent orphan"
+                )
+                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                for pos_data in closed:
+                    self.position_manager.note_closed(
+                        pos_data, exit_reason="engine_missing",
+                        score=0, balance=balance)
+                if closed:
+                    pnl = sum(p.get("profit", 0) for p in closed)
+                    self._record_trade_result(sym, pnl, False)
+                self._symbol_states[sym] = self.STATES["IDLE"]
+                self._symbol_event_start_ts[sym] = None
                 self._symbol_pull_entry[sym] = False
+                return
             else:
                 recent = self._pull_refresh(sym, eng)
                 action = None
                 if recent is not None:
                     try:
                         action = eng.feed(recent, now_ts=time.time())
+                        self._symbol_engine_failures[sym] = 0
                     except Exception as e:
-                        self.logger.warning(f"[{sym}] Pull exit eval failed: {e}")
+                        self._symbol_engine_failures[sym] = self._symbol_engine_failures.get(sym, 0) + 1
+                        self.logger.warning(
+                            f"[{sym}] Pull exit eval failed ({self._symbol_engine_failures[sym]}x): {e}"
+                        )
+                        max_fails = getattr(cfg, "MAX_ENGINE_FAILURES", 5)
+                        if self._symbol_engine_failures[sym] >= max_fails:
+                            self.logger.warning(
+                                f"[{sym}] Pull engine failed {max_fails}x consecutively — force-closing"
+                            )
+                            closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                            for pos_data in closed:
+                                self.position_manager.note_closed(
+                                    pos_data, exit_reason="engine_failure",
+                                    score=0, balance=balance)
+                            if closed:
+                                pnl = sum(p.get("profit", 0) for p in closed)
+                                self._record_trade_result(sym, pnl, False)
+                            self._symbol_states[sym] = self.STATES["IDLE"]
+                            self._symbol_event_start_ts[sym] = None
+                            self._symbol_pull_entry[sym] = False
+                            return
                 if action is None or action.get("type") != "exit":
                     return
                 exit_reason = action.get("reason", "pull_exit")
@@ -1470,7 +1522,7 @@ class Bot:
                     break
 
             ticket = await self.trade_executor.open_market(
-                sym, direction, lot
+                sym, direction, lot, expected_price=current_price
             )
             if ticket is not None:
                 any_opened = True
@@ -1509,12 +1561,16 @@ class Bot:
         if any_opened:
             self._symbol_states[sym] = self.STATES["IN_TRADE"]
             self._symbol_event_start_ts[sym] = time.time()
+            actual_fill = current_price
+            fill_positions = [p for p in self.position_manager.open_positions if p.get("_symbol_code") == sym]
+            if fill_positions:
+                actual_fill = fill_positions[0].get("price_open", current_price)
             if signal.get("signal_type") == "pull":
                 # Pull trade: the engine state machine owns all exits from here
                 # (trailing giveback / max-hold), anchored at the ACTUAL fill.
                 pull_eng = self._symbol_pull_engine.get(sym)
                 if pull_eng is not None:
-                    pull_eng.confirm_entry(current_price)
+                    pull_eng.confirm_entry(actual_fill)
                     self._symbol_pull_entry[sym] = True
                 else:
                     self._symbol_pull_entry[sym] = False
