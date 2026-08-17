@@ -241,6 +241,11 @@ class BotPool:
         except Exception as e:
             bot.logger.error(f"Bot thread error: {e}")
         finally:
+            try:
+                if bot.client:
+                    bot.client.shutdown()
+            except Exception:
+                pass
             self._remove_bot(ident, bot)
             loop.close()
 

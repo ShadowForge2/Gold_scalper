@@ -1049,7 +1049,7 @@ class Bot:
         if action is None or action.get("type") != "enter":
             return None
         atr = eng.atr if eng.atr > 0 else (current_price * 0.001)
-        pull_quality = min(1.0, (eng.pull_r / max(eng._atr, 1e-6)) * 10) if eng.atr > 0 else 0.5
+        pull_quality = min(1.0, (eng.pull_r / max(eng.atr, 1e-6)) * 10) if eng.atr > 0 else 0.5
         return {
             "direction": action["direction"],
             "score": round(pull_quality, 3),
@@ -1250,9 +1250,14 @@ class Bot:
             if event_ts is not None and time.time() - event_ts < grace:
                 self.logger.debug(f"[{sym}] Waiting for positions to appear (API delay grace period {grace}s)")
                 return
+            self.logger.info(f"[{sym}] Position gone (external close / margin call) — resetting state")
+            eng = self._symbol_pull_engine.get(sym)
+            if eng is not None and eng.in_position:
+                eng.confirm_exit()
             self._symbol_states[sym] = self.STATES["IDLE"]
             self._symbol_event_start_ts[sym] = None
             self._symbol_pull_entry[sym] = False
+            self._symbol_engine_failures[sym] = 0
             return
 
         acct = self.client.get_account_info()
@@ -1455,7 +1460,15 @@ class Bot:
         max_trades = 1
 
         current_price = fresh_info.get("bid", fresh_info.get("price", 0)) if direction == "SELL" else fresh_info.get("ask", fresh_info.get("price", 0))
+        if current_price <= 0:
+            self.logger.warning(f"[{sym}] Entry blocked: current price is ${current_price} (no valid bid/ask)")
+            self._symbol_states[sym] = self.STATES["IDLE"]
+            return
         signal_price = symbol_info.get("bid", 0) if direction == "SELL" else symbol_info.get("ask", 0)
+        if signal_price <= 0:
+            self.logger.warning(f"[{sym}] Entry blocked: signal price is ${signal_price} (no valid bid/ask)")
+            self._symbol_states[sym] = self.STATES["IDLE"]
+            return
         drift_amount = abs(current_price - signal_price)
         drift_pct = drift_amount / signal_price * 100
         max_drift = cfg.SYMBOL_MAX_DRIFT.get(sym, 5.00)

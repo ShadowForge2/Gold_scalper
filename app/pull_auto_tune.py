@@ -199,6 +199,7 @@ def get_pull_params(symbol: str, client, logger=None, cfg=None) -> dict:
 
 
 def clear_cache(symbol: str = None, is_demo: bool = None) -> None:
+    global _CACHE
     if symbol is None and is_demo is None:
         _CACHE.clear()
     elif symbol is None:

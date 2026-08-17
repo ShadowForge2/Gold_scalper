@@ -31,7 +31,7 @@ class TradeExecutor:
                     slip_pips = slip * 10  # approx for gold
                     if slip_pips > slippage:
                         self.logger.warning(
-                            f"Slippage {slip_pips:.1f}p exceeds max {slip_pips:.1f}p "
+                            f"Slippage {slip_pips:.1f}p exceeds max {slippage:.1f}p "
                             f"(expected ${expected_price:.2f} got ${actual_price:.2f})"
                         )
             self.logger.trade(
