@@ -632,6 +632,13 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
     # ── Device Bot Config ───────────────────────────────────────
     @app.get("/api/device/bot/config")
     async def device_bot_config(device_id: str = Header(None, alias="X-Device-Id")):
+        did = device_id or "unknown"
+        dev = await get_device(did)
+        ident = dev["accounts"][0]["identifier"] if dev and dev.get("accounts") else None
+        if ident and bot_pool and bot_pool.is_running(ident):
+            bot_config = bot_pool.get_bot_config(ident)
+            if bot_config:
+                return bot_config
         return {
             "LOT_MULTIPLIER": str(cfg.LOT_MULTIPLIER),
             "MAX_SPREAD_PIPS": str(cfg.MAX_SPREAD_PIPS),

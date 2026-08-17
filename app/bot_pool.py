@@ -1,11 +1,13 @@
 import asyncio
 import json
+import logging
 import os
 import threading
 import time
 from datetime import datetime
 from typing import Optional, Dict, List
 
+import config as cfg
 from app.bot import Bot
 from app.capital_client import CapitalClient
 from app.logger import BotLogger
@@ -196,6 +198,22 @@ class BotPool:
             bot.update_settings(settings)
             return {"success": True, "message": "Settings updated"}
 
+    def get_bot_config(self, identifier: str) -> Optional[Dict]:
+        """Return the per-bot config (lot_multiplier etc.) or None if bot not running."""
+        ident = _fmt_id(identifier)
+        with self._lock:
+            bot = self._bots.get(ident)
+        if bot is None:
+            return None
+        return {
+            "LOT_MULTIPLIER": str(bot._lot_multiplier_override if bot._lot_multiplier_override is not None else cfg.LOT_MULTIPLIER),
+            "MAX_SPREAD_PIPS": str(cfg.MAX_SPREAD_PIPS),
+            "MIN_BALANCE": str(cfg.MIN_BALANCE),
+            "MAX_LOT": str(cfg.MAX_LOT),
+            "LOT_SIZE": str(cfg.LOT_SIZE),
+            "is_demo": bot.is_demo,
+        }
+
     def _remove_bot(self, ident: str, bot: Optional[Bot] = None):
         """Remove a bot entry ONLY if it still owns this identifier.
 
@@ -227,6 +245,12 @@ class BotPool:
             loop.close()
 
     async def _run_bot(self, ident: str, bot: Bot, creds: Dict):
+        is_demo = creds.get("demo", True)
+        logging.warning(
+            f"[BotPool] Spawning bot for {ident[:8]} — "
+            f"ACCOUNT TYPE: {'DEMO' if is_demo else 'LIVE'} — "
+            f"Signals will be computed from {'DEMO' if is_demo else 'LIVE'} chart data"
+        )
         ok = await bot.initialize_with_credentials(
             api_key=creds["api_key"],
             identifier=creds["identifier"],
@@ -255,6 +279,7 @@ class BotPool:
 
         self._write_state(ident, {
             "state": bot.state,
+            "is_demo": bot.is_demo,
             "started_at": datetime.utcnow().isoformat(),
             "symbol": bot.symbol,
         })

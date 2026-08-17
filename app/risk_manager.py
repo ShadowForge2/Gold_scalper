@@ -33,12 +33,15 @@ class EquityScaler:
         if self.peak_balance is None or balance > self.peak_balance:
             self.peak_balance = balance
 
-    def get_lot(self, balance: float, symbol: Optional[str] = None) -> float:
+    def get_lot(self, balance: float, symbol: Optional[str] = None, lot_multiplier: Optional[float] = None) -> float:
         """Calculate lot size based on equity scaling.
 
         Uses per-symbol base lot (SYMBOL_LOT_SIZES) scaled by balance.
         For Capital.com: use full margin available (no conservative cap).
         The actual margin check happens in bot.py _execute_entry().
+
+        lot_multiplier: per-bot override (avoids mutating global cfg.LOT_MULTIPLIER
+        which would affect ALL bots in the pool — demo vs live isolation).
         """
         if not self.starting_balance or self.starting_balance <= 0:
             return self._symbol_base_lots.get(symbol, self.base_lot) if symbol else self.base_lot
@@ -46,8 +49,8 @@ class EquityScaler:
 
         sym_base = self._symbol_base_lots.get(symbol, self.base_lot) if symbol else self.base_lot
         reference = 20.0
-        mult = min(float(getattr(cfg, 'LOT_MULTIPLIER', 1)),
-                   float(getattr(cfg, 'MAX_LOT_MULTIPLIER', 2.0)))
+        mult = lot_multiplier if lot_multiplier is not None else float(getattr(cfg, 'LOT_MULTIPLIER', 1))
+        mult = min(mult, float(getattr(cfg, 'MAX_LOT_MULTIPLIER', 2.0)))
         lot = sym_base * (balance / reference) * mult
 
         if self.in_drawdown(balance):

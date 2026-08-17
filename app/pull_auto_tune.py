@@ -30,7 +30,7 @@ ATR_PERIOD = 14
 _TUNE_TTL = float(os.environ.get("PULL_AUTO_TUNE_TTL_SEC", "21600"))  # 6h
 _TUNE_BARS = int(os.environ.get("PULL_AUTO_TUNE_BARS_M5", "600"))     # ~50h of M5
 
-_CACHE: dict = {}  # symbol -> (ts, params)
+_CACHE: dict = {}  # (symbol, is_demo) -> (ts, params)
 
 
 def _normalize(df: pd.DataFrame) -> pd.DataFrame:
@@ -55,7 +55,7 @@ def tune(symbol: str, client, logger=None) -> dict:
     """Return a dict of calibrated pull params for `symbol`, or None if the
     symbol lacks enough history to calibrate (caller falls back to defaults)."""
     try:
-        df = client.get_rates(symbol, "5min", _TUNE_BARS)
+        df = client.get_rates(symbol, 5, _TUNE_BARS)
     except Exception:
         df = None
     if df is None or len(df) < 120:
@@ -173,7 +173,11 @@ def tune(symbol: str, client, logger=None) -> dict:
 def get_pull_params(symbol: str, client, logger=None, cfg=None) -> dict:
     """Return tuned params for `symbol`, using explicit SYMBOL_PULL_PARAMS when
     present, else a cached/refreshed auto-tune. Falls back to SCANNER_* defaults
-    if calibration is impossible."""
+    if calibration is impossible.
+
+    Cache is keyed by (symbol, is_demo) so demo-derived params never leak to
+    live bots or vice versa — demo and live charts have different ticks and
+    pullback characteristics."""
     import config as cfg_mod
     cfg = cfg or cfg_mod
     explicit = dict(getattr(cfg, "SYMBOL_PULL_PARAMS", {}).get(symbol, {}) or {})
@@ -181,19 +185,25 @@ def get_pull_params(symbol: str, client, logger=None, cfg=None) -> dict:
         return explicit
     if not getattr(cfg, "PULL_AUTO_TUNE_ENABLED", True):
         return {}
+    is_demo = getattr(client, "demo", True)
+    cache_key = (symbol, is_demo)
     now = time.time()
-    cached = _CACHE.get(symbol)
+    cached = _CACHE.get(cache_key)
     if cached is not None and now - cached[0] < _TUNE_TTL:
         return cached[1]
     params = tune(symbol, client, logger)
     if params is None:
         return {}
-    _CACHE[symbol] = (now, params)
+    _CACHE[cache_key] = (now, params)
     return params
 
 
-def clear_cache(symbol: str = None) -> None:
-    if symbol is None:
+def clear_cache(symbol: str = None, is_demo: bool = None) -> None:
+    if symbol is None and is_demo is None:
         _CACHE.clear()
+    elif symbol is None:
+        _CACHE = {k: v for k, v in _CACHE.items() if k[1] != is_demo}
+    elif is_demo is None:
+        _CACHE = {k: v for k, v in _CACHE.items() if k[0] != symbol}
     else:
-        _CACHE.pop(symbol, None)
+        _CACHE.pop((symbol, is_demo), None)

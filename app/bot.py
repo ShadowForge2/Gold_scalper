@@ -143,6 +143,8 @@ class Bot:
         self.symbol: str = first_sym
         self.magic: int = cfg.MAGIC_NUMBER
         self._running = False
+        self._lot_multiplier_override: Optional[float] = None  # per-bot, not global cfg
+        self.is_demo: bool = True  # set to False by initialize() or initialize_with_credentials()
 
         self._current_signal: Optional[Dict] = None
         self._last_tick: Optional[Dict] = None
@@ -231,12 +233,18 @@ class Bot:
     async def initialize(self) -> bool:
         n_cfg = len(self.symbols)
         scanner_on = bool(getattr(cfg, "SCANNER_ENABLED", False))
+        self.is_demo = cfg.CAPITAL_DEMO
         self.logger.info(
             f"Initializing multi-symbol pull-into-H1 scalper (whole-board scanner) — "
             f"{n_cfg} configured symbol(s), board scanner {'ENABLED' if scanner_on else 'disabled'}, "
             f"auto-tune {'ON' if getattr(cfg, 'PULL_AUTO_TUNE_ENABLED', True) else 'OFF'}"
         )
         self.logger.info(f"Config: LOT_MULTIPLIER={cfg.LOT_MULTIPLIER}")
+        self.logger.warning(
+            f"*** ACCOUNT TYPE: {'DEMO' if cfg.CAPITAL_DEMO else 'LIVE'} *** "
+            f"Signals computed from {'DEMO' if cfg.CAPITAL_DEMO else 'LIVE'} chart data. "
+            f"Base URL: {'demo-api-capital' if cfg.CAPITAL_DEMO else 'api-capital'}.backend-capital.com"
+        )
 
         self.logger.info("Broker: Capital.com (REST API)")
         self.client = CapitalClient()
@@ -285,10 +293,16 @@ class Bot:
 
     async def initialize_with_credentials(self, api_key: str, identifier: str, password: str, demo: bool = True) -> bool:
         self._creds = {"api_key": api_key, "identifier": identifier, "password": password, "demo": demo}
+        self.is_demo = demo
         self.client = CapitalClient()
         if self.scanner is not None:
             self.scanner.client = self.client
-        self.logger.info("Connecting to Capital.com...")
+        self.logger.info(f"Connecting to Capital.com — account type: {'DEMO' if demo else 'LIVE'}")
+        self.logger.warning(
+            f"*** ACCOUNT TYPE: {'DEMO' if demo else 'LIVE'} *** "
+            f"Signals computed from {'DEMO' if demo else 'LIVE'} chart data. "
+            f"Base URL: {'demo-api-capital' if demo else 'api-capital'}.backend-capital.com"
+        )
         success = self.client.initialize(
             api_key=api_key,
             identifier=identifier,
@@ -570,13 +584,14 @@ class Bot:
                 self.state = self.STATES["STOPPED"]
                 self._running = False
                 return
+
         if getattr(self, '_shutdown_deadline', None) and now_t > self._shutdown_deadline:
-                if pnl_data["open_count"] > 0:
-                    self.logger.warning(
-                        f"Shutdown deadline passed, force-closing {pnl_data['open_count']} position(s)"
-                    )
-                    for pos_data in self.trade_executor.close_all_bot_positions():
-                        self.position_manager.note_closed(pos_data, exit_reason="shutdown")
+            if pnl_data["open_count"] > 0:
+                self.logger.warning(
+                    f"Shutdown deadline passed, force-closing {pnl_data['open_count']} position(s)"
+                )
+                for pos_data in self.trade_executor.close_all_bot_positions():
+                    self.position_manager.note_closed(pos_data, exit_reason="shutdown")
 
         if not self.client.is_connected():
             now_t = time.time()
@@ -835,6 +850,8 @@ class Bot:
             return
 
         if self._winding_down:
+            if state == self.STATES["IN_TRADE"]:
+                await self._handle_in_trade(sym, pnl_data)
             return
 
         # Per-symbol balance gate: each symbol only trades once balance reaches
@@ -1368,7 +1385,7 @@ class Bot:
 
         self.scaler.update_peak(balance)
 
-        lot = self.scaler.get_lot(balance, symbol=sym)
+        lot = self.scaler.get_lot(balance, symbol=sym, lot_multiplier=self._lot_multiplier_override)
         vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
         lot = round(lot / vol_step) * vol_step
         lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), min(lot, fresh_info.get("volume_max", cfg.MAX_LOT)))
@@ -1487,7 +1504,7 @@ class Bot:
         fresh_acct = self.client.get_account_info()
         if fresh_acct:
             self.scaler.update_peak(fresh_acct["balance"])
-        self.position_manager.refresh()
+        self.position_manager.refresh(symbols=list(self.symbols) + [sym])
 
         if any_opened:
             self._symbol_states[sym] = self.STATES["IN_TRADE"]
@@ -1554,6 +1571,7 @@ class Bot:
 
         return {
             "state": self.state,
+            "is_demo": self.is_demo,
             "symbol": self.symbol,
             "symbol_states": dict(self._symbol_states),
             "magic": self.magic,
@@ -1613,7 +1631,7 @@ class Bot:
         clamped = {}
         if "lot_multiplier" in settings:
             clamped["lot_multiplier"] = max(0.1, min(float(settings["lot_multiplier"]), 100.0))
-            cfg.LOT_MULTIPLIER = clamped["lot_multiplier"]
+            self._lot_multiplier_override = clamped["lot_multiplier"]
         if "max_spread_pips" in settings:
             clamped["max_spread_pips"] = max(1.0, min(float(settings["max_spread_pips"]), 500.0))
             self.risk_manager.max_spread = clamped["max_spread_pips"]

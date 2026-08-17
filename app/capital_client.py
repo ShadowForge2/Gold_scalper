@@ -268,7 +268,7 @@ class CapitalClient:
             self.demo = demo
         else:
             self.demo = "demo" in server.lower() if server else self.demo
-        return self.initialize(api_key or self.api_key, account, password)
+        return self.initialize(api_key or self.api_key, account, password, demo=self.demo)
 
     def last_error(self) -> Tuple[int, str]:
         return 0, self._last_order_error or "No error"
