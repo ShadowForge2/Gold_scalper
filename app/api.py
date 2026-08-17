@@ -387,30 +387,19 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                         "action_required": "stop_bot",
                     })
 
-        temp = CapitalClient()
-        ok = temp.initialize(api_key=data.api_key, identifier=ident, password=data.password, demo=data.demo)
-        hint = temp.last_error_hint()
-        last_err = temp.last_error()
-        err_msg = str(last_err[1]) if last_err and len(last_err) > 1 else str(last_err or "")
-        temp.shutdown()
+        def _validate_creds():
+            c = CapitalClient()
+            c._timeout = 10
+            ok = c.initialize(api_key=data.api_key, identifier=ident, password=data.password, demo=data.demo)
+            hint = c.last_error_hint()
+            last_err = c.last_error()
+            err_msg = str(last_err[1]) if last_err and len(last_err) > 1 else str(last_err or "")
+            c.shutdown()
+            return ok, hint, err_msg
+
+        ok, hint, err_msg = await asyncio.to_thread(_validate_creds)
         if not ok:
             logger.warning("Capital.com auth failed for %s with demo=%s: %s", ident, data.demo, err_msg)
-            # Diagnostic: try the opposite mode (same credentials often work on
-            # both demo and live). If it succeeds, the user picked the wrong toggle.
-            temp2 = CapitalClient()
-            ok2 = temp2.initialize(api_key=data.api_key, identifier=ident, password=data.password, demo=not data.demo)
-            last_err2 = temp2.last_error()
-            err2 = str(last_err2[1]) if last_err2 and len(last_err2) > 1 else str(last_err2 or "")
-            temp2.shutdown()
-            if ok2:
-                logger.warning("DIAG: %s works with demo=%s (opposite of what user selected)", ident, not data.demo)
-                hint = (
-                    f"Your credentials are valid for the "
-                    f"{'LIVE' if not data.demo else 'DEMO'} account, but you selected "
-                    f"{'DEMO' if data.demo else 'LIVE'}. Switch the account type toggle."
-                )
-            else:
-                logger.warning("DIAG: %s also fails with demo=%s: %s", ident, not data.demo, err2)
 
             lockout = await _auth_record_failure(key)
             content = {
@@ -437,15 +426,25 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         for acct in dev.get("accounts", []):
             if acct["identifier"].strip().lower() == ident and acct.get("active") and bot_pool and not bot_pool.is_running(ident):
                 bot_pool.add_log(ident, "Account was previously active — auto-starting...", "INFO")
-                bot_pool.start(identifier=ident, api_key=data.api_key, password=data.password, demo=data.demo)
+                await asyncio.to_thread(
+                    bot_pool.start,
+                    identifier=ident, api_key=data.api_key,
+                    password=data.password, demo=data.demo,
+                    skip_validation=True,
+                )
                 await set_account_active(ident, True)
                 if not data.demo:
                     bal = 0.0
-                    tc = CapitalClient()
-                    if tc.initialize(api_key=data.api_key, identifier=ident, password=data.password, demo=False):
-                        bi = tc.get_account_info()
-                        if bi: bal = bi.get("balance", 0.0)
+                    def _auto_balance():
+                        tc = CapitalClient()
+                        tc._timeout = 10
+                        if tc.initialize(api_key=data.api_key, identifier=ident, password=data.password, demo=False):
+                            bi = tc.get_account_info()
+                            tc.shutdown()
+                            return bi.get("balance", 0.0) if bi else 0.0
                         tc.shutdown()
+                        return 0.0
+                    bal = await asyncio.to_thread(_auto_balance)
                     await start_trial(ident, bal)
                 break
         return {"success": True, "accounts": [sanitize_account(a) for a in (dev.get("accounts") or [])]}
@@ -500,34 +499,40 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             api_key=acct["api_key"],
             password=acct["password"],
             demo=demo,
+            skip_validation=True,
         )
         if result["success"]:
             await set_account_active(ident, True)
             if not demo:
-                bal = 0.0
-                temp_client = CapitalClient()
-                if temp_client.initialize(
-                    api_key=acct["api_key"],
-                    identifier=acct["identifier"],
-                    password=acct["password"],
-                    demo=demo,
-                ):
-                    info = temp_client.get_account_info()
-                    if info:
-                        bal = info.get("balance", 0.0)
-                    temp_client.shutdown()
-                trial_created = await start_trial(ident, bal)
-                sub = await get_subscription(ident, bal)
-                if trial_created and sub.get("trial_end"):
-                    _fire_async(email_service.email_billing_welcome(ident, sub.get("trial_end") or ""))
-                dr = sub.get("days_remaining", 30)
-                bot_pool.add_log(ident, f"Live bot started. Trial active: {dr} day(s) remaining.", "INFO")
-                if dr <= 3:
-                    bot_pool.add_log(ident, f"Trial ending soon ({dr} day(s)). Subscribe to keep trading.", "WARNING")
-                current_profit = sub.get("current_month_profit", 0)
-                current_fee = sub.get("current_month_fee", 0)
-                if current_fee > 0:
-                    bot_pool.add_log(ident, f"Monthly profit: ${current_profit:.2f}. Fee due: ${current_fee:.2f}.", "INFO")
+                async def _post_start_live():
+                    def _fetch_balance():
+                        tc = CapitalClient()
+                        tc._timeout = 10
+                        if tc.initialize(
+                            api_key=acct["api_key"],
+                            identifier=acct["identifier"],
+                            password=acct["password"],
+                            demo=demo,
+                        ):
+                            info = tc.get_account_info()
+                            tc.shutdown()
+                            return info.get("balance", 0.0) if info else 0.0
+                        tc.shutdown()
+                        return 0.0
+                    bal = await asyncio.to_thread(_fetch_balance)
+                    trial_created = await start_trial(ident, bal)
+                    sub = await get_subscription(ident, bal)
+                    if trial_created and sub.get("trial_end"):
+                        _fire_async(email_service.email_billing_welcome(ident, sub.get("trial_end") or ""))
+                    dr = sub.get("days_remaining", 30)
+                    bot_pool.add_log(ident, f"Live bot started. Trial active: {dr} day(s) remaining.", "INFO")
+                    if dr <= 3:
+                        bot_pool.add_log(ident, f"Trial ending soon ({dr} day(s)). Subscribe to keep trading.", "WARNING")
+                    current_profit = sub.get("current_month_profit", 0)
+                    current_fee = sub.get("current_month_fee", 0)
+                    if current_fee > 0:
+                        bot_pool.add_log(ident, f"Monthly profit: ${current_profit:.2f}. Fee due: ${current_fee:.2f}.", "INFO")
+                _fire_async(_post_start_live())
             else:
                 bot_pool.add_log(ident, "Demo bot started. Unlimited free usage.", "INFO")
             bot_pool.add_log(ident, "Credentials connected successfully.", "INFO")
@@ -597,6 +602,32 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         ident = accounts[0]["identifier"]
         logs = bot_pool.get_logs(ident)
         return {"logs": logs}
+
+    @app.get("/api/device/bot/connection-status")
+    async def device_bot_connection_status(device_id: str = Header(None, alias="X-Device-Id")):
+        """Lightweight connection check — no Capital.com calls, reads bot state only."""
+        did = device_id or "unknown"
+        if bot_pool is None:
+            return {"connected": False, "connecting": False, "error": "Bot pool not available", "broker": "Capital.com"}
+        dev = await get_device(did)
+        if not dev or not dev.get("accounts"):
+            return {"connected": False, "connecting": False, "error": "No account configured", "broker": "Capital.com"}
+        ident = dev["accounts"][0]["identifier"]
+        running = await asyncio.to_thread(bot_pool.is_running, ident)
+        if not running:
+            return {"connected": False, "connecting": False, "error": None, "broker": "Capital.com"}
+        state = await asyncio.to_thread(bot_pool.get_state, ident)
+        if state is None:
+            return {"connected": False, "connecting": True, "error": None, "broker": "Capital.com"}
+        account = state.get("account") or {}
+        has_error = account.get("error") is not None
+        bot_data = state.get("bot") or {}
+        bot_state = bot_data.get("state", "")
+        if has_error:
+            return {"connected": False, "connecting": False, "error": account.get("error", "Connection lost"), "broker": "Capital.com"}
+        if bot_state in ("STOPPED",):
+            return {"connected": False, "connecting": False, "error": "Bot stopped", "broker": "Capital.com"}
+        return {"connected": True, "connecting": False, "error": None, "broker": "Capital.com"}
 
     # ── Device Bot Config ───────────────────────────────────────
     @app.get("/api/device/bot/config")

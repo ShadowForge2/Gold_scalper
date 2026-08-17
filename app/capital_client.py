@@ -157,7 +157,7 @@ class CapitalClient:
         """Map Capital login errors to actionable, human-readable messages."""
         known = {
             "error.invalid.api-key": "The API key is invalid or was revoked. Generate a new key in Capital.com → Settings → API integrations.",
-            "error.invalid.details": "The identifier or password is incorrect. Double-check them, and verify the account type (Demo/Live) is right.",
+            "error.invalid.details": "The identifier or password is incorrect. Capital.com uses the same credentials for demo and live — double-check your email and API key password.",
             "error.invalid.identifier": "No Capital.com account matches this identifier/email.",
             "error.invalid.password": "The password is incorrect.",
             "error.account.disabled": "This Capital.com account is disabled. Contact Capital.com support.",
@@ -172,7 +172,7 @@ class CapitalClient:
         if "invalid" in lowered:
             return "The identifier or password is incorrect for this account type."
         if status == 401:
-            return "Authentication failed — check the identifier, password, and account type (Demo/Live)."
+            return "Authentication failed — check your email and API key password (same for demo and live)."
         if status == 403:
             return "Access denied by Capital.com. The API key may lack trading permissions or the account is restricted."
         if status in (429, 502, 503, 504):

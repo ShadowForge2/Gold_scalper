@@ -31,18 +31,20 @@ class BotPool:
         self._state_cache_ts: Dict[str, float] = {}
         os.makedirs(STATE_DIR, exist_ok=True)
 
-    def start(self, identifier: str, api_key: str, password: str, demo: bool = True) -> Dict:
+    def start(self, identifier: str, api_key: str, password: str, demo: bool = True,
+              skip_validation: bool = False) -> Dict:
         ident = _fmt_id(identifier)
         with self._lock:
             if ident in self._bots:
                 return {"success": False, "error": "Bot already running for this account"}
 
-        temp = CapitalClient()
-        ok = temp.initialize(api_key=api_key, identifier=identifier, password=password, demo=demo)
-        err_msg = temp.last_error()[1] if not ok else ""
-        temp.shutdown()
-        if not ok:
-            return {"success": False, "error": f"Broker authentication failed: {err_msg}"}
+        if not skip_validation:
+            temp = CapitalClient()
+            ok = temp.initialize(api_key=api_key, identifier=identifier, password=password, demo=demo)
+            err_msg = temp.last_error()[1] if not ok else ""
+            temp.shutdown()
+            if not ok:
+                return {"success": False, "error": f"Broker authentication failed: {err_msg}"}
 
         with self._lock:
             if ident in self._bots:
