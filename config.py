@@ -292,12 +292,12 @@ PULL_SYMBOL_ROUND_TRIP = {
     "US30": _env_float("PULL_ROUND_TRIP_US30", 2.00),
 }
 PULL_SYMBOL_DEFAULTS = {
-    "XAUUSD": dict(pull_r=0.40, trail_r=0.35, max_hold=8),
-    "US100": dict(pull_r=0.40, trail_r=0.20, max_hold=8),
+    "XAUUSD": dict(pull_r=0.30, trail_r=0.15, max_hold=12),
+    "US100": dict(pull_r=0.30, trail_r=0.50, max_hold=6),
     "JP225": dict(pull_r=0.30, trail_r=0.35, max_hold=24),
     "DE40": dict(pull_r=0.30, trail_r=0.50, max_hold=24),
     "US500": dict(pull_r=0.30, trail_r=0.35, max_hold=24),
-    "US30": dict(pull_r=0.40, trail_r=0.50, max_hold=4),
+    "US30": dict(pull_r=0.30, trail_r=0.35, max_hold=24),
 }
 # "Daily profit bot" guards (per symbol, R in entry ATR units, UTC midnight
 # rollover): stop NEW entries once the day's net R reaches the target (lock in

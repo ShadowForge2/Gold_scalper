@@ -88,23 +88,23 @@ services:
       - key: PULL_US30
         value: "true"
       - key: PULL_PULL_R_XAUUSD
-        value: "0.40"
+        value: "0.30"
       - key: PULL_TRAIL_R_XAUUSD
-        value: "0.35"
+        value: "0.15"
       - key: PULL_MAX_HOLD_XAUUSD
-        value: "8"
+        value: "12"
       - key: PULL_PULL_R_US100
-        value: "0.40"
+        value: "0.30"
       - key: PULL_TRAIL_R_US100
-        value: "0.20"
-      - key: PULL_MAX_HOLD_US100
-        value: "8"
-      - key: PULL_PULL_R_US30
-        value: "0.40"
-      - key: PULL_TRAIL_R_US30
         value: "0.50"
+      - key: PULL_MAX_HOLD_US100
+        value: "6"
+      - key: PULL_PULL_R_US30
+        value: "0.30"
+      - key: PULL_TRAIL_R_US30
+        value: "0.35"
       - key: PULL_MAX_HOLD_US30
-        value: "4"
+        value: "24"
       - key: PULL_DAILY_TARGET_R_US30
         value: "3.0"
       - key: PULL_DAILY_MAX_LOSS_R_US30

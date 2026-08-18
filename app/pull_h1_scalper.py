@@ -295,9 +295,11 @@ class PullPrevH1Scalper:
         # Tight trailing: never give back more than GIVEBACK_CAP of the peak
         # profit the trade has touched (measured from the current price, so the
         # stop rises with the run and locks in the bulk of a spike).
-        if self._peak_profit > 0 and cur <= self._peak_profit * (1 - self.giveback_cap):
-            self._pending = {"type": "exit", "reason": "giveback_cap", "price": bc}
-            return
+        # DISABLED — backtests showed giveback_cap kills winners too early.
+        # The trail_r exit already handles retracement protection.
+        # if self._peak_profit > 0 and cur <= self._peak_profit * (1 - self.giveback_cap):
+        #     self._pending = {"type": "exit", "reason": "giveback_cap", "price": bc}
+        #     return
         if wave > 0 and back >= self.trail_r * wave:
             self._pending = {"type": "exit", "reason": "trail", "price": bc}
         elif self._hold >= self.max_hold_bars:
