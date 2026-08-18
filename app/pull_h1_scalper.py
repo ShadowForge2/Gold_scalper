@@ -325,7 +325,7 @@ class PullPrevH1Scalper:
         p = self._pending
         if p is None or p.get("type") != "exit":
             return
-        px = float(p.get("price", exit_price or self._last_m5_close or 0.0))
+        px = float(p.get("price", 0.0) or exit_price or self._last_m5_close or 0.0)
         if px and self._pos != 0 and self._atr_entry > 0:
             gross = (px - self._entry) * self._pos / self._atr_entry
             r = gross - (self.round_trip_price / self._atr_entry)

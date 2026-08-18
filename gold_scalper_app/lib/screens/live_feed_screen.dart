@@ -11,8 +11,21 @@ class LiveFeedScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<BotProvider>(
       builder: (context, bp, _) {
-        if (bp.loading) {
-          return const Center(child: CircularProgressIndicator(color: kGold));
+        if (bp.loading || !bp.dataLoaded) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: kGold),
+                ),
+                const SizedBox(height: 12),
+                const Text('Loading trades...', style: TextStyle(color: Colors.white54, fontSize: 13)),
+              ],
+            ),
+          );
         }
 
         if (bp.recentTrades.isEmpty) {

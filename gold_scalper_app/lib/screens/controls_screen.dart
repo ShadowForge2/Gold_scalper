@@ -91,6 +91,9 @@ class _ControlsScreenState extends State<ControlsScreen> {
 
   Widget _buildBotControlCard(BuildContext context, s, BotProvider bp) {
     final isRunning = s != null && s.status == 'running';
+    final isConnecting = bp.connecting;
+    final progressText = bp.startProgress;
+    final connectionError = bp.connectionError;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -108,22 +111,55 @@ class _ControlsScreenState extends State<ControlsScreen> {
         children: [
           Row(
             children: [
-              StatusIndicator(active: isRunning, label: isRunning ? 'Running' : 'Stopped', size: 14),
+              StatusIndicator(
+                active: isRunning || isConnecting,
+                label: isConnecting
+                    ? 'Connecting...'
+                    : isRunning
+                        ? 'Running'
+                        : 'Stopped',
+                size: 14,
+              ),
               const Spacer(),
-              if (s != null) Text(s.state.replaceAll('_', ' '), style: const TextStyle(color: kTextSecondary)),
+              if (s != null && !isConnecting) Text(s.state.replaceAll('_', ' '), style: const TextStyle(color: kTextSecondary)),
+              if (isConnecting && progressText != null)
+                Text(progressText, style: const TextStyle(color: kGold, fontSize: 12)),
             ],
           ),
           const SizedBox(height: 20),
+          if (connectionError != null && !isRunning) ...[
+            Container(
+              padding: const EdgeInsets.all(10),
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 14),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      connectionError,
+                      style: const TextStyle(color: Colors.redAccent, fontSize: 12, height: 1.3),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               if (!isRunning)
                 ElevatedButton.icon(
-                  onPressed: _isStarting ? null : hapt(() => _startBot(context, bp)),
-                  icon: _isStarting
+                  onPressed: (_isStarting || isConnecting) ? null : hapt(() => _startBot(context, bp)),
+                  icon: (_isStarting || isConnecting)
                       ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.play_arrow),
-                  label: Text(_isStarting ? 'Starting...' : 'Start Bot'),
+                  label: Text(isConnecting ? 'Connecting...' : _isStarting ? 'Starting...' : 'Start Bot'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green,
                     foregroundColor: Colors.white,

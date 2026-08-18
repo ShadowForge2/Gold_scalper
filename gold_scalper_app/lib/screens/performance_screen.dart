@@ -22,14 +22,36 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
   Widget build(BuildContext context) {
     return Consumer<BotProvider>(
       builder: (context, bp, _) {
-        if (bp.loading) {
-          return const Center(child: CircularProgressIndicator(color: kGold));
+        if (bp.loading || !bp.dataLoaded) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: kGold),
+                ),
+                const SizedBox(height: 12),
+                const Text('Loading performance data...', style: TextStyle(color: Colors.white54, fontSize: 13)),
+              ],
+            ),
+          );
         }
 
         final perf = bp.performance;
         if (perf == null) {
           return Center(
-            child: Text('No data', style: TextStyle(color: kTextSecondary)),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.bar_chart_rounded, size: 48, color: Colors.grey[700]),
+                const SizedBox(height: 12),
+                Text('No performance data yet', style: TextStyle(color: kTextSecondary, fontSize: 14)),
+                const SizedBox(height: 4),
+                Text('Data will appear once the bot starts trading', style: TextStyle(color: kTextSecondary, fontSize: 12)),
+              ],
+            ),
           );
         }
 

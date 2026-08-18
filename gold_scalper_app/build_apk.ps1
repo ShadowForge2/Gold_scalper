@@ -4,7 +4,7 @@ $CustomBuildDir = "C:\GoldScalperBuild"
 Write-Host "Building Gold Scalper APK..." -ForegroundColor Cyan
 
 # Run Flutter build (Gradle output redirected to C:\GoldScalperBuild)
-$output = & flutter build apk --debug 2>&1
+$output = & flutter build apk --release 2>&1
 $exitCode = $LASTEXITCODE
 
 if ($exitCode -eq 0) {
@@ -16,9 +16,9 @@ if ($exitCode -eq 0) {
 # Copy from custom build dir to Flutter-expected path
 Write-Host "Flutter build reported issue — copying APK from custom build dir..." -ForegroundColor Yellow
 
-$srcApk = Join-Path $CustomBuildDir "app\outputs\flutter-apk\app-debug.apk"
+$srcApk = Join-Path $CustomBuildDir "app\outputs\flutter-apk\app-release.apk"
 $dstDir = Join-Path $ProjectRoot "build\app\outputs\flutter-apk"
-$dstApk = Join-Path $dstDir "app-debug.apk"
+$dstApk = Join-Path $dstDir "app-release.apk"
 
 if (Test-Path $srcApk) {
     New-Item -ItemType Directory -Force -Path $dstDir | Out-Null

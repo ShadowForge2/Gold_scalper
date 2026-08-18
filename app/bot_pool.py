@@ -171,15 +171,16 @@ class BotPool:
 
     def list(self) -> List[Dict]:
         with self._lock:
-            result = []
-            for ident, bot in self._bots.items():
-                state = self.get_state(ident)
-                result.append({
-                    "identifier": ident,
-                    "running": True,
-                    "state": (state or {}).get("state", "UNKNOWN"),
-                })
-            return result
+            idents = list(self._bots.keys())
+        result = []
+        for ident in idents:
+            state = self.get_state(ident)
+            result.append({
+                "identifier": ident,
+                "running": True,
+                "state": (state or {}).get("state", "UNKNOWN"),
+            })
+        return result
 
     async def emergency_close(self, identifier: str) -> int:
         ident = _fmt_id(identifier)

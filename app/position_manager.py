@@ -88,8 +88,9 @@ class PositionManager:
             "in_event": self.in_event,
         }
 
-    def has_position(self, ticket: int) -> bool:
-        return any(p.get("ticket") == ticket for p in self.open_positions)
+    def has_position(self, ticket) -> bool:
+        ticket_str = str(ticket)
+        return any(str(p.get("ticket")) == ticket_str for p in self.open_positions)
 
     def get_total_volume(self) -> float:
         return sum(p.get("volume", 0) for p in self.open_positions)

@@ -21,6 +21,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
   bool _isDemo = true;
   bool _isEditing = false;
   bool _saving = false;
+  String? _saveProgress;
   late AnimationController _pulseCtrl;
   late Animation<double> _pulseAnim;
 
@@ -117,9 +118,15 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
     }
 
     final bp = context.read<BotProvider>();
-    setState(() => _saving = true);
+    setState(() {
+      _saving = true;
+      _saveProgress = 'Validating credentials...';
+    });
     final error = await bp.addAccount(apiKey, identifier, password, _isDemo);
-    if (mounted) setState(() => _saving = false);
+    if (mounted) setState(() {
+      _saving = false;
+      _saveProgress = null;
+    });
     if (error == null && mounted) {
       _savedApiKey = apiKey;
       _savedIdentifier = identifier;
@@ -332,13 +339,24 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
               child: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.black,
-                      ),
+                  ? Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.black,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _saveProgress ?? 'Saving...',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                      ],
                     )
                   : Text(
                       device.accountTied

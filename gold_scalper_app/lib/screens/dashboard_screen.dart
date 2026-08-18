@@ -54,6 +54,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           return const DashboardSkeleton();
         }
 
+        if (!bp.dataLoaded) {
+          return _buildLoadingState(bp);
+        }
+
         return RefreshIndicator(
           onRefresh: () async => bp.refresh(),
           child: ListView(
@@ -140,8 +144,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Widget _buildLoadingState(BotProvider bp) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(
+            width: 36,
+            height: 36,
+            child: CircularProgressIndicator(strokeWidth: 2.5, color: kGold),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Connecting to server...',
+            style: TextStyle(color: Colors.white70, fontSize: 15, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'This may take a moment on first load',
+            style: TextStyle(color: kTextSecondary, fontSize: 12),
+          ),
+          const SizedBox(height: 24),
+          GestureDetector(
+            onTap: hapt(() => bp.refresh()),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              decoration: BoxDecoration(
+                color: kGold.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: kGold.withValues(alpha: 0.3)),
+              ),
+              child: const Text(
+                'Retry',
+                style: TextStyle(color: kGold, fontSize: 13, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHeader(s, BotProvider bp) {
     final isBullish = s.bias == 'BULLISH' || s.bias == 'BUY';
+    final isConnecting = bp.connecting;
+    final connectionError = bp.connectionError;
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -196,7 +243,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                     const SizedBox(height: 2),
-                    StatusIndicator(active: s.connected, label: s.broker),
+                    StatusIndicator(
+                      active: s.connected || isConnecting,
+                      label: isConnecting
+                          ? 'Connecting...'
+                          : connectionError != null
+                              ? 'Error'
+                              : s.broker,
+                    ),
                   ],
                 ),
               ),
@@ -329,16 +383,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildStateBadge(s) {
+    final bp = context.read<BotProvider>();
+    final isConnecting = bp.connecting;
+    final connectionError = bp.connectionError;
+    final displayState = isConnecting ? 'CONNECTING' : s.state;
+    final displayColor = isConnecting
+        ? Colors.amber
+        : connectionError != null
+            ? Colors.red
+            : _stateColor(s.state);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: _stateColor(s.state).withValues(alpha: 0.1),
+        color: displayColor.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: _stateColor(s.state).withValues(alpha: 0.25)),
+        border: Border.all(color: displayColor.withValues(alpha: 0.25)),
       ),
-      child: Text(
-        s.state.replaceAll('_', ' '),
-        style: TextStyle(color: _stateColor(s.state), fontWeight: FontWeight.w700, fontSize: 9, letterSpacing: 0.6),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isConnecting)
+            const SizedBox(
+              width: 8, height: 8,
+              child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.amber),
+            ),
+          if (isConnecting) const SizedBox(width: 4),
+          Text(
+            displayState.replaceAll('_', ' '),
+            style: TextStyle(color: displayColor, fontWeight: FontWeight.w700, fontSize: 9, letterSpacing: 0.6),
+          ),
+        ],
       ),
     );
   }

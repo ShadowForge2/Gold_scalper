@@ -74,6 +74,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final bp = context.watch<BotProvider>();
     final inTrade = bp.state?.state == 'IN_TRADE';
+    final isConnecting = bp.connecting;
 
     final navTab = bp.navigateToTab;
     if (navTab != null && navTab != _currentIndex) {
@@ -144,6 +145,29 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         actions: [
+          if (isConnecting)
+            FadeInScale(
+              child: Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.amber.withValues(alpha: 0.2)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 7, height: 7,
+                      child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.amber),
+                    ),
+                    SizedBox(width: 5),
+                    Text('CONNECTING', style: TextStyle(color: Colors.amber, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                  ],
+                ),
+              ),
+            ),
           if (inTrade)
             FadeInScale(
               child: Container(

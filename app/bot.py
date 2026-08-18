@@ -465,7 +465,8 @@ class Bot:
                 self._symbol_pull_engine[sym] = eng
                 self._symbol_pull_entry[sym] = False
                 self._symbol_pull_cache_ts[sym] = 0.0
-                self._scanner_pull_syms.add(sym)
+                if eng is not None:
+                    self._scanner_pull_syms.add(sym)
                 self.logger.info(
                     f"[SCANNER] Armed general pull engine for {sym} "
                     f"(pull {eng.pull_r}R trail {eng.trail_r}R hold {eng.max_hold_bars})"
@@ -800,8 +801,8 @@ class Bot:
                     pos = sym_positions[0]
                     direction = pos.get("type", "BUY")
                     entry_price = pos.get("price_open", 0)
-                    broker_sl = pos.get("sl", 0)
-                    broker_tp = pos.get("tp", 0)
+                    broker_sl = pos.get("sl") or 0
+                    broker_tp = pos.get("tp") or 0
                     atr_val = 0.0
                     try:
                         m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, 500)
@@ -837,6 +838,14 @@ class Bot:
                         if pull_eng is not None:
                             pull_eng.adopt_position(direction, entry_price, atr=atr_val)
                             self._symbol_pull_entry[sym] = True
+                        else:
+                            self.logger.warning(
+                                f"[{sym}] Recovered position but pull engine missing — closing"
+                            )
+                            try:
+                                await self.trade_executor.close_all_bot_positions(symbol=sym)
+                            except Exception:
+                                pass
                     self.logger.info(
                         f"[{sym}] Reconstructed signal: {direction} entry={entry_price:.2f} "
                         f"sl={sl:.2f} tp={tp if tp else 'n/a'} atr={atr_val:.2f} type=pull"
@@ -1443,7 +1452,7 @@ class Bot:
         self.scaler.update_peak(balance)
 
         lot = self.scaler.get_lot(balance, symbol=sym, lot_multiplier=self._lot_multiplier_override)
-        vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
+        vol_step = max(fresh_info.get("volume_step", cfg.LOT_STEP) or cfg.LOT_STEP, cfg.LOT_STEP)
         lot = round(lot / vol_step) * vol_step
         lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), min(lot, fresh_info.get("volume_max", cfg.MAX_LOT)))
 
@@ -1487,8 +1496,8 @@ class Bot:
             contract_size = fresh_info.get("contract_size", 1)
             leverage = self.client.get_leverage_for_class(fresh_info.get("asset_class", "COMMODITIES"))
             notional_per_lot = contract_size * current_price
-            max_lot_by_margin = free_margin * 0.9 / (notional_per_lot / max(1.0, leverage))
-            vol_step = fresh_info.get("volume_step", cfg.LOT_STEP)
+            max_lot_by_margin = free_margin * 0.8 / (notional_per_lot / max(1.0, leverage or 1.0))
+            vol_step = max(fresh_info.get("volume_step", cfg.LOT_STEP) or cfg.LOT_STEP, cfg.LOT_STEP)
             max_lot_by_margin = round(max_lot_by_margin / vol_step) * vol_step
             max_lot_by_margin = max(fresh_info.get("volume_min", cfg.MIN_LOT), max_lot_by_margin)
             if max_lot_by_margin < lot:

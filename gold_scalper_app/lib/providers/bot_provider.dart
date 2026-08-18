@@ -22,6 +22,7 @@ class BotProvider extends ChangeNotifier {
 
   bool _initialized = false;
   bool _backendReady = false;
+  bool _dataLoaded = false;
 
   BotState? _state;
   List<Trade> _recentTrades = [];
@@ -40,6 +41,11 @@ class BotProvider extends ChangeNotifier {
   bool _highlightCredentials = false;
   bool _subscriptionBlocked = false;
   bool _navigateToSubscription = false;
+
+  bool _connecting = false;
+  String? _connectionError;
+  String? _startProgress;
+  Timer? _connectionStatusTimer;
 
   List<NotificationItem> _notifications = [];
   int _unreadCount = 0;
@@ -73,6 +79,7 @@ class BotProvider extends ChangeNotifier {
   List<EquityPoint> get monthlyCurve => _monthlyCurve;
   List<LogEntry> get logs => _logs;
   bool get loading => _loading;
+  bool get dataLoaded => _dataLoaded;
   bool get botRunning => _botRunning;
   Map<String, dynamic> get subscription => _subscription;
   bool get canTrade => _subscription['can_trade'] == true;
@@ -94,6 +101,9 @@ class BotProvider extends ChangeNotifier {
   int get unreadCount => _unreadCount;
   EmailPrefs get emailPrefs => _emailPrefs;
   bool get emailPermissionPending => _emailPermissionPending;
+  bool get connecting => _connecting;
+  String? get connectionError => _connectionError;
+  String? get startProgress => _startProgress;
 
   Future<void> _resolveUrl() async {
     for (final url in _baseUrls) {
@@ -122,7 +132,8 @@ class BotProvider extends ChangeNotifier {
     return h;
   }
 
-  static const _timeout = Duration(seconds: 10);
+  static const _timeout = Duration(seconds: 20);
+  static const _longTimeout = Duration(seconds: 45);
 
   Map<String, dynamic> _decodeMap(String body) {
     try {
@@ -215,6 +226,73 @@ class BotProvider extends ChangeNotifier {
     }
   }
 
+  Future<Map<String, dynamic>> _postLong(
+      String path, Map<String, dynamic> body, {bool retried = false}) async {
+    final url = baseUrl;
+    try {
+      final r = await _client.post(
+        Uri.parse('$url$path'),
+        headers: _device.headers,
+        body: jsonEncode(body),
+      ).timeout(_longTimeout);
+      final data = _decodeMap(r.body);
+      if (r.statusCode == 200) return data;
+      throw Exception('POST $path: ${data['error'] ?? r.body}');
+    } catch (e) {
+      debugPrint('_postLong $path failed: $e');
+      if (!retried) {
+        await _resolveUrl();
+        return _postLong(path, body, retried: true);
+      }
+      throw Exception(_networkError(e));
+    }
+  }
+
+  Future<Map<String, dynamic>> _fetchConnectionStatus() async {
+    try {
+      return await _get('/api/device/bot/connection-status');
+    } catch (e) {
+      debugPrint('_fetchConnectionStatus failed: $e');
+      return {'connected': false, 'connecting': false, 'error': null, 'broker': null};
+    }
+  }
+
+  void _startConnectionPolling({required Duration interval, int maxPolls = 30}) {
+    _connectionStatusTimer?.cancel();
+    int polls = 0;
+    _connectionStatusTimer = Timer.periodic(interval, (timer) {
+      polls++;
+      if (polls > maxPolls) {
+        timer.cancel();
+        return;
+      }
+      _pollConnectionStatus();
+    });
+  }
+
+  Future<void> _pollConnectionStatus() async {
+    try {
+      final status = await _fetchConnectionStatus();
+      final connected = status['connected'] == true;
+      final error = status['error'] as String?;
+      if (connected) {
+        _connecting = false;
+        _connectionError = null;
+        _connectionStatusTimer?.cancel();
+        addLog('Connected to Capital.com', level: 'TRADE');
+        notifyListeners();
+      } else if (error != null) {
+        _connecting = false;
+        _connectionError = error;
+        _connectionStatusTimer?.cancel();
+        addLog('Connection failed: $error', level: 'ERROR');
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('_pollConnectionStatus error: $e');
+    }
+  }
+
   Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
@@ -222,17 +300,17 @@ class BotProvider extends ChangeNotifier {
     await _loadConfig();
     notifyListeners();
 
-    await _fetchAll();
-    _subscribeRealtimeNotifications();
-    _initFirebaseMessaging();
+    _fetchAll().whenComplete(() {
+      _subscribeRealtimeNotifications();
+      _initFirebaseMessaging();
+      _loading = false;
+      notifyListeners();
 
-    _loading = false;
-    notifyListeners();
-
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 5), (_) {
-      _tickLive().catchError((e) {
-        debugPrint('_tickLive unhandled: $e');
+      _timer?.cancel();
+      _timer = Timer.periodic(const Duration(seconds: 5), (_) {
+        _tickLive().catchError((e) {
+          debugPrint('_tickLive unhandled: $e');
+        });
       });
     });
   }
@@ -325,6 +403,7 @@ class BotProvider extends ChangeNotifier {
       _fetchNotifications(),
       _fetchEmailPrefs(),
     ]);
+    _dataLoaded = true;
   }
 
   Future<void> _fetchEmailPrefs() async {
@@ -573,11 +652,14 @@ class BotProvider extends ChangeNotifier {
         }),
       ]);
       final stateData = results[0];
-      if (stateData.isNotEmpty) {
+      if (stateData.isNotEmpty && stateData.containsKey('bot')) {
         _state = BotState.fromApiResponse(stateData);
         _botRunning = stateData['running'] == true;
-      } else {
+      } else if (stateData.isEmpty) {
         _state ??= _defaultState();
+      }
+      if (stateData.containsKey('running')) {
+        _botRunning = stateData['running'] == true;
       }
 
       final logData = results[1];
@@ -634,31 +716,43 @@ class BotProvider extends ChangeNotifier {
   }
 
   Future<bool> startBot() async {
+    _startProgress = 'Starting bot...';
+    _connectionError = null;
+    notifyListeners();
     addLog('Starting bot...');
     try {
       final accts = await getAccounts();
       if (accts.isEmpty) {
+        _startProgress = null;
         addLog('No account configured. Please add credentials first.', level: 'WARNING');
         notifyListeners();
         return false;
       }
       final demo = accts.isNotEmpty && accts.first['demo'] == true;
       if (!demo && !canTrade) {
+        _startProgress = null;
         _subscriptionBlocked = true;
         addLog('Please subscribe to continue using the service.', level: 'WARNING');
         requestSubscription();
         notifyListeners();
         return false;
       }
+      _startProgress = 'Connecting to Capital.com...';
+      notifyListeners();
       final result = await _startBotRequest();
       if (result['status'] == 'started') {
         _botRunning = true;
         _subscriptionBlocked = false;
-        addLog('Bot started successfully', level: 'TRADE');
+        _connecting = true;
+        _startProgress = 'Bot started, waiting for connection...';
+        addLog('Bot started, waiting for connection...', level: 'TRADE');
         await _device.markBotStarted();
+        _startConnectionPolling(interval: const Duration(seconds: 3), maxPolls: 20);
+        _startProgress = null;
         notifyListeners();
         return true;
       }
+      _startProgress = null;
       if (result['status'] == 'subscription_needed') {
         _subscriptionBlocked = true;
         addLog('Trial expired. Please subscribe to continue.', level: 'WARNING');
@@ -667,9 +761,12 @@ class BotProvider extends ChangeNotifier {
         return false;
       }
       addLog('Failed to start: ${result['error']}', level: 'ERROR');
+      _connectionError = result['error'];
       notifyListeners();
       return false;
     } catch (e) {
+      _startProgress = null;
+      _connectionError = _networkError(e);
       addLog('Failed to start bot: ${_networkError(e)}', level: 'ERROR');
       notifyListeners();
       return false;
@@ -683,7 +780,7 @@ class BotProvider extends ChangeNotifier {
         Uri.parse('$url/api/device/bot/start'),
         headers: _device.headers,
         body: jsonEncode({}),
-      ).timeout(_timeout);
+      ).timeout(_longTimeout);
       final data = jsonDecode(r.body);
       if (r.statusCode == 200) return {'status': 'started'};
       if (r.statusCode == 402) return {'status': 'subscription_needed'};
@@ -700,6 +797,10 @@ class BotProvider extends ChangeNotifier {
 
   Future<String?> stopBot() async {
     addLog('Stopping bot...', level: 'WARNING');
+    _connectionStatusTimer?.cancel();
+    _connecting = false;
+    _connectionError = null;
+    _startProgress = null;
     try {
       await _post('/api/device/bot/stop', {});
       _botRunning = false;
@@ -736,28 +837,35 @@ class BotProvider extends ChangeNotifier {
 
   Future<String?> addAccount(
       String apiKey, String identifier, String password, bool demo) async {
+    _connectionError = null;
+    _connecting = true;
+    notifyListeners();
     addLog('Saving account: $identifier');
     if (!_backendReady) {
       await _resolveUrl();
     }
     try {
       addLog('Connecting to $baseUrl...');
-      await _post('/api/device/accounts', {
+      await _postLong('/api/device/accounts', {
         'api_key': apiKey,
         'identifier': identifier,
         'password': password,
         'demo': demo,
       });
     } catch (e) {
+      _connecting = false;
       final clean = _networkError(e);
       addLog('Failed to save account: $clean', level: 'ERROR');
+      _connectionError = clean;
+      notifyListeners();
       return clean;
     }
     await _device.saveCredentialsTimestamp();
     addLog('Account saved: $identifier', level: 'TRADE');
-    await _fetchState(); // immediately pick up auto-started state
+    await _fetchState();
     await _fetchEmailPrefs();
     _emailPermissionPending = _emailPrefs.isNew && _emailPrefs.configured;
+    _connecting = false;
     notifyListeners();
     return null;
   }
@@ -844,6 +952,7 @@ class BotProvider extends ChangeNotifier {
   @override
   void dispose() {
     _timer?.cancel();
+    _connectionStatusTimer?.cancel();
     _realtimeChannel?.unsubscribe();
     _client.close();
     super.dispose();

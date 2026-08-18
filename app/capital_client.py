@@ -708,7 +708,7 @@ class CapitalClient:
             info = self.get_account_info()
             if info:
                 self._prev_balance = info.get("balance", 0)
-            self._daily_pnl_date = today
+                self._daily_pnl_date = today
 
         info = self.get_account_info()
         if info is None or self._prev_balance is None:
