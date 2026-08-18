@@ -106,19 +106,13 @@ services:
       - key: PULL_MAX_HOLD_US30
         value: "24"
       - key: PULL_DAILY_TARGET_R_US30
-        value: "3.0"
+        value: "0.0"
       - key: PULL_DAILY_MAX_LOSS_R_US30
-        value: "2.5"
+        value: "0.0"
       - key: PULL_GIVEBACK_CAP
         value: "0.30"
       - key: PULL_PUMP_ATR
         value: "0.5"
-      - key: MARGIN_BLOCK_ENABLED
-        value: "true"
-      - key: MARGIN_BLOCK_RETRY_SEC
-        value: "15"
-      - key: MARGIN_BLOCK_BUFFER
-        value: "1.05"
       - key: PULL_AUTO_TUNE_ENABLED
         value: "true"
       - key: PULL_AUTO_TUNE_BARS_M5

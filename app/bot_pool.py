@@ -207,7 +207,7 @@ class BotPool:
         if bot is None:
             return None
         return {
-            "LOT_MULTIPLIER": str(bot._lot_multiplier_override if bot._lot_multiplier_override is not None else cfg.LOT_MULTIPLIER),
+            "RISK_PCT": str(getattr(cfg, "RISK_PCT", 0.03)),
             "MAX_SPREAD_PIPS": str(cfg.MAX_SPREAD_PIPS),
             "MIN_BALANCE": str(cfg.MIN_BALANCE),
             "MAX_LOT": str(cfg.MAX_LOT),

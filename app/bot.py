@@ -12,7 +12,7 @@ import pandas as pd
 import config as cfg
 from app.logger import BotLogger
 from app.capital_client import CapitalClient
-from app.risk_manager import RiskManager, EquityScaler
+from app.risk_manager import RiskManager
 from app.trade_executor import TradeExecutor
 from app.position_manager import PositionManager
 from app.economic_calendar import EconomicCalendar
@@ -59,11 +59,7 @@ class Bot:
         self._symbol_states: Dict[str, str] = {}
         self._symbol_signals: Dict[str, Optional[Dict]] = {}
         self._symbol_event_start_ts: Dict[str, Optional[float]] = {}
-        self._symbol_consecutive_losses: Dict[str, int] = {}
-        self._symbol_last_loss_ts: Dict[str, float] = {}
-        self._symbol_regime_skipped: Dict[str, Optional[str]] = {}  # "high"|"normal"|None
         self._symbol_atr_history: Dict[str, list] = {}  # rolling ATR for vol detection
-        self._symbol_vol_regime: Dict[str, bool] = {}  # track current vol regime per symbol
         # Pull-into-H1 scalper per-symbol state
         self._symbol_pull_engine: Dict[str, Optional[object]] = {}  # PullPrevH1Scalper instances
         self._symbol_pull_entry: Dict[str, bool] = {}   # current trade is a pull entry
@@ -89,11 +85,7 @@ class Bot:
             self._symbol_states[sym] = self.STATES["IDLE"]
             self._symbol_signals[sym] = None
             self._symbol_event_start_ts[sym] = None
-            self._symbol_consecutive_losses[sym] = 0
-            self._symbol_last_loss_ts[sym] = 0.0
-            self._symbol_regime_skipped[sym] = None
             self._symbol_atr_history[sym] = []
-            self._symbol_vol_regime[sym] = False  # False = normal vol
             self._symbol_engine_failures[sym] = 0  # consecutive pull engine failures
 
             # ── Pull-into-H1 scalper engine (owns entry/exit when enabled) ──
@@ -130,22 +122,13 @@ class Bot:
         first_sym = self.symbols[0] if self.symbols else cfg.SYMBOL
 
         self.risk_manager = RiskManager()
-        self.scaler = EquityScaler()
-
-        # Global margin guard: once a NEW entry is rejected for insufficient
-        # margin, the bot stops firing further NEW entries across ALL symbols and
-        # only resumes once free margin recovers (e.g. an open position closed
-        # and freed margin). Open positions keep being managed/exited throughout.
-        self._margin_blocked: bool = False
-        self._margin_blocked_ts: float = 0.0        # last time we confirmed still blocked
-        self._margin_blocked_free: float = 0.0      # free margin snapshot when blocked
-        self._margin_block_last_log: float = 0.0    # throttle for the periodic "still blocked" log
 
         self.state: str = self.STATES["IDLE"]
         self.symbol: str = first_sym
         self.magic: int = cfg.MAGIC_NUMBER
         self._running = False
-        self._lot_multiplier_override: Optional[float] = None  # per-bot, not global cfg
+        self._starting_balance: Optional[float] = None
+        self._lot_multiplier_override: Optional[float] = None  # per-bot, kept for pool compat
         self.is_demo: bool = True  # set to False by initialize() or initialize_with_credentials()
 
         self._current_signal: Optional[Dict] = None
@@ -266,7 +249,8 @@ class Bot:
             self._reconnect_attempts = 0
             info = self.client.get_account_info()
             if info:
-                self.scaler.initialize(info["balance"])
+                if self._starting_balance is None:
+                    self._starting_balance = info["balance"]
                 self.logger.info(
                     f"Connected: {info['name']} | "
                     f"Balance: ${info['balance']:.2f} | "
@@ -318,7 +302,8 @@ class Bot:
             self._reconnect_attempts = 0
             info = self.client.get_account_info()
             if info:
-                self.scaler.initialize(info["balance"])
+                if self._starting_balance is None:
+                    self._starting_balance = info["balance"]
                 self.logger.info(f"Account connected ✓")
                 self.logger.info(
                     f"Balance: ${info['balance']:.2f} | "
@@ -446,11 +431,7 @@ class Bot:
                 self._symbol_states[sym] = self.STATES["IDLE"]
                 self._symbol_signals[sym] = None
                 self._symbol_event_start_ts[sym] = None
-                self._symbol_consecutive_losses[sym] = 0
-                self._symbol_last_loss_ts[sym] = 0.0
-                self._symbol_regime_skipped[sym] = None
                 self._symbol_atr_history[sym] = []
-                self._symbol_vol_regime[sym] = False
                 self._symbol_pull_engine[sym] = None
                 self._symbol_pull_entry[sym] = False
                 self._symbol_pull_cache_ts[sym] = 0.0
@@ -477,11 +458,7 @@ class Bot:
         self._symbol_states[sym] = self.STATES["IDLE"]
         self._symbol_signals[sym] = None
         self._symbol_event_start_ts[sym] = None
-        self._symbol_consecutive_losses[sym] = 0
-        self._symbol_last_loss_ts[sym] = 0.0
-        self._symbol_regime_skipped[sym] = None
         self._symbol_atr_history[sym] = []
-        self._symbol_vol_regime[sym] = False
         self._symbol_pull_engine[sym] = self._make_general_pull_engine(sym)
         self._symbol_pull_entry[sym] = False
         self._symbol_pull_cache_ts[sym] = 0.0
@@ -730,53 +707,6 @@ class Bot:
             "margin", "not enough", "insufficient", "available funds",
             "rejected_margin", "free margin", "not sufficient",
         ))
-
-    def _set_margin_blocked(self, free_margin: float = 0.0) -> None:
-        if not getattr(cfg, "MARGIN_BLOCK_ENABLED", True):
-            return
-        self._margin_blocked = True
-        self._margin_blocked_ts = time.time()
-        self._margin_blocked_free = float(free_margin)
-        self.logger.warning(
-            f"[MARGIN] Insufficient margin — pausing NEW entries globally until "
-            f"free margin recovers (was ${free_margin:.2f}). Open positions still managed."
-        )
-
-    def _margin_block_active(self, now: float) -> bool:
-        if not self._margin_blocked:
-            return False
-        if not getattr(cfg, "MARGIN_BLOCK_ENABLED", True):
-            self._margin_blocked = False
-            return False
-        retry = max(5.0, float(getattr(cfg, "MARGIN_BLOCK_RETRY_SEC", 15)))
-        if now - self._margin_blocked_ts < retry:
-            return True
-        # Re-probe free margin; resume only once it has recovered past the
-        # blocked level (a position closing frees margin). Hysteresis avoids
-        # flapping on tiny fluctuations.
-        try:
-            acct = self.client.get_account_info()
-            free = float(acct.get("free_margin", 0)) if acct else 0.0
-        except Exception:
-            free = 0.0
-        buf = max(1.0, float(getattr(cfg, "MARGIN_BLOCK_BUFFER", 1.05)))
-        if free >= self._margin_blocked_free * buf:
-            self._margin_blocked = False
-            self._margin_blocked_free = 0.0
-            self._margin_blocked_ts = 0.0
-            self.logger.info(
-                f"[MARGIN] Free margin recovered to ${free:.2f} — resuming NEW entries."
-            )
-            return False
-        # Still blocked: refresh probe timestamp + emit a throttled log.
-        self._margin_blocked_ts = now
-        if now - self._margin_block_last_log >= 60:
-            self._margin_block_last_log = now
-            self.logger.info(
-                f"[MARGIN] Still insufficient — free ${free:.2f} < "
-                f"needed ${self._margin_blocked_free * buf:.2f}. Holding new entries."
-            )
-        return True
 
     async def _tick_symbol(self, sym: str, pnl_data: Dict, balance: float = 0.0):
         state = self._symbol_states[sym]
@@ -1098,13 +1028,6 @@ class Bot:
         current_price = symbol_info.get("ask", 0)
 
         current_atr = self._compute_atr_m5(m1_data, cfg.ATR_PERIOD)
-        high_vol = self._is_high_volatility(sym, current_atr)
-
-        if self._should_skip_regime(sym, high_vol):
-            return
-
-        if high_vol:
-            self.logger.debug(f"[{sym}] High volatility regime — tighter filters active")
 
         signal = self._pull_entry_signal(sym, current_price, symbol_info)
         if signal is not None:
@@ -1112,10 +1035,6 @@ class Bot:
                 f"[{sym}] Pull: {signal['direction']} score={signal['score']:.2f} "
                 f"px={current_price:.2f} atr={signal.get('atr', 0):.4f}"
             )
-
-        if signal:
-            if high_vol:
-                signal["high_volatility"] = True
 
         if signal and m1_data is not None and len(m1_data) >= 15:
             signal["adx_at_entry"] = self._compute_adx(
@@ -1160,13 +1079,6 @@ class Bot:
                 f"[{sym}] Signal triggered: [PULL] {signal.get('direction', 'UNKNOWN')} "
                 f"score={signal['score']:.2f}"
             )
-            # Global margin guard: never fire a NEW entry while margin is blocked;
-            # open positions continue to be managed in their IN_TRADE branch.
-            if self._margin_block_active(time.time()):
-                self.logger.debug(
-                    f"[{sym}] New entry skipped — global margin guard active"
-                )
-                return
             await self._execute_entry(signal, symbol_info, symbol=sym)
 
     def _is_high_volatility(self, sym: str, current_atr: float) -> bool:
@@ -1181,49 +1093,6 @@ class Bot:
         if avg_atr <= 0:
             return False
         return current_atr > avg_atr * cfg.VOLATILITY_ATR_MULT
-
-    def _should_skip_regime(self, sym: str, high_vol: bool = False) -> bool:
-        skipped = self._symbol_regime_skipped.get(sym)
-        if not skipped:
-            return False
-        current_regime = "high" if high_vol else "normal"
-        if skipped != current_regime:
-            return False
-        reset_hours = getattr(cfg, "CONSECUTIVE_LOSS_RESET_HOURS", 4.0)
-        last_loss = self._symbol_last_loss_ts.get(sym, 0)
-        if time.time() - last_loss > reset_hours * 3600:
-            self._symbol_regime_skipped[sym] = None
-            self._symbol_consecutive_losses[sym] = 0
-            self.logger.info(f"[{sym}] Regime skip ({skipped}) reset after {reset_hours}h cooldown")
-            return False
-        return True
-
-    def _record_trade_result(self, sym: str, pnl: float, high_vol: bool = False):
-        prev_vol = self._symbol_vol_regime.get(sym, False)
-        if high_vol != prev_vol:
-            self._symbol_consecutive_losses[sym] = 0
-            self._symbol_vol_regime[sym] = high_vol
-            if high_vol:
-                self.logger.info(f"[{sym}] Regime changed to HIGH VOL — loss counter reset")
-
-        if pnl < 0:
-            self._symbol_consecutive_losses[sym] = self._symbol_consecutive_losses.get(sym, 0) + 1
-            self._symbol_last_loss_ts[sym] = time.time()
-            losses = self._symbol_consecutive_losses[sym]
-            skip_thresh = getattr(cfg, "CONSECUTIVE_LOSS_SKIP", 5)
-            if losses >= skip_thresh:
-                self._symbol_regime_skipped[sym] = "high" if high_vol else "normal"
-                regime = "HIGH VOL" if high_vol else "NORMAL"
-                self.logger.warning(
-                    f"[{sym}] {losses} consecutive losses in {regime} regime — "
-                    f"skipping for {getattr(cfg, 'CONSECUTIVE_LOSS_RESET_HOURS', 4.0)}h"
-                )
-            else:
-                self.logger.info(f"[{sym}] Consecutive losses: {losses}/{skip_thresh}")
-        else:
-            if self._symbol_consecutive_losses.get(sym, 0) > 0:
-                self.logger.info(f"[{sym}] Win resets consecutive loss counter")
-            self._symbol_consecutive_losses[sym] = 0
 
     def _log_signal_diagnostic(self, reason: str, context: Dict):
         now = time.monotonic()
@@ -1281,7 +1150,6 @@ class Bot:
                     pos_data, exit_reason="blacklist", score=0, balance=balance)
             if closed:
                 pnl = sum(p.get("profit", 0) for p in closed)
-                self._record_trade_result(sym, pnl, False)
                 await self._notify(
                     "trade_close",
                     f"Trade Closed — {sym}",
@@ -1319,7 +1187,6 @@ class Bot:
                         score=0, balance=balance)
                 if closed:
                     pnl = sum(p.get("profit", 0) for p in closed)
-                    self._record_trade_result(sym, pnl, False)
                 self._symbol_states[sym] = self.STATES["IDLE"]
                 self._symbol_event_start_ts[sym] = None
                 self._symbol_pull_entry[sym] = False
@@ -1348,7 +1215,6 @@ class Bot:
                                     score=0, balance=balance)
                             if closed:
                                 pnl = sum(p.get("profit", 0) for p in closed)
-                                self._record_trade_result(sym, pnl, False)
                             self._symbol_states[sym] = self.STATES["IDLE"]
                             self._symbol_event_start_ts[sym] = None
                             self._symbol_pull_entry[sym] = False
@@ -1369,7 +1235,6 @@ class Bot:
                         balance=balance)
                 if closed:
                     pnl = sum(p.get("profit", 0) for p in closed)
-                    self._record_trade_result(sym, pnl, False)
                     eng.confirm_exit()
                     self._symbol_states[sym] = self.STATES["IDLE"]
                     self._symbol_event_start_ts[sym] = None
@@ -1388,9 +1253,6 @@ class Bot:
         info = self.client.get_account_info()
         min_balance = cfg.SYMBOL_MIN_BALANCE.get(sym, cfg.MIN_BALANCE) if sym else cfg.MIN_BALANCE
         if info and info["balance"] >= min_balance:
-            self.scaler.update_peak(info["balance"])
-            if self.scaler.starting_balance is None:
-                self.scaler.initialize(info["balance"])
             self.logger.info(
                 f"Funds detected: ${info['balance']:.2f} (need ${min_balance:.2f}). Starting bot."
             )
@@ -1449,23 +1311,17 @@ class Bot:
             self._symbol_states[sym] = self.STATES["WAITING_FOR_FUNDS"]
             return
 
-        self.scaler.update_peak(balance)
-
-        lot = self.scaler.get_lot(balance, symbol=sym, lot_multiplier=self._lot_multiplier_override)
+        risk_pct = getattr(cfg, "RISK_PCT", 0.03)
+        risk_amount = balance * risk_pct
+        atr_at_entry = signal.get("atr", 0)
+        contract_size = fresh_info.get("contract_size", 1) or 1
+        if atr_at_entry > 0 and contract_size > 0:
+            lot = risk_amount / (atr_at_entry * contract_size)
+        else:
+            lot = cfg.LOT_SIZE
         vol_step = max(fresh_info.get("volume_step", cfg.LOT_STEP) or cfg.LOT_STEP, cfg.LOT_STEP)
         lot = round(lot / vol_step) * vol_step
         lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), min(lot, fresh_info.get("volume_max", cfg.MAX_LOT)))
-
-        high_vol = signal.get("high_volatility", False)
-        if high_vol:
-            lot_reduction = getattr(cfg, "VOLATILITY_LOT_REDUCTION", 0.5)
-            original_lot = lot
-            lot = round(lot * lot_reduction / vol_step) * vol_step
-            lot = max(fresh_info.get("volume_min", cfg.MIN_LOT), lot)
-            self.logger.info(
-                f"[{sym}] High vol: lot reduced {original_lot:.2f} → {lot:.2f} "
-                f"({lot_reduction:.0%} reduction)"
-            )
         max_trades = 1
 
         current_price = fresh_info.get("bid", fresh_info.get("price", 0)) if direction == "SELL" else fresh_info.get("ask", fresh_info.get("price", 0))
@@ -1513,7 +1369,6 @@ class Bot:
                     f"[{sym}] Entry blocked: insufficient margin "
                     f"(est ${single_margin:.2f} needed, ${free_margin:.2f} available)"
                 )
-                self._set_margin_blocked(free_margin)
                 self._symbol_states[sym] = self.STATES["IDLE"]
                 return
 
@@ -1526,8 +1381,7 @@ class Bot:
             f"max_trades={max_trades} | drift={drift_pct:.3f}% | "
             f"leverage=1:{entry_lev:.0f} (per-instrument) | "
             f"margin=${free_margin:.2f} | "
-            f"tier={self.scaler._tier(balance)} "
-            f"({self.scaler.growth_pct(balance):.1f}% growth) | "
+            f"risk={risk_pct*100:.1f}% (${risk_amount:.2f}) | "
             f"ML conf={ml_conf:.2f}"
         )
 
@@ -1562,23 +1416,15 @@ class Bot:
                     self._symbol_states[sym] = self.STATES["MARKET_CLOSED"]
                     return
                 if self._is_margin_error(err_detail):
-                    # Broker rejected for margin even though the pre-check passed
-                    # (stale free-margin / leverage race). Pause NEW entries until
-                    # free margin recovers instead of hammering the broker.
-                    fm = 0.0
-                    try:
-                        acct = self.client.get_account_info()
-                        fm = float(acct.get("free_margin", 0)) if acct else 0.0
-                    except Exception:
-                        pass
-                    self._set_margin_blocked(fm)
+                    self.logger.warning(
+                        f"[{sym}] Broker rejected for margin — will retry next tick"
+                    )
                     return
                 break
 
         fresh_acct = self.client.get_account_info()
         if fresh_acct:
-            self.scaler.update_peak(fresh_acct["balance"])
-        self.position_manager.refresh(symbols=list(self.symbols) + [sym])
+            self.position_manager.refresh(symbols=list(self.symbols) + [sym])
 
         if any_opened:
             self._symbol_states[sym] = self.STATES["IN_TRADE"]
@@ -1657,7 +1503,7 @@ class Bot:
             "news": news,
             "positions": self.position_manager.summary(),
             "risk": {},
-            "scaler": self.scaler.summary(current_balance) if self.scaler.starting_balance else None,
+            "starting_balance": round(self._starting_balance, 2) if self._starting_balance else None,
             "last_logs": self.logger.logs[-50:],
             "closed_trades": self.position_manager.closed_history[-100:],
         }
@@ -1669,10 +1515,6 @@ class Bot:
         for sym in self.symbols:
             self._symbol_states[sym] = self.STATES["IDLE"]
             self._symbol_event_start_ts[sym] = None
-            self._symbol_consecutive_losses[sym] = 0
-            self._symbol_last_loss_ts[sym] = 0.0
-            self._symbol_regime_skipped[sym] = None
-            self._symbol_vol_regime[sym] = False
             self._symbol_signals[sym] = None
         self.logger.info("Bot manually started")
 
@@ -1693,8 +1535,6 @@ class Bot:
             if closed:
                 self._symbol_states[sym] = self.STATES["IDLE"]
                 self._symbol_event_start_ts[sym] = None
-                self._symbol_consecutive_losses[sym] = 0
-                self._symbol_regime_skipped[sym] = None
         self.position_manager.refresh(symbols=self.symbols)
         await self._notify(
             "trade_close",
@@ -1721,7 +1561,8 @@ class Bot:
         if ok:
             info = self.client.get_account_info()
             if info:
-                self.scaler.initialize(info["balance"])
+                if self._starting_balance is None:
+                    self._starting_balance = info["balance"]
                 self.state = self.STATES["IDLE"]
                 for sym in self.symbols:
                     self._symbol_states[sym] = self.STATES["IDLE"]

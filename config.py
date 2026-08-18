@@ -51,8 +51,11 @@ LOT_STEP = _env_float("LOT_STEP", 0.01)
 LOT_MULTIPLIER = _env_int("LOT_MULTIPLIER", 2)
 # Hard safety cap on the lot multiplier regardless of env/API value.
 # Backtest (1:100 lev, $20 start): mult>2 blows the account up
-# (x3 +8%, x4 -43%, x5 -70%). EquityScaler.get_lot() clamps to this.
+# (x3 +8%, x4 -43%, x5 -70%).
 MAX_LOT_MULTIPLIER = _env_float("MAX_LOT_MULTIPLIER", 2.0)
+
+# Fixed fractional risk per trade (matches backtest: lot_value = balance * RISK_PCT)
+RISK_PCT = _env_float("RISK_PCT", 0.03)
 
 # Minimum balance to start trading
 MIN_BALANCE = _env_float("MIN_BALANCE", 10.0)
@@ -309,7 +312,7 @@ PULL_DAILY_TARGET_R = {
     "JP225": _env_float("PULL_DAILY_TARGET_R_JP225", 0.0),
     "DE40": _env_float("PULL_DAILY_TARGET_R_DE40", 0.0),
     "US500": _env_float("PULL_DAILY_TARGET_R_US500", 0.0),
-    "US30": _env_float("PULL_DAILY_TARGET_R_US30", 3.0),
+    "US30": _env_float("PULL_DAILY_TARGET_R_US30", 0.0),
 }
 PULL_DAILY_MAX_LOSS_R = {
     "XAUUSD": _env_float("PULL_DAILY_MAX_LOSS_R_XAUUSD", 0.0),
@@ -317,7 +320,7 @@ PULL_DAILY_MAX_LOSS_R = {
     "JP225": _env_float("PULL_DAILY_MAX_LOSS_R_JP225", 0.0),
     "DE40": _env_float("PULL_DAILY_MAX_LOSS_R_DE40", 0.0),
     "US500": _env_float("PULL_DAILY_MAX_LOSS_R_US500", 0.0),
-    "US30": _env_float("PULL_DAILY_MAX_LOSS_R_US30", 2.5),
+    "US30": _env_float("PULL_DAILY_MAX_LOSS_R_US30", 0.0),
 }
 SYMBOL_PULL_PARAMS = {
     sym: {

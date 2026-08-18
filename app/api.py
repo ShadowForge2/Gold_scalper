@@ -800,10 +800,9 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         if not state or not state.get("bot"):
             return {"trades": 0}
         bot_data = state["bot"]
-        scaler = bot_data.get("scaler") or {}
         account = state.get("account") or {}
         balance = account.get("balance", 0) or 0
-        starting = scaler.get("starting_balance", 0) or 0
+        starting = bot_data.get("starting_balance", 0) or 0
 
         closed = bot_data.get("closed_trades", []) or []
         wins = sum(1 for t in closed if (t.get("profit") or 0) > 0)
@@ -865,8 +864,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         if not state or not state.get("bot"):
             return {"points": []}
         bot_data = state["bot"]
-        scaler = bot_data.get("scaler") or {}
-        starting = scaler.get("starting_balance", 0) or 0
+        starting = bot_data.get("starting_balance", 0) or 0
         closed = bot_data.get("closed_trades", []) or []
 
         sorted_closed = sorted(closed, key=lambda t: t.get("closed_at") or "")
