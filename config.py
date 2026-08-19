@@ -260,7 +260,7 @@ PULL_ENGINE_ENABLED = {
     "US30": _env_bool("PULL_US30", True),
 }
 PULL_M1_HISTORY_BARS = _env_int("PULL_M1_HISTORY_BARS", 8000)
-PULL_REFRESH_SEC = _env_int("PULL_REFRESH_SEC", 60)
+PULL_REFRESH_SEC = _env_int("PULL_REFRESH_SEC", 15)
 PULL_MIN_H1_BARS = _env_int("PULL_MIN_H1_BARS", 30)  # completed H1 candles before trading
 # Profit lock-in for the PullPrevH1 engine:
 #   GIVEBACK_CAP — a live trade never gives back more than this fraction of the

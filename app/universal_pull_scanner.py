@@ -31,7 +31,7 @@ from app.logger import BotLogger
 from app import pull_auto_tune
 
 # Hard refresh throttle (seconds) between whole-board eligibility scans.
-_SCAN_TTL = float(getattr(cfg, "PULL_REFRESH_SEC", 60))
+_SCAN_TTL = float(getattr(cfg, "PULL_REFRESH_SEC", 15))
 
 
 def _build_scalper(symbol: str, logger: BotLogger, client: Any = None) -> PullPrevH1Scalper:

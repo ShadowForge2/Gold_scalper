@@ -128,7 +128,6 @@ class Bot:
         self.magic: int = cfg.MAGIC_NUMBER
         self._running = False
         self._starting_balance: Optional[float] = None
-        self._lot_multiplier_override: Optional[float] = None  # per-bot, kept for pool compat
         self.is_demo: bool = True  # set to False by initialize() or initialize_with_credentials()
 
         self._current_signal: Optional[Dict] = None
@@ -546,7 +545,6 @@ class Bot:
         active_syms = self._current_candidates()
         refresh_syms = list(dict.fromkeys(list(self.symbols) + active_syms))
         pnl_data = self.position_manager.refresh(symbols=refresh_syms)
-        self.risk_manager.daily_pnl = pnl_data["daily_pnl"]
 
         if self.state == self.STATES["STOPPED"]:
             return
@@ -943,9 +941,14 @@ class Bot:
         """Fetch fresh M1 bars for the pull engine (long history on a refresh
         timer, short tail every tick). Returns the recent frame or None."""
         now = time.time()
-        refresh = getattr(cfg, "PULL_REFRESH_SEC", 60)
+        refresh = getattr(cfg, "PULL_REFRESH_SEC", 15)
+        # Force refresh near H1 boundary (last 2 min before the hour) so the
+        # engine doesn't trade on stale h1dir/ATR when the candle can flip.
+        utc_min = datetime.utcnow().minute
+        near_h1 = utc_min >= 58 or utc_min <= 1
+        force = near_h1 and (now - self._symbol_pull_cache_ts.get(sym, 0.0)) >= 5
         try:
-            if now - self._symbol_pull_cache_ts.get(sym, 0.0) >= refresh:
+            if force or (now - self._symbol_pull_cache_ts.get(sym, 0.0)) >= refresh:
                 from datetime import timedelta
                 hist = int(getattr(cfg, "PULL_M1_HISTORY_BARS", 8000))
                 window_min = hist + 600
@@ -1372,7 +1375,6 @@ class Bot:
                 self._symbol_states[sym] = self.STATES["IDLE"]
                 return
 
-        ml_conf = signal.get("ml_confidence", signal.get("score", 0))
         entry_lev = self.client.get_leverage_for_class(fresh_info.get("asset_class", "COMMODITIES"))
 
         self.logger.info(
@@ -1381,8 +1383,7 @@ class Bot:
             f"max_trades={max_trades} | drift={drift_pct:.3f}% | "
             f"leverage=1:{entry_lev:.0f} (per-instrument) | "
             f"margin=${free_margin:.2f} | "
-            f"risk={risk_pct*100:.1f}% (${risk_amount:.2f}) | "
-            f"ML conf={ml_conf:.2f}"
+            f"risk={risk_pct*100:.1f}% (${risk_amount:.2f})"
         )
 
         any_opened = False
@@ -1443,8 +1444,7 @@ class Bot:
                 else:
                     self._symbol_pull_entry[sym] = False
             self.logger.info(
-                f"[{sym}] Entered {direction} with {max_trades} position(s) "
-                f"(ML conf={ml_conf:.2f})"
+                f"[{sym}] Entered {direction} with {max_trades} position(s)"
             )
             await self._notify(
                 "trade_open",
@@ -1510,7 +1510,7 @@ class Bot:
 
     def start(self):
         if self.state == self.STATES["STOPPED"]:
-            self.risk_manager.reset_daily_pnl()
+            pass
         self.state = self.STATES["IDLE"]
         for sym in self.symbols:
             self._symbol_states[sym] = self.STATES["IDLE"]
@@ -1547,9 +1547,6 @@ class Bot:
 
     def update_settings(self, settings: Dict):
         clamped = {}
-        if "lot_multiplier" in settings:
-            clamped["lot_multiplier"] = max(0.1, min(float(settings["lot_multiplier"]), 100.0))
-            self._lot_multiplier_override = clamped["lot_multiplier"]
         if "max_spread_pips" in settings:
             clamped["max_spread_pips"] = max(1.0, min(float(settings["max_spread_pips"]), 500.0))
             self.risk_manager.max_spread = clamped["max_spread_pips"]
