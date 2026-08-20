@@ -38,6 +38,7 @@ Thumbs.db
 .DS_Store
 
 *.txt
+!runtime.txt
 backend_error.txt
 backend_output.txt
 flutter_web_error.txt
