@@ -39,6 +39,7 @@ Thumbs.db
 
 *.txt
 !runtime.txt
+!requirements.txt
 backend_error.txt
 backend_output.txt
 flutter_web_error.txt
