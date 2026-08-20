@@ -90,7 +90,7 @@ async def _failover_step():
     await failover.send_heartbeat()
     if await failover.should_takeover():
         bot.logger.warning("FAILOVER: acquired leader lease — primary mode activated")
-        if bot.state == bot.STATES["STOPPED"]:
+        if not bot._running:
             await bot.initialize()
             bot._account_id = cfg.CAPITAL_IDENTIFIER
             _fire_task(bot.run(), name="bot.run_recovered")
@@ -281,13 +281,15 @@ async def startup():
             db_url=str(db_mod.database.url),
             database=db_mod.database,
         )
-    await bot.initialize()
-    bot._account_id = cfg.CAPITAL_IDENTIFIER
     bot._failover = failover
     failover.set_readiness_fn(_failover_ready)
-    _fire_task(bot.run(), name="bot.run")
     if failover.enabled:
         _fire_task(failover_heartbeat_loop(), name="failover.heartbeat")
+        bot.logger.info("FAILOVER enabled — bot starts only on lease leadership (idle until then)")
+    else:
+        await bot.initialize()
+        bot._account_id = cfg.CAPITAL_IDENTIFIER
+        _fire_task(bot.run(), name="bot.run")
     if _db_connected:
         _fire_task(email_scheduler_loop(), name="email.scheduler")
         if failover.enabled:
