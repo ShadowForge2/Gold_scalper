@@ -24,7 +24,7 @@ class _FadeInScaleState extends State<FadeInScale> with SingleTickerProviderStat
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 600),
+      duration: const Duration(milliseconds: 300),
     );
 
     _opacity = Tween<double>(begin: 0.0, end: 1.0).animate(

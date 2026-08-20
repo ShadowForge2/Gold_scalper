@@ -29,22 +29,26 @@ class LiveFeedScreen extends StatelessWidget {
         }
 
         if (bp.recentTrades.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+          return RefreshIndicator(
+            onRefresh: () async => bp.refresh(),
+            child: ListView(
               children: [
+                SizedBox(height: MediaQuery.of(context).size.height * 0.2),
                 Icon(Icons.inbox, size: 64, color: Colors.grey[700]),
                 const SizedBox(height: 16),
-                Text('No trades yet', style: TextStyle(color: Colors.grey[500], fontSize: 18)),
+                Center(child: Text('No trades yet', style: TextStyle(color: Colors.grey[500], fontSize: 18))),
               ],
             ),
           );
         }
 
-        return ListView.builder(
-          padding: const EdgeInsets.only(top: 8, bottom: 16),
-          itemCount: bp.recentTrades.length,
-          itemBuilder: (_, i) => TradeTile(trade: bp.recentTrades[i]),
+        return RefreshIndicator(
+          onRefresh: () async => bp.refresh(),
+          child: ListView.builder(
+            padding: const EdgeInsets.only(top: 8, bottom: 16),
+            itemCount: bp.recentTrades.length,
+            itemBuilder: (_, i) => TradeTile(trade: bp.recentTrades[i]),
+          ),
         );
       },
     );

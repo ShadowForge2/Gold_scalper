@@ -16,34 +16,43 @@ class ControlsScreen extends StatefulWidget {
 
 class _ControlsScreenState extends State<ControlsScreen> {
   bool _isStarting = false;
+  bool _autoSessions = true;
+  double? _draftMaxDailyLoss;
+  int? _draftMaxConsecutiveLosses;
+  bool? _draftAsiaSession;
+  bool? _draftLondonSession;
+  bool? _draftNewYorkSession;
 
   @override
   Widget build(BuildContext context) {
     return Consumer<BotProvider>(
       builder: (context, bp, _) {
         final s = bp.state;
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            FadeInScale(
-              child: _buildBotControlCard(context, s, bp),
-            ),
-            const SizedBox(height: 16),
-            FadeInScale(
-              delay: const Duration(milliseconds: 100),
-              child: _buildConfigCard(bp),
-            ),
-            const SizedBox(height: 16),
-            FadeInScale(
-              delay: const Duration(milliseconds: 200),
-              child: _buildSessionsCard(bp),
-            ),
-            const SizedBox(height: 16),
-            FadeInScale(
-              delay: const Duration(milliseconds: 300),
-              child: _buildDangerZone(context, bp),
-            ),
-          ],
+        return RefreshIndicator(
+          onRefresh: () async => bp.refresh(),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              FadeInScale(
+                child: _buildBotControlCard(context, s, bp),
+              ),
+              const SizedBox(height: 16),
+              FadeInScale(
+                delay: const Duration(milliseconds: 100),
+                child: _buildConfigCard(bp),
+              ),
+              const SizedBox(height: 16),
+              FadeInScale(
+                delay: const Duration(milliseconds: 200),
+                child: _buildSessionsCard(bp),
+              ),
+              const SizedBox(height: 16),
+              FadeInScale(
+                delay: const Duration(milliseconds: 300),
+                child: _buildDangerZone(context, bp),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -190,6 +199,8 @@ class _ControlsScreenState extends State<ControlsScreen> {
 
   Widget _buildConfigCard(BotProvider bp) {
     final cfg = bp.config;
+    final maxDailyLoss = _draftMaxDailyLoss ?? cfg.maxDailyLoss;
+    final maxConsecutiveLosses = (_draftMaxConsecutiveLosses ?? cfg.maxConsecutiveLosses).toDouble();
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -224,29 +235,36 @@ class _ControlsScreenState extends State<ControlsScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          _sliderSetting('Lot Multiplier', cfg.lotMultiplier, 1, 10, 1, (v) {
-            bp.updateConfig(cfg.copyWith(lotMultiplier: v));
+          _sliderSetting('Max Daily Loss (\$)', maxDailyLoss, 1, 50, 1, (v) {
+            setState(() => _draftMaxDailyLoss = v);
           }),
-          _sliderSetting('Entry Threshold', cfg.signalEntryThreshold, 0.1, 1.0, 0.05, (v) {
-            bp.updateConfig(cfg.copyWith(signalEntryThreshold: v));
-          }),
-          _sliderSetting('Max Daily Loss (\$)', cfg.maxDailyLoss, 1, 50, 1, (v) {
-            bp.updateConfig(cfg.copyWith(maxDailyLoss: v));
-          }),
-          _sliderSetting('Max Trades/Event', cfg.maxTradesPerEvent.toDouble(), 1, 20, 1, (v) {
-            bp.updateConfig(cfg.copyWith(maxTradesPerEvent: v.round()));
-          }),
-          _sliderSetting('Max Consecutive Losses', cfg.maxConsecutiveLosses.toDouble(), 1, 10, 1, (v) {
-            bp.updateConfig(cfg.copyWith(maxConsecutiveLosses: v.round()));
-          }),
-          _sliderSetting('Cooldown (sec)', cfg.reEntryCooldownSec.toDouble(), 10, 600, 10, (v) {
-            bp.updateConfig(cfg.copyWith(reEntryCooldownSec: v.round()));
+          _sliderSetting('Max Consecutive Losses', maxConsecutiveLosses, 1, 10, 1, (v) {
+            setState(() => _draftMaxConsecutiveLosses = v.round());
           }),
           const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: hapt(() => bp.saveConfig()),
+              onPressed: hapt(() async {
+                final draftCfg = cfg.copyWith(
+                  maxDailyLoss: _draftMaxDailyLoss ?? cfg.maxDailyLoss,
+                  maxConsecutiveLosses: _draftMaxConsecutiveLosses ?? cfg.maxConsecutiveLosses,
+                  asiaSession: _draftAsiaSession ?? cfg.asiaSession,
+                  londonSession: _draftLondonSession ?? cfg.londonSession,
+                  newYorkSession: _draftNewYorkSession ?? cfg.newYorkSession,
+                );
+                bp.updateConfig(draftCfg);
+                await bp.saveConfig();
+                if (mounted) {
+                  setState(() {
+                    _draftMaxDailyLoss = null;
+                    _draftMaxConsecutiveLosses = null;
+                    _draftAsiaSession = null;
+                    _draftLondonSession = null;
+                    _draftNewYorkSession = null;
+                  });
+                }
+              }),
               icon: const Icon(Icons.save_rounded, size: 16),
               label: const Text('Save Settings'),
               style: ElevatedButton.styleFrom(
@@ -302,6 +320,9 @@ class _ControlsScreenState extends State<ControlsScreen> {
 
   Widget _buildSessionsCard(BotProvider bp) {
     final cfg = bp.config;
+    final asia = _draftAsiaSession ?? cfg.asiaSession;
+    final london = _draftLondonSession ?? cfg.londonSession;
+    final ny = _draftNewYorkSession ?? cfg.newYorkSession;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -314,23 +335,70 @@ class _ControlsScreenState extends State<ControlsScreen> {
         children: [
           const Text('Trading Sessions', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: -0.2)),
           const SizedBox(height: 12),
-          _sessionToggle('Asia (00:00-08:00 UTC)', cfg.asiaSession, (v) {
-            bp.updateConfig(cfg.copyWith(asiaSession: v));
-          }),
-          _sessionToggle('London (07:00-16:00 UTC)', cfg.londonSession, (v) {
-            bp.updateConfig(cfg.copyWith(londonSession: v));
-          }),
-          _sessionToggle('New York (12:00-21:00 UTC)', cfg.newYorkSession, (v) {
-            bp.updateConfig(cfg.copyWith(newYorkSession: v));
-          }),
+          _sessionToggle(
+            'Auto',
+            '',
+            _autoSessions,
+            (v) {
+              setState(() {
+                _autoSessions = v;
+                if (v) {
+                  _draftAsiaSession = false;
+                  _draftLondonSession = false;
+                  _draftNewYorkSession = false;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: const Text('The bot auto-selects the best time for you'),
+                      backgroundColor: kGold,
+                      behavior: SnackBarBehavior.floating,
+                      duration: const Duration(seconds: 3),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  );
+                }
+              });
+            },
+          ),
+          const SizedBox(height: 8),
+          Opacity(
+            opacity: _autoSessions ? 0.35 : 1.0,
+            child: IgnorePointer(
+              ignoring: _autoSessions,
+              child: Column(
+                children: [
+                  _sessionToggle(
+                    'Asia (00:00-08:00 UTC)',
+                    '',
+                    asia,
+                    (v) => setState(() => _draftAsiaSession = v),
+                  ),
+                  _sessionToggle(
+                    'London (07:00-16:00 UTC)',
+                    '',
+                    london,
+                    (v) => setState(() => _draftLondonSession = v),
+                  ),
+                  _sessionToggle(
+                    'New York (12:00-21:00 UTC)',
+                    '',
+                    ny,
+                    (v) => setState(() => _draftNewYorkSession = v),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _sessionToggle(String label, bool value, Function(bool) onChanged) {
+  Widget _sessionToggle(String label, String subtitle, bool value, Function(bool) onChanged) {
     return SwitchListTile(
       title: Text(label, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+      subtitle: subtitle.isNotEmpty
+          ? Text(subtitle, style: const TextStyle(color: kTextMuted, fontSize: 11))
+          : null,
       value: value,
       onChanged: onChanged,
       activeTrackColor: kGold,

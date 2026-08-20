@@ -1,3 +1,4 @@
+from collections import deque
 import asyncio
 import json
 import os
@@ -153,6 +154,61 @@ def _prune_auth_entries(now: float) -> None:
 async def _auth_clear(key: str) -> None:
     async with _AUTH_LOCK:
         _AUTH_ATTEMPTS.pop(key, None)
+
+
+# ── Polling rate limiter ──────────────────────────────────────────────
+# Per-device sliding window limiter for high-frequency polling endpoints.
+# Returns the last cached response silently when exceeded — never shows
+# an error to the user.
+_POLL_WINDOW_SECONDS = int(os.environ.get("POLL_WINDOW_SECONDS", "10"))
+_POLL_MAX_REQUESTS = int(os.environ.get("POLL_MAX_REQUESTS", "15"))
+_poll_windows: Dict[str, deque] = {}
+_poll_cache: Dict[str, dict] = {}
+_POLL_LOCK = asyncio.Lock()
+
+
+def _poll_rate_key(request: Request, device_id: str) -> str:
+    ip = request.client.host if request.client else "unknown"
+    return f"{device_id or 'unknown'}|{ip}"
+
+
+_poll_counter: int = 0
+
+
+async def _poll_check(request: Request, device_id: str) -> Optional[dict]:
+    """Return cached response if rate-limited, or None if request is allowed."""
+    global _poll_counter
+    key = _poll_rate_key(request, device_id)
+    now = time.time()
+    async with _POLL_LOCK:
+        _poll_counter += 1
+        if _poll_counter % 500 == 0:
+            _poll_prune(now)
+        window = _poll_windows.get(key)
+        if window is None:
+            window = deque()
+            _poll_windows[key] = window
+        # drop timestamps outside window
+        while window and window[0] < now - _POLL_WINDOW_SECONDS:
+            window.popleft()
+        if len(window) >= _POLL_MAX_REQUESTS:
+            return _poll_cache.get(key)
+        window.append(now)
+        return None
+
+
+def _poll_store(key: str, response: dict) -> None:
+    """Cache a response for silent rate-limit delivery."""
+    _poll_cache[key] = response
+
+
+def _poll_prune(now: float = 0.0) -> None:
+    """Drop stale entries to bound memory (called opportunistically)."""
+    now = now or time.time()
+    stale = [k for k, v in _poll_windows.items() if not v or v[-1] < now - 300]
+    for k in stale:
+        _poll_windows.pop(k, None)
+        _poll_cache.pop(k, None)
 
 
 def _fire_async(coro):
@@ -567,7 +623,10 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         return result
 
     @app.get("/api/device/bot/state")
-    async def device_bot_state(device_id: str = Header(None, alias="X-Device-Id")):
+    async def device_bot_state(request: Request, device_id: str = Header(None, alias="X-Device-Id")):
+        cached = await _poll_check(request, device_id)
+        if cached is not None:
+            return cached
         if not _db_ok():
             return _no_db()
         did = device_id or "unknown"
@@ -584,10 +643,15 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         if state is None:
             return {"running": False, "state": None}
         running = await asyncio.to_thread(bot_pool.is_running, ident) or False
-        return {**state, "running": running}
+        result = {**state, "running": running}
+        _poll_store(_poll_rate_key(request, device_id), result)
+        return result
 
     @app.get("/api/device/bot/logs")
-    async def device_bot_logs(device_id: str = Header(None, alias="X-Device-Id")):
+    async def device_bot_logs(request: Request, device_id: str = Header(None, alias="X-Device-Id")):
+        cached = await _poll_check(request, device_id)
+        if cached is not None:
+            return cached
         if not _db_ok():
             return _no_db()
         did = device_id or "unknown"
@@ -601,7 +665,9 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             return {"logs": []}
         ident = accounts[0]["identifier"]
         logs = bot_pool.get_logs(ident)
-        return {"logs": logs}
+        result = {"logs": logs}
+        _poll_store(_poll_rate_key(request, device_id), result)
+        return result
 
     @app.get("/api/device/bot/connection-status")
     async def device_bot_connection_status(device_id: str = Header(None, alias="X-Device-Id")):
@@ -676,7 +742,10 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
 
     # ── Device Bot Trades ───────────────────────────────────────
     @app.get("/api/device/bot/trades")
-    async def device_bot_trades(device_id: str = Header(None, alias="X-Device-Id")):
+    async def device_bot_trades(request: Request, device_id: str = Header(None, alias="X-Device-Id")):
+        cached = await _poll_check(request, device_id)
+        if cached is not None:
+            return cached
         if not _db_ok():
             return _no_db()
         did = device_id or "unknown"
@@ -732,7 +801,9 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                     "exit_reason": t.get("exit_reason", ""),
                     "balance": t.get("balance", 0),
                 })
-        return {"trades": trades}
+        result = {"trades": trades}
+        _poll_store(_poll_rate_key(request, device_id), result)
+        return result
 
     # ── helpers ──
 
@@ -786,7 +857,10 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
 
     # ── Device Bot Performance ──────────────────────────────────
     @app.get("/api/device/bot/performance")
-    async def device_bot_performance(device_id: str = Header(None, alias="X-Device-Id")):
+    async def device_bot_performance(request: Request, device_id: str = Header(None, alias="X-Device-Id")):
+        cached = await _poll_check(request, device_id)
+        if cached is not None:
+            return cached
         if not _db_ok():
             return _no_db()
         did = device_id or "unknown"
@@ -829,7 +903,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                 if dd > max_dd:
                     max_dd = dd
 
-        return {
+        result = {
             "trades": total,
             "wins": wins,
             "losses": losses,
@@ -847,10 +921,15 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             "monthly": _monthly_breakdown(sorted_closed, starting),
             "daily": _daily_breakdown(sorted_closed),
         }
+        _poll_store(_poll_rate_key(request, device_id), result)
+        return result
 
     # ── Device Bot Equity Curve ─────────────────────────────────
     @app.get("/api/device/bot/equity_curve")
-    async def device_equity_curve(period: str = "all", device_id: str = Header(None, alias="X-Device-Id")):
+    async def device_equity_curve(request: Request, period: str = "all", device_id: str = Header(None, alias="X-Device-Id")):
+        cached = await _poll_check(request, device_id)
+        if cached is not None:
+            return cached
         if not _db_ok():
             return _no_db()
         did = device_id or "unknown"
@@ -956,7 +1035,9 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             if balance > 0:
                 points.append({"time": now.isoformat(), "balance": round(balance, 2)})
 
-        return {"points": points}
+        result = {"points": points}
+        _poll_store(_poll_rate_key(request, device_id), result)
+        return result
 
     # ── Subscription ─────────────────────────────────────────────
     @app.post("/api/device/trades/close_all")
@@ -974,7 +1055,10 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
         return {"message": f"Closed {count} position(s)", "closed_count": count}
 
     @app.get("/api/device/subscription")
-    async def device_subscription(device_id: str = Header(None, alias="X-Device-Id")):
+    async def device_subscription(request: Request, device_id: str = Header(None, alias="X-Device-Id")):
+        cached = await _poll_check(request, device_id)
+        if cached is not None:
+            return cached
         if not _db_ok():
             return _no_db()
         did = device_id or "unknown"
@@ -1000,6 +1084,7 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                     bot_pool.add_log_once(ident, "Trial ends tomorrow! Subscribe to continue.", "WARNING")
                 elif 2 <= dr <= 3:
                     bot_pool.add_log_once(ident, f"Trial ending in {dr} day(s). Please subscribe.", "WARNING")
+        _poll_store(_poll_rate_key(request, device_id), sub)
         return sub
 
     @app.post("/api/device/subscription/check")
@@ -1172,13 +1257,16 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
 
     # ── Email / Notification Preferences ────────────────────────────
     @app.get("/api/device/email/status")
-    async def device_email_status(device_id: str = Header(None, alias="X-Device-Id")):
+    async def device_email_status(request: Request, device_id: str = Header(None, alias="X-Device-Id")):
+        cached = await _poll_check(request, device_id)
+        if cached is not None:
+            return cached
         if not _db_ok():
             return _no_db()
         did = device_id or "unknown"
         dev = await get_device(did)
         if not dev or not dev.get("accounts"):
-            return {
+            result = {
                 "configured": False,
                 "email": None,
                 "allow_email": False,
@@ -1186,9 +1274,11 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                 "allow_marketing": False,
                 "is_new": True,
             }
+            _poll_store(_poll_rate_key(request, device_id), result)
+            return result
         ident = dev["accounts"][0]["identifier"]
         prefs = await email_service.get_email_prefs(ident)
-        return {
+        result = {
             "configured": email_service.email_configured(),
             "email": ident,
             "allow_email": prefs["allow_email"],
@@ -1196,6 +1286,8 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             "allow_marketing": prefs["allow_marketing"],
             "is_new": prefs.get("updated_at") is None,
         }
+        _poll_store(_poll_rate_key(request, device_id), result)
+        return result
 
     @app.post("/api/device/email/prefs")
     async def device_email_prefs(data: EmailPrefsRequest, device_id: str = Header(None, alias="X-Device-Id")):
@@ -1229,13 +1321,18 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
 
     # ── Notifications ──────────────────────────────────────────────
     @app.get("/api/device/notifications")
-    async def device_notifications(device_id: str = Header(None, alias="X-Device-Id")):
+    async def device_notifications(request: Request, device_id: str = Header(None, alias="X-Device-Id")):
+        cached = await _poll_check(request, device_id)
+        if cached is not None:
+            return cached
         if not _db_ok():
             return _no_db()
         did = device_id or "unknown"
         dev = await get_device(did)
         if not dev or not dev.get("accounts"):
-            return {"notifications": [], "unread_count": 0}
+            result = {"notifications": [], "unread_count": 0}
+            _poll_store(_poll_rate_key(request, device_id), result)
+            return result
         all_notifs = []
         total_unread = 0
         seen = set()
@@ -1247,7 +1344,9 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
                     all_notifs.append(n)
             total_unread += await get_unread_notification_count(ident)
         all_notifs.sort(key=lambda n: n.get("created_at") or "", reverse=True)
-        return {"notifications": all_notifs[:50], "unread_count": total_unread}
+        result = {"notifications": all_notifs[:50], "unread_count": total_unread}
+        _poll_store(_poll_rate_key(request, device_id), result)
+        return result
 
     @app.post("/api/device/notifications/mark-read")
     async def device_notifications_mark_read(data: dict, device_id: str = Header(None, alias="X-Device-Id")):
@@ -1282,5 +1381,43 @@ def create_app(bot: Bot, bot_pool: Optional[BotPool] = None, db_check=None) -> F
             {"did": did, "token": token, "ua": datetime.utcnow().isoformat()},
         )
         return {"success": True}
+
+    # ── Deploy safety check ─────────────────────────────────────
+    @app.get("/api/deploy/check")
+    async def deploy_check():
+        """Check if it's safe to deploy/restart the server.
+
+        Returns open trade counts per bot. Deploy is safe when all bots
+        have zero open positions (no risk of orphaned trades during restart).
+        """
+        if bot_pool is None:
+            return {"safe": True, "bots": [], "message": "No bot pool — nothing to protect"}
+        open_bots = []
+        total_open = 0
+        for ident in list(bot_pool._bots.keys()):
+            try:
+                state = await asyncio.to_thread(bot_pool.get_state, ident)
+                if state is None:
+                    continue
+                bot_data = state.get("bot") or {}
+                positions = bot_data.get("positions") or {}
+                open_count = positions.get("open_count", 0)
+                total_open += open_count
+                if open_count > 0:
+                    open_bots.append({
+                        "identifier": ident,
+                        "open_positions": open_count,
+                        "state": bot_data.get("state", "UNKNOWN"),
+                        "symbol": bot_data.get("symbol", ""),
+                    })
+            except Exception:
+                pass
+        safe = total_open == 0
+        return {
+            "safe": safe,
+            "total_open_positions": total_open,
+            "bots_with_positions": open_bots,
+            "message": "Deploy safe — no open trades" if safe else f"BLOCKED — {total_open} open position(s) across {len(open_bots)} bot(s)",
+        }
 
     return app

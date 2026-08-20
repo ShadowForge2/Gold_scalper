@@ -114,4 +114,11 @@ class EquityPoint {
   final double balance;
 
   EquityPoint({required this.time, required this.balance});
+
+  factory EquityPoint.fromJson(Map<String, dynamic> json) {
+    return EquityPoint(
+      time: DateTime.tryParse(json['time'] ?? '') ?? DateTime.now(),
+      balance: (json['balance'] ?? 0).toDouble(),
+    );
+  }
 }

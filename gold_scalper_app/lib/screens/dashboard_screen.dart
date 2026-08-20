@@ -50,7 +50,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Consumer<BotProvider>(
       builder: (context, bp, _) {
         final s = bp.state;
-        if (bp.loading || s == null) {
+        if (s == null) {
           return const DashboardSkeleton();
         }
 

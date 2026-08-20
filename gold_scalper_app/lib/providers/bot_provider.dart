@@ -56,6 +56,7 @@ class BotProvider extends ChangeNotifier {
   bool _emailPermissionPending = false;
 
   static const _configKey = 'saved_bot_config';
+  static const _cachePrefix = 'bp_cache_';
 
   static const _baseUrls = [
     'https://gold-scalper-qyhg.onrender.com',
@@ -296,9 +297,14 @@ class BotProvider extends ChangeNotifier {
   Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
-    _loading = true;
+
     await _loadConfig();
-    notifyListeners();
+    await _loadCache();
+
+    if (_state != null) {
+      _loading = false;
+      notifyListeners();
+    }
 
     _fetchAll().whenComplete(() {
       _subscribeRealtimeNotifications();
@@ -392,8 +398,13 @@ class BotProvider extends ChangeNotifier {
   }
 
   Future<void> _fetchAll() async {
+    await _fetchState();
+    _loading = false;
+    _cacheState();
+    _dataLoaded = true;
+    notifyListeners();
+
     await Future.wait([
-      _fetchState(),
       _fetchLogs(),
       _fetchSubscription(),
       _fetchConfig(),
@@ -403,7 +414,7 @@ class BotProvider extends ChangeNotifier {
       _fetchNotifications(),
       _fetchEmailPrefs(),
     ]);
-    _dataLoaded = true;
+    _cacheState();
   }
 
   Future<void> _fetchEmailPrefs() async {
@@ -412,6 +423,22 @@ class BotProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint('_fetchEmailPrefs failed: $e');
     }
+  }
+
+  void updateEmailPrefsLocal({
+    required bool allowEmail,
+    required bool allowPush,
+    bool allowMarketing = false,
+  }) {
+    _emailPrefs = EmailPrefs(
+      configured: _emailPrefs.configured,
+      email: _emailPrefs.email,
+      allowEmail: allowEmail,
+      allowPush: allowPush,
+      allowMarketing: allowMarketing,
+      isNew: false,
+    );
+    notifyListeners();
   }
 
   Future<bool> updateEmailPrefs({
@@ -446,6 +473,7 @@ class BotProvider extends ChangeNotifier {
   Future<void> _fetchState() async {
     try {
       final stateData = await _get('/api/device/bot/state');
+      _lastStateRaw = stateData;
       _state = BotState.fromApiResponse(stateData);
       _botRunning = stateData['running'] == true;
     } catch (e) {
@@ -510,6 +538,7 @@ class BotProvider extends ChangeNotifier {
   Future<void> _fetchPerformance() async {
     try {
       final perfData = await _get('/api/device/bot/performance');
+      _lastPerfRaw = perfData;
       _performance = Performance.fromJson(perfData);
     } catch (e) {
       debugPrint('_fetchPerformance failed: $e');
@@ -528,20 +557,24 @@ class BotProvider extends ChangeNotifier {
 
   Future<void> _fetchEquityCurve() async {
     await Future.wait([
-      _fetchEquityCurvePeriod('all', (points) => _equityCurve = points),
-      _fetchEquityCurvePeriod('yearly', (points) => _yearlyCurve = points),
-      _fetchEquityCurvePeriod('monthly', (points) => _monthlyCurve = points),
+      _fetchEquityCurvePeriod('all', (raw, points) {
+        _lastEquityRaw = raw;
+        _equityCurve = points;
+      }),
+      _fetchEquityCurvePeriod('yearly', (_, points) => _yearlyCurve = points),
+      _fetchEquityCurvePeriod('monthly', (_, points) => _monthlyCurve = points),
     ]);
   }
 
-  Future<void> _fetchEquityCurvePeriod(String period, void Function(List<EquityPoint>) setter) async {
+  Future<void> _fetchEquityCurvePeriod(String period, void Function(List<dynamic> raw, List<EquityPoint> points) setter) async {
     try {
       final data = await _get('/api/device/bot/equity_curve?period=$period');
-      final points = (data['points'] as List? ?? []).map((p) => EquityPoint(
+      final raw = data['points'] as List? ?? [];
+      final points = raw.map((p) => EquityPoint(
         time: DateTime.tryParse(p['time'] ?? '') ?? DateTime.now(),
         balance: (p['balance'] ?? 0).toDouble(),
       )).toList();
-      setter(points);
+      setter(raw, points);
     } catch (e) {
       debugPrint('_fetchEquityCurve $period failed: $e');
     }
@@ -612,16 +645,21 @@ class BotProvider extends ChangeNotifier {
     }
   }
 
+  int _tickCount = 0;
+
   Future<void> _tickLive() async {
+    _tickCount++;
     await Future.wait([
       _fetchStateAndLogs(),
       _fetchTrades(),
       _get('/api/device/subscription').then((d) => _subscription = d).catchError((e) { debugPrint('_tickLive subscription: $e'); return <String, dynamic>{}; }),
-      _get('/api/device/bot/performance').then((d) { _performance = Performance.fromJson(d); }).catchError((e) { debugPrint('_tickLive perf: $e'); return; }),
+      _fetchPerformance().catchError((e) { debugPrint('_tickLive perf: $e'); return; }),
       _fetchEquityCurve().catchError((e) { debugPrint('_tickLive equity: $e'); }),
       _fetchNotifications().catchError((e) { debugPrint('_tickLive notifications: $e'); }),
       _fetchEmailPrefs().catchError((e) { debugPrint('_tickLive email prefs: $e'); }),
     ]);
+
+    if (_tickCount % 6 == 0) _cacheState();
 
     if (_botRunning && !isDemo && !hasNoAccounts && !canTrade && !_subscriptionBlocked) {
       _subscriptionBlocked = true;
@@ -946,6 +984,54 @@ class BotProvider extends ChangeNotifier {
     } catch (e) {
       addLog('Failed to save settings: $e', level: 'ERROR');
       return false;
+    }
+  }
+
+  Map<String, dynamic> _lastStateRaw = {};
+  Map<String, dynamic> _lastPerfRaw = {};
+  List<dynamic> _lastEquityRaw = [];
+
+  Future<void> _cacheState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_lastStateRaw.isNotEmpty) {
+        await prefs.setString('${_cachePrefix}state', jsonEncode(_lastStateRaw));
+      }
+      if (_lastPerfRaw.isNotEmpty) {
+        await prefs.setString('${_cachePrefix}performance', jsonEncode(_lastPerfRaw));
+      }
+      if (_lastEquityRaw.isNotEmpty) {
+        await prefs.setString('${_cachePrefix}equity', jsonEncode(_lastEquityRaw));
+      }
+      await prefs.setString('${_cachePrefix}config', jsonEncode(_config.toJson()));
+    } catch (e) {
+      debugPrint('_cacheState failed: $e');
+    }
+  }
+
+  Future<void> _loadCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final stateRaw = prefs.getString('${_cachePrefix}state');
+      if (stateRaw != null) {
+        _lastStateRaw = Map<String, dynamic>.from(jsonDecode(stateRaw));
+        _state = BotState.fromApiResponse(_lastStateRaw);
+        _botRunning = _lastStateRaw['running'] == true;
+      }
+      final perfRaw = prefs.getString('${_cachePrefix}performance');
+      if (perfRaw != null) {
+        _lastPerfRaw = Map<String, dynamic>.from(jsonDecode(perfRaw));
+        _performance = Performance.fromJson(_lastPerfRaw);
+      }
+      final eqRaw = prefs.getString('${_cachePrefix}equity');
+      if (eqRaw != null) {
+        _lastEquityRaw = jsonDecode(eqRaw) as List;
+        _equityCurve = _lastEquityRaw
+            .map((p) => EquityPoint.fromJson(Map<String, dynamic>.from(p)))
+            .toList();
+      }
+    } catch (e) {
+      debugPrint('_loadCache failed: $e');
     }
   }
 

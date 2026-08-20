@@ -55,9 +55,11 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
           );
         }
 
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
+        return RefreshIndicator(
+          onRefresh: () async => bp.refresh(),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
             FadeInScale(
               child: _buildSummaryGrid(perf),
             ),
@@ -106,6 +108,7 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
             ),
             const SizedBox(height: 24),
           ],
+          ),
         );
       },
     );

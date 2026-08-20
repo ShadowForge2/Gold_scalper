@@ -298,15 +298,31 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
+    open_positions = 0
+    try:
+        open_positions = bot.position_manager.open_count
+    except Exception:
+        pass
+
     try:
         await failover.release_lease()
     except Exception as e:
         bot.logger.warning(f"Failover lease release on shutdown failed: {e}")
+
     for t in list(_background_tasks):
         t.cancel()
     if _background_tasks:
         await asyncio.gather(*_background_tasks, return_exceptions=True)
-    await bot.shutdown()
+
+    if open_positions == 0:
+        bot.logger.info("No open trades — skipping grace period, shutting down immediately")
+        bot._running = False
+        if hasattr(bot, 'client'):
+            bot.client.shutdown()
+    else:
+        bot.logger.info(f"{open_positions} open trade(s) — graceful shutdown with 25s grace")
+        await bot.shutdown()
+
     bot_pool.stop_all()
     await shutdown_db()
 

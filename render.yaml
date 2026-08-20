@@ -2,8 +2,8 @@ services:
   - type: web
     name: gold-scalper
     runtime: python
-    buildCommand: bash render-build.sh
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    buildCommand: cd Backend && bash render-build.sh
+    startCommand: cd Backend && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: BROKER
         value: CAPITAL

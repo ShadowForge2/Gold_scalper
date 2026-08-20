@@ -28,11 +28,11 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
   @override
   void initState() {
     super.initState();
-    _pulseCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
+    _pulseCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 400));
     _pulseAnim = Tween<double>(begin: 1.0, end: 0.0).animate(
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadSavedAccounts());
+    _loadSavedAccounts();
   }
 
   Future<void> _loadSavedAccounts() async {
@@ -178,9 +178,16 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
       });
     }
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
+    final symbol = bp.state?.symbol ?? '--';
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        final bp = context.read<BotProvider>();
+        await bp.refresh();
+      },
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
         FadeInScale(
           child: _buildSection('Device', [
             _infoTile('Device ID', device.deviceId ?? '--'),
@@ -188,12 +195,10 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
         ),
         const SizedBox(height: 16),
         FadeInScale(
-          delay: const Duration(milliseconds: 100),
           child: _buildCredentialsSection(bp, device),
         ),
         const SizedBox(height: 16),
         FadeInScale(
-          delay: const Duration(milliseconds: 200),
           child: _buildSection('Subscription', [
             if (bp.trialActive)
               _infoTile('Trial Active', '${bp.daysRemaining} day(s) left')
@@ -213,24 +218,22 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
         ),
         const SizedBox(height: 16),
         FadeInScale(
-          delay: const Duration(milliseconds: 250),
           child: _buildEmailSection(bp),
         ),
         const SizedBox(height: 16),
         FadeInScale(
-          delay: const Duration(milliseconds: 300),
           child: _buildSection('Info', [
             _infoTile('Broker', 'Capital.com'),
-            _infoTile('Symbol', context.watch<BotProvider>().state?.symbol ?? '--'),
+            _infoTile('Symbol', symbol),
             _infoTile('App', 'Quantorafx v2.0.0'),
           ]),
         ),
         const SizedBox(height: 16),
         FadeInScale(
-          delay: const Duration(milliseconds: 400),
           child: _buildFooter(),
         ),
       ],
+      ),
     );
   }
 
@@ -414,17 +417,6 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
         const SizedBox(height: 12),
         _infoTile('Delivered to', prefs.email ?? '--'),
       ]);
-    } else {
-      tiles.addAll([
-        const SizedBox(height: 8),
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Text(
-            'Email updates are not configured yet — set RESEND_API_KEYS on the server to enable them.',
-            style: const TextStyle(color: kTextSecondary, fontSize: 12, height: 1.4),
-          ),
-        ),
-      ]);
     }
     return _buildSection('Notifications & Email', tiles);
   }
@@ -435,6 +427,11 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
     required bool allowEmail,
     required bool allowMarketing,
   }) async {
+    bp.updateEmailPrefsLocal(
+      allowEmail: allowEmail,
+      allowPush: allowPush,
+      allowMarketing: allowMarketing,
+    );
     final ok = await bp.updateEmailPrefs(
       allowEmail: allowEmail,
       allowPush: allowPush,

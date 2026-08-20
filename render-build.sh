@@ -5,6 +5,9 @@
 # Render free tier: 512 MB RAM, shared CPU
 # XGBoost candle models are committed to git; the build only verifies
 # they are present (no on-build training, no torch/onnx runtime).
+#
+# NOTE: This script runs from the Backend/ directory
+# (render.yaml does: cd Backend && bash render-build.sh)
 # ===================================================================
 set -euo pipefail
 

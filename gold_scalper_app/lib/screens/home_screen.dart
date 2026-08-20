@@ -191,10 +191,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             ),
-          IconButton(
-            icon: Icon(Icons.refresh_rounded, color: Colors.grey[500], size: 20),
-            onPressed: hapt(() => bp.init()),
-          ),
           const SizedBox(width: 4),
         ],
       ),
