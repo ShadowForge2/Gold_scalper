@@ -1314,7 +1314,7 @@ class Bot:
             self._symbol_states[sym] = self.STATES["WAITING_FOR_FUNDS"]
             return
 
-        risk_pct = getattr(cfg, "RISK_PCT", 0.03)
+        risk_pct = getattr(cfg, "RISK_PCT", 0.04)
         risk_amount = balance * risk_pct
         atr_at_entry = signal.get("atr", 0)
         contract_size = fresh_info.get("contract_size", 1) or 1

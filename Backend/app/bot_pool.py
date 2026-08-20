@@ -207,7 +207,7 @@ class BotPool:
         if bot is None:
             return None
         return {
-            "RISK_PCT": str(getattr(cfg, "RISK_PCT", 0.03)),
+            "RISK_PCT": str(getattr(cfg, "RISK_PCT", 0.04)),
             "MAX_SPREAD_PIPS": str(cfg.MAX_SPREAD_PIPS),
             "MIN_BALANCE": str(cfg.MIN_BALANCE),
             "MAX_LOT": str(cfg.MAX_LOT),

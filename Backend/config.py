@@ -55,7 +55,7 @@ LOT_MULTIPLIER = _env_int("LOT_MULTIPLIER", 2)
 MAX_LOT_MULTIPLIER = _env_float("MAX_LOT_MULTIPLIER", 2.0)
 
 # Fixed fractional risk per trade (matches backtest: lot_value = balance * RISK_PCT)
-RISK_PCT = _env_float("RISK_PCT", 0.03)
+RISK_PCT = _env_float("RISK_PCT", 0.04)
 
 # Minimum balance to start trading
 MIN_BALANCE = _env_float("MIN_BALANCE", 10.0)
