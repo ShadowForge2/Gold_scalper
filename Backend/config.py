@@ -271,12 +271,31 @@ PULL_MIN_H1_BARS = _env_int("PULL_MIN_H1_BARS", 30)  # completed H1 candles befo
 #                  candle's close to capture the tip instead of waiting to trail.
 PULL_GIVEBACK_CAP = _env_float("PULL_GIVEBACK_CAP", 0.30)
 PULL_PUMP_ATR = _env_float("PULL_PUMP_ATR", 0.5)
-# Broker-side trailing stop (fixes the live fill-gap bleed). When True, the bot
-# ratchets a real Capital.com stopLevel on each completed M5 bar via
-# modify_position() so the broker closes AT the engine's intended trail price
-# instead of a market DELETE that slips badly on fast moves. Falls back to a
-# market close if the broker rejects the level. Pump-atr tip exits are untouched.
-PULL_TRAIL_STOP_ENABLED = _env_bool("PULL_TRAIL_STOP_ENABLED", True)
+# Broker-side trailing stop (fixes the live fill-gap bleed). When enabled for a
+# symbol, the bot ratchets a real Capital.com stopLevel on each completed M5 bar
+# via modify_position() so the broker closes AT the engine's intended trail price
+# instead of a market DELETE that slips badly on fast moves (US30/US100 live
+# trail exits were filled far past the intended price -> the entire -4.82 bleed).
+# Falls back to a market close if the broker rejects the level; pump-atr tip
+# exits are untouched.
+# PER-SYMBOL, evidence-backed by _bt_trailstop_validate.py (2025 + 2026, M1
+# touch-fill modeling):
+#   US30 / US100  -> ON.  Broker stop lifts WR ~60% and PF ~2.1-2.6 vs ~1.0-1.4
+#                    bar-close. These two bled live; the stop fixes it.
+#   XAUUSD        -> OFF. Gold's tight trail_r=0.15 gets chopped by intra-bar
+#                    noise under a real broker stop (PF drops to ~0.9-0.04 in
+#                    backtest); gold did NOT bleed live, keep its bar-close trail.
+PULL_TRAIL_STOP_ENABLED = {
+    "XAUUSD": _env_bool("PULL_TRAIL_STOP_XAUUSD", False),
+    "US100": _env_bool("PULL_TRAIL_STOP_US100", True),
+    "JP225": _env_bool("PULL_TRAIL_STOP_JP225", False),
+    "DE40": _env_bool("PULL_TRAIL_STOP_DE40", False),
+    "US500": _env_bool("PULL_TRAIL_STOP_US500", False),
+    "US30": _env_bool("PULL_TRAIL_STOP_US30", True),
+}
+# Legacy global switch: if explicitly set, it forces the per-symbol value ON for
+# every enabled pull pair (used by deployments that only know the old knob).
+PULL_TRAIL_STOP_DEFAULT = _env_bool("PULL_TRAIL_STOP_ENABLED", True)
 # Percentage-of-ATR guard used when ratcheting the broker stop: we never set a
 # stopLevel closer to market than this fraction of ATR, because Capital.com
 # rejects stops too close to the current price (min-stop-distance rule). 0.0

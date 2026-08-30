@@ -976,9 +976,12 @@ class Bot:
         """Ratchet a Capital.com stopLevel to the engine's trail stop on each
         completed M5 bar so the broker closes near the intended trail price
         instead of slipping on a fast market DELETE. No-op unless the broker
-        trailing-stop feature is enabled and the engine has a meaningful level.
-        Falls back to the market-close path if the broker rejects the level."""
-        if not getattr(cfg, "PULL_TRAIL_STOP_ENABLED", True):
+        trailing-stop feature is enabled for this symbol and the engine has a
+        meaningful level. Falls back to the market-close path if the broker
+        rejects the level."""
+        enabled = getattr(cfg, "PULL_TRAIL_STOP_ENABLED", {})
+        per_sym = enabled.get(sym, False) if isinstance(enabled, dict) else bool(enabled)
+        if not per_sym:
             return
         eng = self._symbol_pull_engine.get(sym)
         if eng is None or not eng.in_position:
