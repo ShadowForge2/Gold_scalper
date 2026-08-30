@@ -393,3 +393,46 @@ scheduled emails; transactional emails from API requests still fire from either.
 matches `days_remaining in (14, 7)`), plus the single "trial ended" notice when
 it expires (`billing_trial_expired` cooldown = 30 days). Promos are at most one
 every **14 days** (`promo` cooldown). Fee-due reminders stay 24h (real debt).
+
+### Session 2026-08-30: Broker Trailing Stop (fill-gap fix) + Live Verification
+
+**Live bleed root cause**: Pull-scalper trail exits were closed by a market
+`DELETE /positions/{dealId}` on the 15s poll loop, so the fill slipped far past
+the engine's intended bar-close trail price (11 of 21 trail exits closed worse
+than entry — impossible at bar-close fills). Trail exits = −4.87 of the −4.82
+live week; pump_tip = +0.27 was fine.
+
+**Backtest evidence** (`_bt_trailstop_validate.py`, M1 touch-fill vs bar-close+gap modeling,
+2025 + 2026, identical entries/costs):
+- US100: broker stop lifts PF 1.41→2.62 & WR 43→59% (2025), 1.01→2.62 & 38→67% (2026)
+- US30 : broker stop lifts PF 1.35→2.56 & WR 42→60% (2025), 1.09→2.08 & 44→60% (2026)
+- XAUUSD: broker stop HURTS (PF 0.94–0.04) — chop-outs on gold's tight trail_r=0.15;
+  gold did NOT bleed live (+0.34), keeps bar-close trail.
+
+**Implementation**:
+- `pull_h1_scalper.py`: `trail_stop_level()` returns the broker stop price
+  `run_ext ± (1−trail_r)·wave`; `confirm_exit` now prefers the actual market
+  fill over the stale bar close for daily-R bookkeeping.
+- `config.py`: `PULL_TRAIL_STOP_ENABLED` is now a **per-symbol dict**
+  (US30=True, US100=True, XAUUSD=False, others False); legacy
+  `PULL_TRAIL_STOP_ENABLED=true` still forces all on. `PULL_SLIP_GUARD_ATR`
+  (0.75) keeps stops out of the broker's min-stop-distance rejection zone.
+- `bot.py`: `_sync_pull_trail_stop` ratchets the stopLevel via
+  `modify_position` each completed M5 bar; `_actual_fill_price` passes the real
+  fill to confirm_exit; broker-stop external closes recorded as `trail` exits.
+
+**CRITICAL OPERATIONAL CAVEAT — read-back verification** (verified against
+official Capital.com docs open-api.capital.com + a third-party finding that the
+**DEMO API silently ignores `stopLevel`/`profitLevel` on POST /positions**,
+returning 200 without arming; the documented fix is exactly our PUT update path):
+- Docs confirm `PUT /api/v1/positions/{dealId}` accepts `stopLevel` (returns a
+  `dealReference` on 200), so the mechanism is valid on LIVE.
+- **BUT `CAPITAL_DEMO=true` in the demo .env**: on demo the PUT may silently
+  no-op, so `modify_position` returning True does NOT prove the stop is armed.
+- Therefore `_sync_pull_trail_stop` now reads the position back
+  (`_verify_pull_stop`) after each ratchet and logs:
+  - `Pull trail stop ratcheted & VERIFIED -> x` (broker IS protecting), or
+  - `Pull trail stop VERIFY FAILED ... Trading unprotected` (demo ignored it).
+- **First-live-run check**: look for VERIFIED lines, NOT the FAILED warning, on
+  US30/US100. If FAILED, the broker is not applying stops — disable the fix
+  (or move to live account) before trusting it.

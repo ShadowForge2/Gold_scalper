@@ -1026,13 +1026,48 @@ class Bot:
             self.logger.warning(f"[{sym}] pull trail stop modify failed: {e}")
             return
         if ok:
+            # Verify the broker actually applied the stopLoss. Capital.com's
+            # DEMO API is known to silently ignore stopLevel/profitLevel on some
+            # paths (returns 200 without arming), so trust nothing — read it back
+            # and warn loudly if the position does not carry the stop. This is
+            # the only way to be sure the ratchet really protects the trade.
+            applied = self._verify_pull_stop(sym, ticket, level)
             self._symbol_pull_last_stop[sym] = level
-            self.logger.signal(
-                f"[{sym}] Pull trail stop ratcheted -> {level:.2f} "
-                f"(hold={getattr(eng, '_hold', '?')} atr={atr:.4f})"
-            )
+            if applied:
+                self.logger.signal(
+                    f"[{sym}] Pull trail stop ratcheted & VERIFIED -> {level:.2f} "
+                    f"(hold={getattr(eng, '_hold', '?')} atr={atr:.4f})"
+                )
+            else:
+                self.logger.warning(
+                    f"[{sym}] Pull trail stop VERIFY FAILED — broker returned OK but "
+                    f"position does NOT carry SL ~{level:.2f} (demo may ignore stopLevel). "
+                    f"Trading unprotected; falls back to market close on exit."
+                )
         else:
             self.logger.warning(f"[{sym}] Pull trail stop modify rejected ({level:.2f}) — fallback to market close")
+
+    def _verify_pull_stop(self, sym: str, ticket, level: float) -> bool:
+        """Read back the position after a ratchet and confirm the broker set the
+        stopLevel we asked for (within tolerance). Returns True if verified."""
+        if not ticket:
+            return False
+        try:
+            positions = self.client.get_positions(symbol=sym) or []
+        except Exception as e:
+            self.logger.warning(f"[{sym}] pull trail stop verify read-back failed: {e}")
+            return False
+        for p in positions:
+            if str(p.get("ticket", "")) != str(ticket):
+                continue
+            sl = p.get("sl", 0) or 0
+            if sl and abs(sl - level) <= max(1e-6, abs(level) * 1e-4):
+                return True
+            # broker may have rounded/offset slightly; accept a small band
+            if sl and abs(sl - level) <= max(1e-6, abs(level) * 2e-3):
+                return True
+            break
+        return False
 
     def _actual_fill_price(self, sym: str, pos: Dict, held_minutes: float) -> float:
         """Best-effort actual fill price for bookkeeping after a close.
