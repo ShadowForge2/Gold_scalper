@@ -64,6 +64,8 @@ class Bot:
         self._symbol_pull_engine: Dict[str, Optional[object]] = {}  # PullPrevH1Scalper instances
         self._symbol_pull_entry: Dict[str, bool] = {}   # current trade is a pull entry
         self._symbol_pull_cache_ts: Dict[str, float] = {}  # M1 history fetch time
+        self._symbol_pull_last_stop: Dict[str, float] = {}  # last stopLevel ratcheted per symbol (broker stop sync)
+        self._symbol_pull_last_pos: Dict[str, Dict] = {}  # last known pull position per symbol (for broker-stop close recording)
         self._last_pull_warn_ts: float = 0.0  # throttle for pull history warnings
         self._symbol_engine_failures: Dict[str, int] = {}  # consecutive pull engine failures per symbol
         # Whole-board scanner: the active tradeable universe is the scanner's
@@ -970,6 +972,79 @@ class Bot:
                 self.logger.warning(f"[{sym}] Pull M1 fetch failed: {e}")
         return None
 
+    def _sync_pull_trail_stop(self, sym: str, pos: Dict) -> None:
+        """Ratchet a Capital.com stopLevel to the engine's trail stop on each
+        completed M5 bar so the broker closes near the intended trail price
+        instead of slipping on a fast market DELETE. No-op unless the broker
+        trailing-stop feature is enabled and the engine has a meaningful level.
+        Falls back to the market-close path if the broker rejects the level."""
+        if not getattr(cfg, "PULL_TRAIL_STOP_ENABLED", True):
+            return
+        eng = self._symbol_pull_engine.get(sym)
+        if eng is None or not eng.in_position:
+            return
+        level = eng.trail_stop_level()
+        if level <= 0:
+            return
+        # Don't fight the engine's own exit: if a pending action is set (e.g.
+        # pump tip), let the normal close path handle it — skip ratcheting.
+        pending = eng.pending_action()
+        if pending is not None and pending.get("type") == "exit":
+            return
+        # Safety floor: never place a stop closer to market than SLIP_GUARD_ATR
+        # multiples of ATR (Capcom rejects stops too close to market).
+        guard = getattr(cfg, "PULL_SLIP_GUARD_ATR", 0.75)
+        atr = eng.atr
+        if atr > 0 and guard > 0:
+            ref = pos.get("price_current", pos.get("price_open", 0)) or 0
+            is_long = str(pos.get("type", "BUY")).upper() == "BUY"
+            if is_long:
+                level = max(level, ref - guard * atr)
+            else:
+                level = min(level, ref + guard * atr)
+        last = self._symbol_pull_last_stop.get(sym, 0.0)
+        # Only ratchet when the level actually improved (long: higher; short: lower).
+        is_long = str(pos.get("type", "BUY")).upper() == "BUY"
+        better = (level > last + 1e-9) if is_long else (last == 0.0 or level < last - 1e-9)
+        if not better:
+            return
+        ticket = pos.get("ticket")
+        if not ticket:
+            return
+        # modify_position reads the level as the actual stop price. Only send
+        # the level if the position does not already carry a tighter one.
+        curb = pos.get("sl", 0) or 0
+        if curb and ((is_long and curb >= level - 1e-9) or (not is_long and curb <= level + 1e-9)):
+            self._symbol_pull_last_stop[sym] = level
+            return
+        try:
+            ok = self.client.modify_position(ticket, stop_loss=level)
+        except Exception as e:
+            self.logger.warning(f"[{sym}] pull trail stop modify failed: {e}")
+            return
+        if ok:
+            self._symbol_pull_last_stop[sym] = level
+            self.logger.signal(
+                f"[{sym}] Pull trail stop ratcheted -> {level:.2f} "
+                f"(hold={getattr(eng, '_hold', '?')} atr={atr:.4f})"
+            )
+        else:
+            self.logger.warning(f"[{sym}] Pull trail stop modify rejected ({level:.2f}) — fallback to market close")
+
+    def _actual_fill_price(self, sym: str, pos: Dict, held_minutes: float) -> float:
+        """Best-effort actual fill price for bookkeeping after a close.
+
+        Capital.com's DELETE returns no fill price, so we infer one from the
+        position's levels: its existing stopLevel (broker-stop close) if it had
+        one, else the pre-close market price as a floor against stale data.
+        Returns 0.0 if nothing usable (caller then keeps the engine's estimate)."""
+        if not pos:
+            return 0.0
+        sl = pos.get("sl", 0) or 0
+        if sl:
+            return float(sl)
+        return float(pos.get("price_current", pos.get("current_price", 0)) or 0)
+
     def _pull_entry_signal(self, sym: str, current_price: float, symbol_info: Dict) -> Optional[Dict]:
         """Pull scalper entry: feed fresh M1 bars; return a signal dict when the
         engine fires a pullback-into-H1-trend entry trigger (order still needs
@@ -1133,12 +1208,29 @@ class Bot:
                 return
             self.logger.info(f"[{sym}] Position gone (external close / margin call) — resetting state")
             eng = self._symbol_pull_engine.get(sym)
+            # If this was a pull trade closed by the ratcheted broker stop, record
+            # it as a trail exit at the stop level so the loss shows up in history
+            # (previously this branch left it unrecorded).
+            last_pos = self._symbol_pull_last_pos.get(sym)
             if eng is not None and eng.in_position:
-                eng.confirm_exit()
+                fill_px = 0.0
+                if last_pos:
+                    acct2 = self.client.get_account_info()
+                    bal2 = acct2.get("balance", 0) if acct2 else 0
+                    sl = last_pos.get("sl", 0) or 0
+                    fill_px = float(sl) if sl else float(last_pos.get("price_current", 0) or 0)
+                    exit_data = dict(last_pos)
+                    exit_data["price_current"] = fill_px
+                    self.position_manager.note_closed(
+                        exit_data, exit_reason="trail",
+                        score=0, balance=bal2)
+                eng.confirm_exit(exit_price=fill_px or None)
             self._symbol_states[sym] = self.STATES["IDLE"]
             self._symbol_event_start_ts[sym] = None
             self._symbol_pull_entry[sym] = False
             self._symbol_engine_failures[sym] = 0
+            self._symbol_pull_last_stop[sym] = 0.0
+            self._symbol_pull_last_pos[sym] = {}
             return
 
         acct = self.client.get_account_info()
@@ -1165,6 +1257,9 @@ class Bot:
             return
 
         pos = sym_positions[0]
+        # Remember the latest snapshot of the pull position so a later broker-stop
+        # (external) close can still be recorded with a sane exit price.
+        self._symbol_pull_last_pos[sym] = pos
         direction = pos.get("type", "BUY")
         entry_price = pos.get("price_open", 0)
         current_px = pos.get("price_current", pos.get("current_price", entry_price))
@@ -1223,6 +1318,10 @@ class Bot:
                             self._symbol_pull_entry[sym] = False
                             return
                 if action is None or action.get("type") != "exit":
+                    # Still holding: ratchet the broker trailing stop on each
+                    # tick so a fast move closes at the intended trail price
+                    # instead of slipping on a market DELETE.
+                    self._sync_pull_trail_stop(sym, pos)
                     return
                 exit_reason = action.get("reason", "pull_exit")
                 self.logger.signal(
@@ -1238,10 +1337,16 @@ class Bot:
                         balance=balance)
                 if closed:
                     pnl = sum(p.get("profit", 0) for p in closed)
-                    eng.confirm_exit()
+                    # Pass the real fill (stopLevel if broker-stop closed it,
+                    # else pre-close market) so the engine's daily-R bookkeeping
+                    # reflects the actual close price, not a stale bar close.
+                    fill_px = self._actual_fill_price(sym, pos, minutes_held) or 0.0
+                    eng.confirm_exit(exit_price=fill_px)
                     self._symbol_states[sym] = self.STATES["IDLE"]
                     self._symbol_event_start_ts[sym] = None
                     self._symbol_pull_entry[sym] = False
+                    self._symbol_pull_last_stop[sym] = 0.0
+                    self._symbol_pull_last_pos[sym] = {}
                     await self._notify(
                         "trade_close",
                         f"Trade Closed — {sym}",

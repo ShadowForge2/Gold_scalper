@@ -271,6 +271,17 @@ PULL_MIN_H1_BARS = _env_int("PULL_MIN_H1_BARS", 30)  # completed H1 candles befo
 #                  candle's close to capture the tip instead of waiting to trail.
 PULL_GIVEBACK_CAP = _env_float("PULL_GIVEBACK_CAP", 0.30)
 PULL_PUMP_ATR = _env_float("PULL_PUMP_ATR", 0.5)
+# Broker-side trailing stop (fixes the live fill-gap bleed). When True, the bot
+# ratchets a real Capital.com stopLevel on each completed M5 bar via
+# modify_position() so the broker closes AT the engine's intended trail price
+# instead of a market DELETE that slips badly on fast moves. Falls back to a
+# market close if the broker rejects the level. Pump-atr tip exits are untouched.
+PULL_TRAIL_STOP_ENABLED = _env_bool("PULL_TRAIL_STOP_ENABLED", True)
+# Percentage-of-ATR guard used when ratcheting the broker stop: we never set a
+# stopLevel closer to market than this fraction of ATR, because Capital.com
+# rejects stops too close to the current price (min-stop-distance rule). 0.0
+# disables the floor. Only a safety valve — it does not change the exit model.
+PULL_SLIP_GUARD_ATR = _env_float("PULL_SLIP_GUARD_ATR", 0.75)
 # Global margin guard: if a NEW entry is rejected for insufficient margin, the
 # bot pauses ALL new entries (open positions keep trading/exiting) and only
 # resumes once free margin recovers past the blocked level (a position closing

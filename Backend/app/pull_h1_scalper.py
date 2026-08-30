@@ -323,11 +323,34 @@ class PullPrevH1Scalper:
         if self._pending is not None and self._pending.get("type") == "enter":
             self._pending = None
 
+    def trail_stop_level(self) -> float:
+        """Broker-side trailing stop level for a long (+1) or short (-1) trade.
+
+        Anchors the stop below/above entry by (1 - trail_r) of the current wave
+        extreme, mirroring the in-engine giveback test (back >= trail_r * wave)
+        so that a broker stop at this level fires close to where the engine
+        would have emitted a trail exit. Returns 0.0 when there is nothing
+        meaningful to ratchet to (flat, no wave yet).
+        """
+        if self._pos == 0 or self._run_ext == 0.0 or self._entry == 0.0:
+            return 0.0
+        wave = (self._run_ext - self._entry) * self._pos
+        if wave <= 0:
+            return 0.0
+        if self._pos > 0:
+            # long: stop stays below the running high, giving back (1-trail_r) of wave
+            return float(self._run_ext - (1.0 - self.trail_r) * wave)
+        else:
+            # short: stop stays above the running low
+            return float(self._run_ext + (1.0 - self.trail_r) * wave)
+
     def confirm_exit(self, exit_price: float = None) -> None:
         p = self._pending
         if p is None or p.get("type") != "exit":
             return
-        px = float(p.get("price", 0.0) or exit_price or self._last_m5_close or 0.0)
+        # Prefer the ACTUAL market fill passed by the bot over the engine's
+        # bar-close estimate, so daily-R bookkeeping reflects the real price.
+        px = float(exit_price) if exit_price not in (None, 0) else float(p.get("price", 0.0) or self._last_m5_close or 0.0)
         if px and self._pos != 0 and self._atr_entry > 0:
             gross = (px - self._entry) * self._pos / self._atr_entry
             r = gross - (self.round_trip_price / self._atr_entry)
