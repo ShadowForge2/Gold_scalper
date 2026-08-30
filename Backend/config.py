@@ -287,11 +287,11 @@ PULL_PUMP_ATR = _env_float("PULL_PUMP_ATR", 0.5)
 #                    backtest); gold did NOT bleed live, keep its bar-close trail.
 PULL_TRAIL_STOP_ENABLED = {
     "XAUUSD": _env_bool("PULL_TRAIL_STOP_XAUUSD", False),
-    "US100": _env_bool("PULL_TRAIL_STOP_US100", True),
+    "US100": _env_bool("PULL_TRAIL_STOP_US100", False),
     "JP225": _env_bool("PULL_TRAIL_STOP_JP225", False),
     "DE40": _env_bool("PULL_TRAIL_STOP_DE40", False),
     "US500": _env_bool("PULL_TRAIL_STOP_US500", False),
-    "US30": _env_bool("PULL_TRAIL_STOP_US30", True),
+    "US30": _env_bool("PULL_TRAIL_STOP_US30", False),
 }
 # Legacy global switch: if explicitly set, it forces the per-symbol value ON for
 # every enabled pull pair (used by deployments that only know the old knob).

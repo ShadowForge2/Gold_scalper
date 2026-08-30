@@ -1083,6 +1083,29 @@ class Bot:
             return float(sl)
         return float(pos.get("price_current", pos.get("current_price", 0)) or 0)
 
+    def _close_pull_position(self, sym: str, pos: Dict) -> List[Dict]:
+        """Close a pull position immediately on the engine's exit trigger tick.
+
+        Uses the incumbent position's ticket directly instead of re-querying the
+        broker, so the market close fires with minimal latency from the moment
+        `feed()` returns an exit action — filling as close to the trigger bar's
+        close as possible rather than after a slow `get_positions()` + DELETE.
+
+        Returns a list of closed position snapshots for bookkeeping, or an empty
+        list if nothing was closed (caller retries next tick). Falls back to
+        `close_all_bot_positions()` only if the direct ticket close fails (e.g.
+        the position was already closed externally or has no ticket), preserving
+        the previous robust multi-position close behaviour.
+        """
+        ticket = pos.get("ticket")
+        if ticket:
+            try:
+                if self.trade_executor.close_position(ticket):
+                    return [pos]
+            except Exception as e:
+                self.logger.warning(f"[{sym}] direct pull close failed ({ticket}): {e}")
+        return self.trade_executor.close_all_bot_positions(symbol=sym)
+
     def _pull_entry_signal(self, sym: str, current_price: float, symbol_info: Dict) -> Optional[Dict]:
         """Pull scalper entry: feed fresh M1 bars; return a signal dict when the
         engine fires a pullback-into-H1-trend entry trigger (order still needs
@@ -1367,7 +1390,12 @@ class Bot:
                     f"px={current_px:.2f} atr={eng.atr:.4f} held={minutes_held:.1f}m "
                     f"daily_r={eng.daily_r:+.3f}"
                 )
-                closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                # IMMEDIATE exit on this trigger tick: close the incumbent ticket
+                # directly (no follow-on get_positions re-query) so the market
+                # close fires with minimal latency after the engine emits its
+                # exit — filling as close to the trigger bar's close `bc` as the
+                # broker allows, instead of slipping on a slow re-query + DELETE.
+                closed = self._close_pull_position(sym, pos)
                 for pos_data in closed:
                     self.position_manager.note_closed(
                         pos_data, exit_reason=exit_reason,
