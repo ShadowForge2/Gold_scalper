@@ -336,6 +336,21 @@ PULL_SYMBOL_DEFAULTS = {
 # rollover): stop NEW entries once the day's net R reaches the target (lock in
 # the day) or hits the max loss (stop the bleed). 0.0 = guard disabled. An open
 # position is never force-closed by these — only new entries are blocked.
+PULL_BIG_ALIGN_ENABLED = _env_bool("PULL_BIG_ALIGN_ENABLED", False)
+# Pattern-recognition gate for the PullPrevH1 engine ("bigalign"): only take a
+# pull entry when the last completed H1 candle body is large AND aligned with
+# the entry. Backtest-validated (2022-2025, honest fills) to raise WR ~50->62%
+# and PF ~1.4-1.7 -> ~3.0-3.7 on XAUUSD/US100/US30 by skipping weak/chop H1
+# bodies. Global switch forces it on for every enabled pair; per-symbol
+# PULL_BIG_ALIGN_{SYM}_MULT tunes the body threshold (x H1-ATR).
+PULL_BIG_ALIGN_MULT = {
+    "XAUUSD": _env_float("PULL_BIG_ALIGN_XAUUSD_MULT", 1.0),
+    "US100": _env_float("PULL_BIG_ALIGN_US100_MULT", 1.0),
+    "JP225": _env_float("PULL_BIG_ALIGN_JP225_MULT", 1.0),
+    "DE40": _env_float("PULL_BIG_ALIGN_DE40_MULT", 1.0),
+    "US500": _env_float("PULL_BIG_ALIGN_US500_MULT", 1.0),
+    "US30": _env_float("PULL_BIG_ALIGN_US30_MULT", 1.0),
+}
 PULL_DAILY_TARGET_R = {
     "XAUUSD": _env_float("PULL_DAILY_TARGET_R_XAUUSD", 0.0),
     "US100": _env_float("PULL_DAILY_TARGET_R_US100", 0.0),
@@ -360,6 +375,8 @@ SYMBOL_PULL_PARAMS = {
         "round_trip": PULL_SYMBOL_ROUND_TRIP.get(sym, 0.0),
         "daily_target_r": PULL_DAILY_TARGET_R.get(sym, 0.0),
         "daily_max_loss_r": PULL_DAILY_MAX_LOSS_R.get(sym, 0.0),
+        "bigalign_enabled": bool(PULL_BIG_ALIGN_ENABLED),
+        "bigalign_mult": PULL_BIG_ALIGN_MULT.get(sym, 1.0),
     }
     for sym in SYMBOLS
 }

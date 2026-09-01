@@ -54,11 +54,14 @@ def build(symbol, start, end):
     t = m5.index
     pa = atr.reindex(m5.index, method="ffill").shift(1).values
     h1dir = np.sign(h1["close"] - h1["open"]).reindex(m5.index, method="ffill").shift(1).values
+    # Magnitude of the last completed H1 body (same shift/context as h1dir) so
+    # pattern-gates like "bigalign" (large aligned H1 body) can be replicated.
+    h1body = np.abs(h1["close"] - h1["open"]).reindex(m5.index, method="ffill").shift(1).values
     cost = SYMBOL_COSTS.get(symbol, {"spread": 0.0, "commission": 0.0})
     rtp = cost["spread"] + 2 * cost["commission"]
     cost_r = rtp / pa
     year_mask = (t.year >= start) & (t.year <= end)
-    return dict(c=c, t=t, pa=pa, h1dir=h1dir, cost_r=cost_r,
+    return dict(c=c, t=t, pa=pa, h1dir=h1dir, h1body=h1body, cost_r=cost_r,
                 year_mask=year_mask, n=len(c))
 
 

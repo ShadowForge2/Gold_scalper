@@ -60,6 +60,8 @@ def _build_scalper(symbol: str, logger: BotLogger, client: Any = None) -> PullPr
         daily_max_loss_r=float(pp.get("daily_max_loss_r", 0.0)),
         giveback_cap=float(pp.get("giveback_cap", getattr(cfg, "PULL_GIVEBACK_CAP", 0.30))),
         pump_atr=float(pp.get("pump_atr", getattr(cfg, "PULL_PUMP_ATR", 0.5))),
+        bigalign_enabled=bool(pp.get("bigalign_enabled", False)),
+        bigalign_mult=float(pp.get("bigalign_mult", 1.0)),
     )
 
 

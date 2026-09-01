@@ -52,6 +52,8 @@ class PullPrevH1Scalper:
         daily_max_loss_r: float = 0.0,
         giveback_cap: float = 0.30,
         pump_atr: float = 0.5,
+        bigalign_enabled: bool = False,
+        bigalign_mult: float = 1.0,
     ):
         self.symbol = symbol
         self._logger = logger
@@ -62,6 +64,13 @@ class PullPrevH1Scalper:
         self.min_h1_bars = int(min_h1_bars)
         self.daily_target_r = float(daily_target_r)
         self.daily_max_loss_r = float(daily_max_loss_r)
+        # Pattern-recognition gate ("bigalign"): only take a pull entry when the
+        # completed H1 candle body is large (>= bigalign_mult x H1-ATR) AND its
+        # direction aligns with the entry. Filters out weak/chop H1 bodies that
+        # reverse and bleed; validated by _bt_pull_gates.py to lift WR ~50->62%
+        # and PF ~1.4-1.7 -> ~3.0-3.7 consistently across 2022-2025.
+        self.bigalign_enabled = bool(bigalign_enabled)
+        self.bigalign_mult = float(bigalign_mult)
         # Profit lock-in: never give back more than GIVEBACK_CAP of the max
         # profit the trade has touched (tight trailing stop that rises with the
         # peak). PUMP_ATR: a single M5 candle whose favorable body exceeds this
@@ -82,6 +91,7 @@ class PullPrevH1Scalper:
         self._atr = 0.0              # ATR of the last completed H1 candle
         self._atr_entry = 0.0        # ATR at entry (for daily-guard R bookkeeping)
         self._h1dir = 0              # sign of last completed H1 body
+        self._h1body = 0.0           # magnitude (price) of last completed H1 body
         self._pos = 0                # 1 long / -1 short / 0 flat
         self._entry = 0.0
         self._hold = 0               # completed M5 bars since entry
@@ -153,6 +163,7 @@ class PullPrevH1Scalper:
             self._atr = 0.0
         row = completed.iloc[-1]
         self._h1dir = int(np.sign(float(row["close"]) - float(row["open"])))
+        self._h1body = abs(float(row["close"]) - float(row["open"]))
 
     # ── warm-up ──────────────────────────────────────────────────────
 
@@ -261,6 +272,13 @@ class PullPrevH1Scalper:
         # turn bar (c4) back in the favour direction -> ENTER
         if (c4 - c3) * dirn <= 0:
             return
+        # Pattern-recognition gate ("bigalign"): require a large, aligned H1 body
+        # so we only trade pullbacks inside an impulse, not weak/chop H1 candles.
+        if self.bigalign_enabled:
+            if self._h1body < self.bigalign_mult * self._atr:
+                return
+            if (self._h1dir > 0) != (dirn > 0):
+                return
         if not self.can_trade:
             self._log(f"entry blocked by daily guard (daily_r={self._daily_r:+.3f})")
             return
@@ -395,6 +413,7 @@ class PullPrevH1Scalper:
     def state_dict(self) -> dict:
         return {
             "h1dir": self._h1dir,
+            "h1body": self._h1body,
             "atr": self._atr,
             "pos": self._pos,
             "entry": self._entry,
