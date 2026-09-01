@@ -482,8 +482,13 @@ class FailoverManager:
         except asyncio.CancelledError:
             raise
         except Exception:
-            # Transient DB failure: keep last-known state until the lease
-            # expires, so management and trading continue through a hiccup.
+            # Transient DB failure: when we are NOT the current lease holder we
+            # fail CLOSED (no new trades) rather than risk a second instance
+            # trading the same account off a stale lease. If we demonstrably hold
+            # a still-valid lease we keep trading until it expires (never freeze
+            # a real leader out of its own account mid-lease). The broker-side
+            # single-writer guard in bot._execute_entry is the last line of
+            # defence against stacking if this ever mis-believes.
             return self.is_leader and now < self._lease_expires_at
 
     async def can_manage(self) -> bool:

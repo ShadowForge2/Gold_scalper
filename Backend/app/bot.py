@@ -1450,6 +1450,30 @@ class Bot:
             self._symbol_states[sym] = self.STATES["IN_TRADE"]
             return
 
+        # ── Single-writer guard (anti double-trade across failover instances) ──
+        # Local position_manager only sees THIS instance's fills. If a stale
+        # lease (or misconfigured failover) lets BOTH primary and backup trade
+        # the same shared Capital.com account, they must never stack a second
+        # position on the same symbol. Query the BROKER (ground truth shared by
+        # every instance) for any live position on this epic and refuse to enter
+        # while one exists. This fails closed: if we can't reach the broker we
+        # skip the entry rather than risk a duplicate.
+        try:
+            broker_positions = self.client.get_positions(symbol=sym) or []
+            if broker_positions:
+                self.logger.warning(
+                    f"[{sym}] Entry blocked (single-writer guard): {len(broker_positions)} "
+                    f"live position(s) on the shared account — skipping to avoid stacking"
+                )
+                self._symbol_states[sym] = self.STATES["IN_TRADE"]
+                return
+        except Exception as e:
+            self.logger.warning(
+                f"[{sym}] Entry aborted (single-writer guard could not verify broker): {e}"
+            )
+            self._symbol_states[sym] = self.STATES["IDLE"]
+            return
+
         fresh_info = self.client.get_symbol_info(sym)
         if fresh_info is None:
             self.logger.warning(f"[{sym}] Entry blocked: cannot fetch symbol info")
