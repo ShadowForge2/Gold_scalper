@@ -55,7 +55,10 @@ LOT_MULTIPLIER = _env_int("LOT_MULTIPLIER", 2)
 MAX_LOT_MULTIPLIER = _env_float("MAX_LOT_MULTIPLIER", 2.0)
 
 # Fixed fractional risk per trade (matches backtest: lot_value = balance * RISK_PCT)
-RISK_PCT = _env_float("RISK_PCT", 0.04)
+# Raised 0.04 -> 0.10 (2025 risk sweep, bigalign gate live): PF 3.0-3.4 stable,
+# max DD ~24.7% -> ~65-73%, account survived 2022-2025 at 15%; 10% is the sweet
+# spot balancing growth (26-146M x/year) vs blow-up margin (18% blew 2 years).
+RISK_PCT = _env_float("RISK_PCT", 0.10)
 
 # Minimum balance to start trading
 MIN_BALANCE = _env_float("MIN_BALANCE", 10.0)

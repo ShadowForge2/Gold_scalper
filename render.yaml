@@ -113,6 +113,16 @@ services:
         value: "0.30"
       - key: PULL_PUMP_ATR
         value: "0.5"
+      - key: PULL_BIG_ALIGN_ENABLED
+        value: "true"
+      - key: PULL_BIG_ALIGN_XAUUSD_MULT
+        value: "1.0"
+      - key: PULL_BIG_ALIGN_US100_MULT
+        value: "1.0"
+      - key: PULL_BIG_ALIGN_US30_MULT
+        value: "1.0"
+      - key: RISK_PCT
+        value: "0.10"
       - key: PULL_AUTO_TUNE_ENABLED
         value: "true"
       - key: PULL_AUTO_TUNE_BARS_M5
