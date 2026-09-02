@@ -26,7 +26,12 @@ def _fire_task(coro, name: str = "task"):
 
     def _done(t):
         _background_tasks.discard(t)
-        exc = t.exception()
+        if t.cancelled():
+            return
+        try:
+            exc = t.exception()
+        except asyncio.CancelledError:
+            return
         if exc and not isinstance(exc, asyncio.CancelledError):
             bot.logger.error(f"{name} failed: {exc}")
 
@@ -78,7 +83,15 @@ def is_db_connected() -> bool:
 def _failover_ready() -> bool:
     client = getattr(bot, "client", None)
     if client is None:
-        return False
+        # Not yet initialized (waiting on lease leadership). Consider it READY
+        # so the first instance acquires the leadership lease and can connect
+        # to the broker. Without this, a single-instance primary deadlocks:
+        # readiness requires a connected broker, but it only connects after
+        # leadership, which never happens because readiness is False.
+        # If the broker later fails to connect, is_connected() returns False
+        # on the next heartbeats and the lease expires so a healthy fallback
+        # can take over — preserving the original failover intent.
+        return True
     try:
         return bool(client.is_connected())
     except Exception:
@@ -319,8 +332,12 @@ async def shutdown():
     if open_positions == 0:
         bot.logger.info("No open trades — skipping grace period, shutting down immediately")
         bot._running = False
-        if hasattr(bot, 'client'):
-            bot.client.shutdown()
+        client = getattr(bot, 'client', None)
+        if client is not None:
+            try:
+                client.shutdown()
+            except Exception as e:
+                bot.logger.warning(f"Broker client shutdown failed: {e}")
     else:
         bot.logger.info(f"{open_positions} open trade(s) — graceful shutdown with 25s grace")
         await bot.shutdown()

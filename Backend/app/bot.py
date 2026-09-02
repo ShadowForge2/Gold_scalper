@@ -519,8 +519,12 @@ class Bot:
                 break
             await asyncio.sleep(0.5)
         self._running = False
-        if hasattr(self, 'client'):
-            self.client.shutdown()
+        client = getattr(self, 'client', None)
+        if client is not None:
+            try:
+                client.shutdown()
+            except Exception as e:
+                self.logger.warning(f"Broker client shutdown failed: {e}")
         self.logger.info("Bot shutdown complete")
 
     def set_can_trade_callback(self, cb):
