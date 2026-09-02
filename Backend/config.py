@@ -339,7 +339,13 @@ PULL_SYMBOL_DEFAULTS = {
 # rollover): stop NEW entries once the day's net R reaches the target (lock in
 # the day) or hits the max loss (stop the bleed). 0.0 = guard disabled. An open
 # position is never force-closed by these — only new entries are blocked.
-PULL_BIG_ALIGN_ENABLED = _env_bool("PULL_BIG_ALIGN_ENABLED", False)
+# PATTERN gate fallback: DEFAULT ON. This is the deployed, backtest-validated
+# iteration (2022-2025 sweep: WR ~50->62%, PF ~1.4-1.7 -> ~3.0-3.7). It is the
+# single most important guard against recreating the $25->$10 bleed, which was
+# caused by the gate silently being OFF in the deployed Render env. Defaults to
+# True so a missing/removed env var cannot silently downgrade to the old
+# unchained strategy. Set PULL_BIG_ALIGN_ENABLED=false ONLY to disable it.
+PULL_BIG_ALIGN_ENABLED = _env_bool("PULL_BIG_ALIGN_ENABLED", True)
 # Pattern-recognition gate for the PullPrevH1 engine ("bigalign"): only take a
 # pull entry when the last completed H1 candle body is large AND aligned with
 # the entry. Backtest-validated (2022-2025, honest fills) to raise WR ~50->62%
