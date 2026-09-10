@@ -192,12 +192,16 @@ class PullPrevH1Scalper:
             )
         return self._atr > 0 and self._h1dir != 0
 
-    def adopt_position(self, direction: str, entry_price: float, atr: float = 0.0) -> None:
+    def adopt_position(self, direction: str, entry_price: float, atr: float = 0.0, age_bars: int = 0) -> None:
         self._pos = 1 if str(direction).upper() == "BUY" else -1
         self._entry = float(entry_price)
         self._run_ext = float(entry_price)
         self._peak_profit = 0.0
-        self._hold = 0
+        # Anchor the hold clock to the position's REAL age: re-adopting a
+        # still-open trade on recovery must not grant a fresh max-hold window
+        # (each recovery resetting _hold to 0 let old trades dodge max_hold
+        # forever — seen live as a 4h39m US30 trade that never fired at 24).
+        self._hold = max(0, int(age_bars))
         self._pending = None
         if atr and atr > 0:
             self._atr = float(atr)

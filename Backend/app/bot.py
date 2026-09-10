@@ -66,6 +66,7 @@ class Bot:
         self._symbol_pull_cache_ts: Dict[str, float] = {}  # M1 history fetch time
         self._symbol_pull_last_stop: Dict[str, float] = {}  # last stopLevel ratcheted per symbol (broker stop sync)
         self._symbol_pull_last_pos: Dict[str, Dict] = {}  # last known pull position per symbol (for broker-stop close recording)
+        self._symbol_pos_missing_since: Dict[str, float] = {}  # first tick a pull position vanished from the snapshot
         self._last_pull_warn_ts: float = 0.0  # throttle for pull history warnings
         self._symbol_engine_failures: Dict[str, int] = {}  # consecutive pull engine failures per symbol
         # Whole-board scanner: the active tradeable universe is the scanner's
@@ -750,6 +751,7 @@ class Bot:
                         pass
                     if atr_val <= 0:
                         atr_val = entry_price * 0.001
+                    age_bars = self._position_age_bars(pos)
                     sl_dist = atr_val * getattr(cfg, "SL_ATR_MULTIPLIER", 1.0)
                     tp_dist = atr_val * getattr(cfg, "TP1_MULTIPLIER", 2.0)
                     if direction == "BUY":
@@ -774,7 +776,7 @@ class Bot:
                     if pull_owns_rec:
                         pull_eng = self._symbol_pull_engine.get(sym)
                         if pull_eng is not None:
-                            pull_eng.adopt_position(direction, entry_price, atr=atr_val)
+                            pull_eng.adopt_position(direction, entry_price, atr=atr_val, age_bars=age_bars)
                             self._symbol_pull_entry[sym] = True
                         else:
                             self.logger.warning(
@@ -788,6 +790,38 @@ class Bot:
                         f"[{sym}] Reconstructed signal: {direction} entry={entry_price:.2f} "
                         f"sl={sl:.2f} tp={tp if tp else 'n/a'} atr={atr_val:.2f} type=pull"
                     )
+            else:
+                # Signal still present but the position vanished long enough to
+                # drop _symbol_pull_entry: re-arm the pull engine so the exit
+                # circuit (trail / max hold) resumes instead of leaving the
+                # recovered trade permanently unmanaged.
+                if (not self._symbol_pull_entry.get(sym, False)
+                        and (bool(getattr(cfg, "PULL_ENGINE_ENABLED", {}).get(sym, False))
+                             or sym in self._scanner_pull_syms)):
+                    pull_eng = self._symbol_pull_engine.get(sym)
+                    sym_positions = [p for p in pnl_data.get("positions", []) if p.get("_symbol_code") == sym]
+                    if pull_eng is not None and sym_positions:
+                        pos = sym_positions[0]
+                        atr_val = 0.0
+                        try:
+                            m1_data = self.client.get_rates(sym, cfg.SIGNAL_TIMEFRAME, 500)
+                            if m1_data is not None and len(m1_data) >= 20:
+                                atr_val = self._compute_atr_m5(m1_data, cfg.ATR_PERIOD)
+                        except Exception:
+                            pass
+                        if atr_val <= 0:
+                            atr_val = float(self._symbol_signals[sym].get("atr") or 0.0)
+                        pull_eng.adopt_position(
+                            pos.get("type", "BUY"),
+                            pos.get("price_open", 0) or 0,
+                            atr=atr_val,
+                            age_bars=self._position_age_bars(pos),
+                        )
+                        self._symbol_pull_entry[sym] = True
+                        self.logger.info(
+                            f"[{sym}] Re-armed pull engine on recovered position "
+                            f"({pos.get('type', 'BUY')} @ {pos.get('price_open', 0)})"
+                        )
 
         info = self.client.get_symbol_info(sym)
         market_open = info is not None and info.get("market_status") == "TRADEABLE"
@@ -1266,15 +1300,40 @@ class Bot:
             f"threshold={fmt_num(context.get('threshold', 0.75), 3)}"
         )
 
+    def _position_age_bars(self, pos: Dict) -> int:
+        """Full M5 bars since the position was created (holds for max_hold)."""
+        if not pos:
+            return 0
+        created = pos.get("time")
+        ts = None
+        if isinstance(created, datetime):
+            ts = created.timestamp()
+        elif isinstance(created, (int, float)) and created:
+            ts = float(created)
+        if not ts:
+            return 0
+        return int(max(0.0, (time.time() - ts) / 300.0))
+
     async def _handle_in_trade(self, sym: str, pnl_data: Dict):
         sym_positions = [p for p in pnl_data.get("positions", []) if p.get("_symbol_code") == sym]
 
         if not sym_positions:
-            event_ts = self._symbol_event_start_ts.get(sym)
             grace = getattr(cfg, "POSITION_GRACE_SECONDS", 30)
-            if event_ts is not None and time.time() - event_ts < grace:
-                self.logger.debug(f"[{sym}] Waiting for positions to appear (API delay grace period {grace}s)")
+            # Grace is measured from when the position first VANISHED from the
+            # snapshot, not from entry: a trade older than `grace` must not be
+            # declared closed off a single missed poll. get_positions() returns
+            # [] on any client/session failure, so one bad tick used to wipe
+            # _symbol_pull_entry and permanently orphan the exit circuit.
+            missing_since = self._symbol_pos_missing_since.get(sym)
+            if missing_since is None:
+                self._symbol_pos_missing_since[sym] = time.time()
+                self.logger.info(
+                    f"[{sym}] Position missing from snapshot — grace {grace}s before treating as closed"
+                )
                 return
+            if time.time() - missing_since < grace:
+                return
+            self._symbol_pos_missing_since[sym] = None
             self.logger.info(f"[{sym}] Position gone (external close / margin call) — resetting state")
             eng = self._symbol_pull_engine.get(sym)
             # If this was a pull trade closed by the ratcheted broker stop, record
@@ -1301,6 +1360,10 @@ class Bot:
             self._symbol_pull_last_stop[sym] = 0.0
             self._symbol_pull_last_pos[sym] = {}
             return
+
+        # Position is visible again — the transient snapshot gap is over; from
+        # here the exit circuit (trail / max hold) resumes normally.
+        self._symbol_pos_missing_since[sym] = None
 
         acct = self.client.get_account_info()
         balance = acct.get("balance", 0) if acct else 0
