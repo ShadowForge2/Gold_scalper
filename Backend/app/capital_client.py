@@ -613,9 +613,9 @@ class CapitalClient:
             })
         return rows
 
-    def get_positions(self, magic: Optional[int] = None, symbol: Optional[str] = None) -> List[Dict]:
+    def get_positions(self, magic: Optional[int] = None, symbol: Optional[str] = None) -> Optional[List[Dict]]:
         if not self._ensure_session():
-            return []
+            return None
         try:
             if symbol is not None:
                 filter_symbol = symbol
@@ -640,6 +640,7 @@ class CapitalClient:
                     result.append({
                         "ticket": deal_id,
                         "symbol": mkt.get("instrumentName", epic),
+                        "epic": epic,
                         "type": "BUY" if p.get("direction") == "BUY" else "SELL",
                         "volume": float(p.get("size", 0)),
                         "price_open": float(p.get("level", 0)),
@@ -657,7 +658,7 @@ class CapitalClient:
                 return result
         except Exception:
             pass
-        return []
+        return None
 
     def _update_position_pnl_cache(self, positions: List[Dict]):
         current = {str(p["ticket"]): float(p.get("profit", 0.0)) for p in positions}
@@ -715,7 +716,7 @@ class CapitalClient:
             return 0.0
 
         current_balance = info.get("balance", 0)
-        all_positions = self.get_positions(magic, symbol=None)
+        all_positions = self.get_positions(magic, symbol=None) or []
         open_pnl = sum(p.get("profit", 0) for p in all_positions)
         return (current_balance - self._prev_balance) + open_pnl
 
@@ -775,10 +776,9 @@ class CapitalClient:
                             slippage: int = 30) -> Optional[str]:
         epic = self._resolve_epic(symbol)
         reference = str(magic) + ":" + comment if comment else str(magic)
-        positions = self.get_positions(symbol=symbol)
+        positions = self.get_positions(symbol=symbol) or []
         for p in positions:
-            p_sym = p.get("symbol", "")
-            p_epic = EPIC_MAP.get(p_sym, p_sym)
+            p_epic = self._resolve_epic(p.get("epic") or p.get("symbol", ""))
             if p_epic != epic:
                 continue
             p_dir = p.get("type", "")
@@ -794,7 +794,7 @@ class CapitalClient:
             return None
         for _ in range(24):
             await asyncio.sleep(0.5)
-            fresh = self.get_positions(symbol=symbol)
+            fresh = self.get_positions(symbol=symbol) or []
             for p in fresh:
                 ticket = p.get("ticket")
                 if ticket and str(ticket) not in existing_tickets:
@@ -809,7 +809,7 @@ class CapitalClient:
         else:
             found = False
             for sym in getattr(cfg, 'SYMBOLS', [cfg.SYMBOL]):
-                positions = self.get_positions(symbol=sym)
+                positions = self.get_positions(symbol=sym) or []
                 pos = next((p for p in positions if str(p.get("ticket", "")) == ticket_str), None)
                 if pos is not None:
                     deal_id = pos["ticket"]

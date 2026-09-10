@@ -1024,6 +1024,11 @@ class Bot:
         enabled = getattr(cfg, "PULL_TRAIL_STOP_ENABLED", {})
         per_sym = enabled.get(sym, False) if isinstance(enabled, dict) else bool(enabled)
         if not per_sym:
+            # Legacy global switch (PULL_TRAIL_STOP_ENABLED=true) is an explicit
+            # master-enable: when set, force the broker stop on for every pull
+            # pair regardless of the per-symbol dict.
+            per_sym = bool(getattr(cfg, "PULL_TRAIL_STOP_DEFAULT", False))
+        if not per_sym:
             return
         eng = self._symbol_pull_engine.get(sym)
         if eng is None or not eng.in_position:
@@ -1526,7 +1531,19 @@ class Bot:
         # while one exists. This fails closed: if we can't reach the broker we
         # skip the entry rather than risk a duplicate.
         try:
-            broker_positions = self.client.get_positions(symbol=sym) or []
+            broker_positions = self.client.get_positions(symbol=sym)
+            if broker_positions is None:
+                # get_positions() returns None when the broker state could NOT
+                # be verified (session/API failure) and [] only when a verified
+                # empty snapshot came back. Fail CLOSED on the former — a
+                # transient glitch must never unlock a duplicate entry on the
+                # shared account.
+                self.logger.warning(
+                    f"[{sym}] Entry blocked (single-writer guard): could not verify broker "
+                    f"state — skipping to avoid stacking"
+                )
+                self._symbol_states[sym] = self.STATES["IDLE"]
+                return
             if broker_positions:
                 self.logger.warning(
                     f"[{sym}] Entry blocked (single-writer guard): {len(broker_positions)} "

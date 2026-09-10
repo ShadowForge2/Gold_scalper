@@ -65,9 +65,10 @@ class TradeExecutor:
 
     def close_all_bot_positions(self, symbol: Optional[str] = None) -> List[Dict]:
         syms = [symbol] if symbol else list(getattr(cfg, 'SYMBOLS', [cfg.SYMBOL]))
+        magic = getattr(cfg, "MAGIC_NUMBER", 0)
         closed = []
         for sym in syms:
-            positions = self.client.get_positions(symbol=sym) or []
+            positions = self.client.get_positions(symbol=sym, magic=magic) or []
             for pos in positions:
                 ticket = pos.get("ticket")
                 if ticket and self.close_position(ticket):

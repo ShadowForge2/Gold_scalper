@@ -296,9 +296,11 @@ PULL_TRAIL_STOP_ENABLED = {
     "US500": _env_bool("PULL_TRAIL_STOP_US500", False),
     "US30": _env_bool("PULL_TRAIL_STOP_US30", False),
 }
-# Legacy global switch: if explicitly set, it forces the per-symbol value ON for
-# every enabled pull pair (used by deployments that only know the old knob).
-PULL_TRAIL_STOP_DEFAULT = _env_bool("PULL_TRAIL_STOP_ENABLED", True)
+# Legacy global switch: only when EXPLICITLY set true (PULL_TRAIL_STOP_ENABLED=true)
+# does it force the per-symbol value ON for every enabled pull pair (used by
+# deployments that only know the old knob). Unset/absent leaves each symbol's
+# own PULL_TRAIL_STOP_{SYM} value authoritative.
+PULL_TRAIL_STOP_DEFAULT = _env_bool("PULL_TRAIL_STOP_ENABLED", False)
 # Percentage-of-ATR guard used when ratcheting the broker stop: we never set a
 # stopLevel closer to market than this fraction of ATR, because Capital.com
 # rejects stops too close to the current price (min-stop-distance rule). 0.0
@@ -418,7 +420,6 @@ SCANNER_MIN_PCT_CHANGE = _env_float("SCANNER_MIN_PCT_CHANGE", 0.10) # abs daily 
 SCANNER_SL_R = _env_float("SCANNER_SL_R", 1.5)
 SCANNER_TP_R = _env_float("SCANNER_TP_R", 2.0)
 SCANNER_TRAIL_AT_R = _env_float("SCANNER_TRAIL_AT_R", 1.0)   # start trailing once >= 1R
-SCANNER_TRAIL_R = _env_float("SCANNER_TRAIL_R", 0.5)         # giveback allowed before exit
 SCANNER_MAX_HOLD_BARS = _env_int("SCANNER_MAX_HOLD_BARS", 16)   # M15 bars (~4h)
 SCANNER_EMA_FAST = _env_int("SCANNER_EMA_FAST", 20)
 SCANNER_EMA_SLOW = _env_int("SCANNER_EMA_SLOW", 50)
