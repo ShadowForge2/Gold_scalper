@@ -373,9 +373,13 @@ class PullPrevH1Scalper:
         # Prefer the ACTUAL market fill passed by the bot over the engine's
         # bar-close estimate, so daily-R bookkeeping reflects the real price.
         px = float(exit_price) if exit_price not in (None, 0) else float(p.get("price", 0.0) or self._last_m5_close or 0.0)
-        if px and self._pos != 0 and self._atr_entry > 0:
-            gross = (px - self._entry) * self._pos / self._atr_entry
-            r = gross - (self.round_trip_price / self._atr_entry)
+        # Anchor R bookkeeping to the ATR captured at entry; if that is missing
+        # (recovered position with no entry ATR) fall back to the current ATR so
+        # the daily guard keeps counting R instead of silently dropping the trade.
+        atr_ref = self._atr_entry if self._atr_entry > 0 else self._atr
+        if px and self._pos != 0 and atr_ref > 0:
+            gross = (px - self._entry) * self._pos / atr_ref
+            r = gross - (self.round_trip_price / atr_ref)
             self._daily_r += r
             self._log(f"closed {self._pos:+d} @ {px:.2f} r={r:+.3f} "
                       f"daily_r={self._daily_r:+.3f}")

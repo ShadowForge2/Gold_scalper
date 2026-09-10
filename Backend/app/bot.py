@@ -1455,6 +1455,43 @@ class Bot:
                             self._symbol_pull_entry[sym] = False
                             return
                 if action is None or action.get("type") != "exit":
+                    # Wall-clock max_hold watchdog: the engine's exit circuit
+                    # increments _hold only while completed M5 bars flow through
+                    # feed(). If a pending action (or a stalled data feed) blocks
+                    # bar processing, _hold freezes and max_hold can never fire.
+                    # The engine hard-caps every trade at max_hold_bars, so a
+                    # position whose REAL age exceeds that cap with no exit action
+                    # is a stall — force-close it rather than let it run unmanaged.
+                    max_hold_bars = int(getattr(eng, "max_hold_bars", 0) or 0)
+                    if max_hold_bars > 0 and eng.in_position:
+                        age_bars = self._position_age_bars(pos)
+                        if age_bars >= max_hold_bars:
+                            self.logger.warning(
+                                f"[{sym}] Pull max_hold WATCHDOG: real age {age_bars} bars >= "
+                                f"{max_hold_bars} with no engine exit (stall) — force-closing"
+                            )
+                            closed = self.trade_executor.close_all_bot_positions(symbol=sym)
+                            for pos_data in closed:
+                                self.position_manager.note_closed(
+                                    pos_data, exit_reason="max_hold_watchdog",
+                                    score=pos_signal.get("score", 0) if pos_signal else 0,
+                                    balance=balance)
+                            if closed:
+                                pnl = sum(p.get("profit", 0) for p in closed)
+                                fill_px = self._actual_fill_price(sym, pos, minutes_held) or 0.0
+                                eng.confirm_exit(exit_price=fill_px)
+                                self._symbol_states[sym] = self.STATES["IDLE"]
+                                self._symbol_event_start_ts[sym] = None
+                                self._symbol_pull_entry[sym] = False
+                                self._symbol_pull_last_stop[sym] = 0.0
+                                self._symbol_pull_last_pos[sym] = {}
+                                await self._notify(
+                                    "trade_close",
+                                    f"Trade Closed — {sym}",
+                                    f"{direction} {sym} closed (max_hold_watchdog) | PnL: ${pnl:+.2f}",
+                                    {"symbol": sym, "direction": direction, "exit_reason": "max_hold_watchdog", "pnl": pnl},
+                                )
+                            return
                     # Still holding: ratchet the broker trailing stop on each
                     # tick so a fast move closes at the intended trail price
                     # instead of slipping on a market DELETE.

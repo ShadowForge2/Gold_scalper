@@ -10,7 +10,9 @@ class RiskManager:
     def can_enter_trade(self, symbol_info: Dict,
                         current_time: datetime, symbol: str = "XAUUSD") -> Tuple[bool, str]:
         point = symbol_info.get("point", 0.0001)
-        spread_pips = float(symbol_info.get("spread", 0)) / point if point > 0 else 0
+        if point <= 0:
+            return False, "spread_unverifiable (point<=0)"
+        spread_pips = float(symbol_info.get("spread", 0)) / point
         max_spread = getattr(cfg, 'SYMBOL_MAX_SPREAD', {}).get(symbol, self.max_spread)
         if spread_pips > max_spread:
             return False, f"spread_too_high ({spread_pips:.1f} > {max_spread})"
